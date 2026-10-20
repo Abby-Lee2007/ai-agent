@@ -1,0 +1,6 @@
+# 账单截图识别场景回放：python run.py --script scripts/demo_vision.txt
+# 识别 -> 核对 -> 确认导入 -> 异常复检 -> 风险测评评分卡
+/scan samples/bill_sample.png
+确认
+分析我最近7天的账单
+帮我做个风险测评

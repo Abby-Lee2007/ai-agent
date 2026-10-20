@@ -1,0 +1,11 @@
+# 智能转账场景回放：python run.py --script scripts/demo_transfer.txt
+/balance
+给老婆转2000块，备注生日礼物，用微信
+下个月5号自动给房东转3800房租，用银行卡
+确认
+昨晚聚餐960，我、王强、李思琪AA
+确认
+我有哪些定时转账
+/task
+/advance 40
+/balance
