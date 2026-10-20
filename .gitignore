@@ -6,6 +6,7 @@ __pycache__/
 
 # 本地数据快照（由 python run.py --save 生成，属于运行时状态，不入库）
 runtime_data/
+runtime_uploads/
 
 # 环境变量与密钥
 .env

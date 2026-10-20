@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import secrets
@@ -24,10 +25,13 @@ from urllib.parse import urlparse
 
 from config import DEFAULT_USER_ID, LLMConfig
 from finagent.agent.core import BankingAgent
+from finagent.agent.planner import Plan, PlanStep
 from finagent.data.store import DataStore
+from finagent.vision.receipt_reader import IMAGE_SUFFIXES, TEXT_SUFFIXES
 
 ROOT = Path(__file__).resolve().parent
 INDEX_FILE = ROOT / "web" / "index.html"
+UPLOAD_DIR = ROOT / "runtime_uploads"
 SESSION_TTL = 2 * 60 * 60
 MAX_SESSIONS = 60
 ACCESS_PASSWORD = os.getenv("FINAGENT_WEB_PASSWORD", "").strip()
@@ -121,7 +125,50 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/reset":
             self._reset()
             return
+        if path == "/api/upload":
+            self._upload()
+            return
         self._json(404, {"ok": False, "error": "not found"})
+
+    # ------------------------------------------------------------------
+    def _upload(self) -> None:
+        payload = self._read_json()
+        session_id = str(payload.get("session") or "")
+        filename = str(payload.get("filename") or "")
+        suffix = Path(filename).suffix.lower()
+        if suffix not in IMAGE_SUFFIXES and suffix not in TEXT_SUFFIXES:
+            self._json(400, {"ok": False, "error": "只支持图片（png/jpg/webp 等）或 txt/csv 账单"})
+            return
+        try:
+            raw = base64.b64decode(str(payload.get("data") or ""), validate=True)
+        except (ValueError, TypeError):
+            self._json(400, {"ok": False, "error": "文件内容解析失败"})
+            return
+        if not raw:
+            self._json(400, {"ok": False, "error": "文件为空"})
+            return
+        if len(raw) > 8 * 1024 * 1024:
+            self._json(413, {"ok": False, "error": "文件超过 8MB，请压缩后再传"})
+            return
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        target = UPLOAD_DIR / f"{secrets.token_hex(8)}{suffix}"
+        target.write_bytes(raw)
+        session_id, item = POOL.get(session_id) if session_id else POOL.get("")
+        agent: BankingAgent = item["agent"]
+        plan = Plan(intent="bill.scan_receipt",
+                    steps=[PlanStep("bill.scan_receipt", {"image": str(target)})])
+        with item["lock"]:
+            reply = agent._execute(plan, agent.context())
+        self._json(200, {
+            "ok": True,
+            "session": session_id,
+            "reply": reply.text,
+            "intent": reply.intent,
+            "kind": reply.kind,
+            "needs_input": reply.needs_input,
+            "trace": [{"tool": t.get("tool"), "ok": t.get("ok"),
+                       "summary": t.get("summary"), "args": t.get("args")} for t in reply.trace],
+        })
 
     def _authorized(self) -> bool:
         if not ACCESS_PASSWORD:
