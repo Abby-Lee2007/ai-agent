@@ -365,6 +365,14 @@ def _parse_paired(lines: List[str], default_year: int, today: date,
 
 BILL_HINTS = ("账单", "交易明细", "收支", "退款", "红包", "群收款", "扫二维码",
               "商户", "支付", "转账", "已全额退款", "对方已退还")
+SUMMARY_PAGE_HINTS = ("月账单", "年账单", "共支出", "合计", "当月支出",
+                      "支出构成", "支出排行", "每月支出对比")
+
+
+def looks_like_summary_page(text: str) -> bool:
+    """账单汇总页：只有合计/分类/排行，没有逐笔的日期+商户+金额。"""
+    compact = re.sub(r"\s+", "", text or "")   # OCR 常在汉字之间插空格
+    return sum(1 for word in SUMMARY_PAGE_HINTS if word in compact) >= 2
 
 
 def looks_like_pasted_bill(text: str) -> bool:

@@ -23,6 +23,7 @@ from finagent.nlu.llm_client import LLMClient
 from finagent.vision.receipt_parser import (
     ParsedTransaction,
     guess_category,
+    looks_like_summary_page,
     looks_like_pasted_bill,
     parse_receipt_text,
 )
@@ -133,6 +134,8 @@ class ReceiptReader:
 
         result = self._from_windows_ocr(target, today)
         result.errors.extend(errors)
+        if "汇总页" in (result.message or ""):
+            return result          # 汇总页要给出明确指引，不要再套通用失败文案
         if result.ok and result.records:
             if errors:
                 result.message += "\n（多模态通道不可用，已自动改用 Windows 离线 OCR）"
@@ -248,6 +251,15 @@ class ReceiptReader:
                                      message=self.last_error, image_path=str(target))
             raw_text = out_file.read_text(encoding="utf-8", errors="replace")
         records = parse_receipt_text(raw_text, today)
+        if looks_like_summary_page(raw_text):
+            return ReceiptResult(
+                ok=False, backend="windows_ocr", backend_label="Windows 内置 OCR",
+                raw_text=raw_text, image_path=str(target),
+                message=("这张是账单「汇总页」（只有合计、分类和排行），没有逐笔明细，"
+                         "我不会拿它导入假流水。\n"
+                         "请在微信/支付宝里点进「账单明细 / 全部交易」，"
+                         "截出带日期、商户、金额的那一屏再上传。"),
+            )
         if not records:
             return ReceiptResult(
                 ok=False, backend="windows_ocr", backend_label="Windows 内置 OCR",
