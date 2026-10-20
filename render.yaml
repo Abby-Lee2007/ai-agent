@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ai-banking-agent
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python web_app.py --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: FINAGENT_LLM_MODE
+        value: "auto"
+      - key: FINAGENT_MARKET_MODE
+        value: "live"
+      # 公网部署建议设置访问口令（在 Render 控制台里填值即可）
+      - key: FINAGENT_WEB_PASSWORD
+        sync: false

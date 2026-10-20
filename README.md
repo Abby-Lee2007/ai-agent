@@ -64,6 +64,16 @@ cd ai_banking_agent
 python run.py
 ```
 
+### 网页版（手机 / 其他设备）
+
+```bash
+python web_app.py --host 0.0.0.0 --port 8000
+```
+
+启动后按打印的局域网地址访问（如 `http://192.168.1.20:8000`）；
+Windows 也可双击 `web.cmd`。公网部署见 `render.yaml`，
+可用 `FINAGENT_WEB_PASSWORD` 设置访问口令。
+
 Windows 用户也可以直接**双击项目目录下的 `start.cmd`**，
 会自动切到 UTF-8 编码、进入本目录并启动对话，不需要敲任何命令。
 

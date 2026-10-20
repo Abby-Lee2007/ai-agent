@@ -11,6 +11,27 @@ python run.py --fresh
 
 Windows 也可以直接双击 `start.cmd`（自动切 UTF-8 并进入目录）。
 
+### 网页版（手机 / 另一台设备可访问）
+
+```powershell
+python web_app.py --host 0.0.0.0 --port 8000
+```
+
+或直接双击 `web.cmd`。启动后窗口会打印两个地址：
+
+- 本机：`http://127.0.0.1:8000`
+- 局域网：`http://<这台电脑的 IP>:8000`
+
+手机和电脑连同一个 Wi-Fi 即可打开局域网地址；界面已适配竖屏。
+第一次启动时 Windows 若弹防火墙提示，选「允许访问（专用网络）」。
+
+**公网访问（可选）**：把仓库连到 Render，识别 `render.yaml` 自动部署，
+得到 `https://xxx.onrender.com`；或在 Render 控制台手动填启动命令
+`python web_app.py --host 0.0.0.0 --port $PORT`。
+
+**访问口令（可选）**：设置环境变量 `FINAGENT_WEB_PASSWORD=你的口令` 后，
+网页会要求输入口令，接口返回 401 时会提示。公网部署建议开启。
+
 常用参数：
 
 | 参数 | 作用 |
