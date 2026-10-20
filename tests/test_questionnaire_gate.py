@@ -13,7 +13,8 @@ class TestRiskGate(unittest.TestCase):
     def test_recommendation_requires_questionnaire(self):
         reply = self.agent.handle("推荐几个基金")
         self.assertEqual(reply.kind, "question")
-        self.assertIn("第 1/6 题", reply.text)
+        self.assertIn("第 1/7 题", reply.text)
+        self.assertIn("为什么问", reply.text)
         self.assertIn("投资者适当性", reply.text)
         self.assertEqual(self.agent.session.pending.kind, "questionnaire")
         # 问卷没填完前不应该执行任何推荐工具
@@ -22,12 +23,12 @@ class TestRiskGate(unittest.TestCase):
     def test_risk_assess_also_requires_questionnaire(self):
         reply = self.agent.handle("帮我做个风险测评")
         self.assertEqual(reply.kind, "question")
-        self.assertIn("第 1/6 题", reply.text)
+        self.assertIn("第 1/7 题", reply.text)
 
     def test_subscribe_requires_questionnaire(self):
         reply = self.agent.handle("买1万块稳利债券A")
         self.assertEqual(reply.kind, "question")
-        self.assertIn("第 1/6 题", reply.text)
+        self.assertIn("第 1/7 题", reply.text)
 
     def test_full_answers_unlock_recommendation(self):
         self.agent.handle("推荐几个基金")
@@ -42,7 +43,7 @@ class TestRiskGate(unittest.TestCase):
         self.agent.handle("推荐几个基金")
         reply = self.agent.handle("随便说说")
         self.assertEqual(reply.kind, "question")
-        self.assertIn("第 1/6 题", reply.text)
+        self.assertIn("第 1/7 题", reply.text)
         self.assertIn("没看懂", reply.text)
 
     def test_digit_and_text_answers_are_accepted(self):
@@ -51,11 +52,15 @@ class TestRiskGate(unittest.TestCase):
         self.assertEqual(self.agent.handle("B").kind, "question")          # 第 3 题
         reply = self.agent.handle("1-3 年")                                 # 选项原文
         self.assertEqual(reply.kind, "question")
-        self.assertIn("第 4/6 题", reply.text)
+        self.assertIn("第 4/7 题", reply.text)
 
     def test_skip_uses_inferred_answers(self):
         self.agent.handle("推荐几个基金")
         reply = self.agent.handle("跳过")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("系统推断", reply.text)
+        self.assertIsNone(self.agent.risk_level)
+        reply = self.agent.handle("确认")
         self.assertIn("评估完成", reply.text)
         self.assertIsNotNone(self.agent.risk_level)
 
@@ -70,7 +75,7 @@ class TestRiskGate(unittest.TestCase):
         self.agent.handle("推荐几个基金")
         answer_basic_questionnaire(self.agent, "b")
         reply = self.agent.handle("推荐几个基金")
-        self.assertNotIn("第 1/6 题", reply.text)
+        self.assertNotIn("第 1/7 题", reply.text)
         self.assertIsNone(self.agent.session.pending)
 
     def test_conservative_answers_block_stock_recommendation(self):
@@ -83,9 +88,24 @@ class TestRiskGate(unittest.TestCase):
 
     def test_answers_are_used_for_the_profile(self):
         self.agent.handle("推荐几个基金")
-        answer_basic_questionnaire(self.agent, "d")
+        for answer in ("d", "d", "e", "e", "a", "d", "c"):
+            self.agent.handle(answer)
         self.assertEqual(self.agent.risk_level, 5)
-        self.assertEqual(len(self.agent.risk_answers), 6)
+        self.assertEqual(len(self.agent.risk_answers), 7)
+
+    def test_result_explains_weakest_factors_and_retest_guidance(self):
+        self.agent.handle("帮我做个风险测评")
+        for answer in ("a", "a", "a", "a", "d", "a", "a"):
+            reply = self.agent.handle(answer)
+
+        self.assertIn("主要拉低项", reply.text)
+        self.assertIn("收入", reply.text)
+        self.assertIn("建议 12 个月后", reply.text)
+        self.assertTrue(self.agent.risk_assessed_at)
+        self.assertTrue(any(
+            record["event"] == "risk.assessed"
+            for record in self.agent.store.audit
+        ))
 
 
 if __name__ == "__main__":

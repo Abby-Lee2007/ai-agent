@@ -7,6 +7,7 @@ from pathlib import Path
 from tests.support import make_agent
 from finagent.vision.receipt_parser import (
     guess_category,
+    looks_like_summary_page,
     normalize_line,
     parse_receipt_text,
 )
@@ -48,6 +49,19 @@ class TestReceiptTextCleanup(unittest.TestCase):
 
     def test_normalize_repairs_fullwidth_colon(self):
         self.assertIn("10:05", normalize_line("10 ： 05 携程旅行网"))
+
+    def test_summary_page_is_rejected_before_import(self):
+        summary = """
+        本月账单
+        共支出 7283.34 元
+        支出构成
+        餐饮 35%
+        购物 40%
+        每月支出对比
+        """
+
+        self.assertTrue(looks_like_summary_page(summary))
+        self.assertFalse(looks_like_summary_page(NOISY_OCR_TEXT))
 
 
 class TestReceiptParsing(unittest.TestCase):

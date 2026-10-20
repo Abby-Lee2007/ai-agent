@@ -45,6 +45,8 @@ class TestCardManagement(unittest.TestCase):
 
     def test_apply_credit_card(self):
         reply = self.agent.handle("我想申请一张信用卡")
+        self.assertEqual(reply.kind, "confirm")
+        reply = self.agent.handle("确认")
         self.assertTrue(reply.ok)
         self.assertIn("申请已提交", reply.text)
         pending = [c for c in self.agent.store.cards_of("u_001") if c.status == "pending"]

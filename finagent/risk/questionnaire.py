@@ -46,6 +46,7 @@ class Question:
     text: str
     max_score: float
     options: List[Option]
+    why: str = ""
 
     def option(self, key: str) -> Optional[Option]:
         for option in self.options:
@@ -66,6 +67,13 @@ class Detail:
 
 
 @dataclass
+class Inference:
+    option: str
+    reason: str
+    confidence: float
+
+
+@dataclass
 class QuestionnaireResult:
     total: float
     level: int
@@ -74,6 +82,10 @@ class QuestionnaireResult:
     dimension_totals: Dict[str, Tuple[float, float]] = field(default_factory=dict)
     answered: int = 0
     inferred: int = 0
+    caps: List[str] = field(default_factory=list)
+    consistency_notes: List[str] = field(default_factory=list)
+    emergency_months: float = 0.0
+    straight_line: bool = False
 
     @property
     def max_total(self) -> float:
@@ -82,6 +94,13 @@ class QuestionnaireResult:
     def blocking_reason(self) -> str:
         return (f"客户等级 {self.label}（{self.total:.0f} 分），"
                 f"可匹配 R1-R{min(self.level, 5)}")
+
+    def weakest_details(self, limit: int = 3) -> List[Detail]:
+        ranked = sorted(
+            self.details,
+            key=lambda detail: detail.score / detail.max_score if detail.max_score else 0.0,
+        )
+        return ranked[:limit]
 
 
 QUESTIONS: List[Question] = [
@@ -140,37 +159,61 @@ QUESTIONS: List[Question] = [
 QUESTION_MAP = {q.qid: q for q in QUESTIONS}
 
 # ---------------------------------------------------------------------------
-# 基础版问卷（6 题）：理财操作前的强制准入，约 1 分钟填完
+# 基础版问卷：6 道计分题 + 1 道一致性校验题
 # ---------------------------------------------------------------------------
-BASIC_QUESTIONS: List[Question] = [
-    Question("b1", "财务状况", "您的年收入大约是多少？", 20, [
-        Option("a", "10 万以下", 5), Option("b", "10-30 万", 12),
-        Option("c", "30-100 万", 17), Option("d", "100 万以上", 20)]),
-    Question("b2", "财务状况", "可用于投资的金融资产大约多少？", 20, [
-        Option("a", "10 万以下", 5), Option("b", "10-50 万", 12),
-        Option("c", "50-300 万", 17), Option("d", "300 万以上", 20)]),
-    Question("b3", "投资经验", "您的投资年限？", 15, [
-        Option("a", "没有经验", 0), Option("b", "1 年以内", 5),
-        Option("c", "1-3 年", 9), Option("d", "3-5 年", 12), Option("e", "5 年以上", 15)]),
-    Question("b4", "风险态度", "能接受的最大本金亏损？", 20, [
-        Option("a", "不能接受亏损", 4), Option("b", "10% 以内", 10),
-        Option("c", "20% 左右", 14), Option("d", "30% 左右", 18),
-        Option("e", "50% 以上", 20)]),
-    Question("b5", "投资期限", "这笔钱大概多久不用？", 15, [
-        Option("a", "6 个月以内", 3), Option("b", "6-12 个月", 7),
-        Option("c", "1-3 年", 11), Option("d", "3 年以上", 15)]),
-    Question("b6", "流动性需求", "现有活期资金能覆盖几个月支出？", 10, [
-        Option("a", "不足 1 个月", 0), Option("b", "1-3 个月", 3),
-        Option("c", "3-6 个月", 7), Option("d", "6 个月以上", 10)]),
+BASIC_SCORED_QUESTIONS: List[Question] = [
+    Question("b1", "财务状况", "您的年收入大约是多少？", 4, [
+        Option("a", "10 万以下", 1), Option("b", "10-30 万", 2),
+        Option("c", "30-100 万", 3), Option("d", "100 万以上", 4)],
+        why="这题决定您的现金流稳定性和可承受的投资金额。"),
+    Question("b2", "财务状况", "可用于投资的金融资产大约多少？", 4, [
+        Option("a", "10 万以下", 1), Option("b", "10-50 万", 2),
+        Option("c", "50-300 万", 3), Option("d", "300 万以上", 4)],
+        why="这题决定您的资产厚度和风险分散能力。"),
+    Question("b3", "投资经验", "您的投资年限？", 5, [
+        Option("a", "没有经验", 1), Option("b", "1 年以内", 2),
+        Option("c", "1-3 年", 3), Option("d", "3-5 年", 4), Option("e", "5 年以上", 5)],
+        why="这题用于判断您是否经历过完整的市场波动周期。"),
+    Question("b4", "风险态度", "能接受的最大本金亏损？", 5, [
+        Option("a", "不能接受亏损", 1), Option("b", "10% 以内", 2),
+        Option("c", "20% 左右", 3), Option("d", "30% 左右", 4),
+        Option("e", "50% 以上", 5)],
+        why="这题决定您能买哪一档风险等级的产品。"),
+    Question("b5", "投资期限", "这笔钱大概多久不用？", 5, [
+        Option("a", "3 年以上", 5), Option("b", "1-3 年", 4),
+        Option("c", "6-12 个月", 2), Option("d", "6 个月以内", 1)],
+        why="选项已反向排列，用于识别不阅读题目、连续选择同一选项的情况。"),
+    Question("b6", "投资目标", "您的投资目标更接近？", 4, [
+        Option("a", "保本", 1), Option("b", "稳健增值", 2),
+        Option("c", "平衡", 3), Option("d", "高收益", 4)],
+        why="这题决定收益目标和波动之间的取舍。"),
 ]
+VALIDATION_QUESTION = Question(
+    "b7", "一致性校验", "如果产品一个月下跌 15%，您会怎么做？", 4,
+    [
+        Option("a", "全部卖出", 1), Option("b", "卖出部分", 2),
+        Option("c", "继续持有", 3), Option("d", "加仓", 4),
+    ],
+    why="本题不计分，用于校验风险态度回答是否一致。",
+)
+BASIC_QUESTIONS: List[Question] = [*BASIC_SCORED_QUESTIONS, VALIDATION_QUESTION]
 BASIC_MAP = {q.qid: q for q in BASIC_QUESTIONS}
-# 基础 6 题与完整 14 题的对应关系（用于把快评答案带进完整明细）
-BASIC_TO_FULL = {"b1": "q1", "b2": "q2", "b3": "q8", "b4": "q10", "b5": "q12", "b6": "q14"}
+# 基础题与完整 14 题的对应关系（校验题不映射到评分题）
+BASIC_TO_FULL = {
+    "b1": "q1", "b2": "q2", "b3": "q8", "b4": "q10",
+    "b5": "q12", "b6": "q11",
+}
 
 
 def expand_basic_answers(answers: Optional[Dict[str, str]]) -> Dict[str, str]:
-    return {BASIC_TO_FULL[key]: value for key, value in (answers or {}).items()
-            if key in BASIC_TO_FULL}
+    expanded: Dict[str, str] = {}
+    for key, value in (answers or {}).items():
+        if key not in BASIC_TO_FULL:
+            continue
+        if key == "b5":
+            value = {"a": "d", "b": "c", "c": "b", "d": "a"}.get(value, value)
+        expanded[BASIC_TO_FULL[key]] = value
+    return expanded
 
 
 def _monthly_expense(store: DataStore, user_id: str, today: date) -> float:
@@ -190,15 +233,65 @@ def _pick(value: float, cuts: List[float], keys: List[str]) -> str:
 
 
 def infer_basic_answers(user: User, store: DataStore, today: date) -> Dict[str, str]:
-    """从账户数据推断基础 6 题的答案（用于"跳过问卷"）。"""
-    full = infer_answers(user, store, today)
+    """从账户数据推断基础问卷答案（用于"跳过问卷"）。"""
     return {
-        "b1": full["q1"],
-        "b2": full["q2"],
-        "b3": full["q8"],
-        "b4": full["q10"],
-        "b5": full["q12"],
-        "b6": full["q14"],
+        qid: item.option
+        for qid, item in infer_basic_answers_detailed(user, store, today).items()
+    }
+
+
+def infer_basic_answers_detailed(
+    user: User,
+    store: DataStore,
+    today: date,
+) -> Dict[str, Inference]:
+    """推断基础问卷，并保留依据与置信度供用户确认。"""
+    full = infer_answers(user, store, today)
+    accounts = store.accounts_of(user.user_id)
+    total_assets = store.total_assets(accounts)
+    holdings = store.holdings_of(user.user_id, status="holding")
+    years = 0.0
+    if holdings:
+        earliest = min(date.fromisoformat(h.purchase_date[:10]) for h in holdings)
+        years = max((today - earliest).days, 0) / 365.0
+    horizon_key = {"a": "d", "b": "c", "c": "b", "d": "a"}.get(full["q12"], "c")
+    goal_key = full["q11"]
+    return {
+        "b1": Inference(
+            full["q1"],
+            f"按月收入 {user.monthly_income:,.0f} 元推算年收入约 {user.monthly_income * 12:,.0f} 元",
+            0.80,
+        ),
+        "b2": Inference(
+            full["q2"],
+            f"按当前金融资产约 {total_assets:,.0f} 元推断",
+            0.85,
+        ),
+        "b3": Inference(
+            full["q8"],
+            f"按最早持仓推算投资年限约 {years:.1f} 年",
+            0.60,
+        ),
+        "b4": Inference(
+            full["q10"],
+            f"按客户画像风险偏好「{user.risk_profile}」推断亏损容忍",
+            0.45,
+        ),
+        "b5": Inference(
+            horizon_key,
+            f"按年龄 {user.age} 岁推断投资期限",
+            0.35,
+        ),
+        "b6": Inference(
+            goal_key,
+            f"按客户画像风险偏好「{user.risk_profile}」推断投资目标",
+            0.40,
+        ),
+        "b7": Inference(
+            "c",
+            "没有历史下跌行为数据，采用中性「继续持有」作为校验值",
+            0.25,
+        ),
     }
 
 
@@ -304,14 +397,16 @@ def evaluate_basic(
     store: Optional[DataStore] = None,
     today: Optional[date] = None,
 ) -> QuestionnaireResult:
-    """基础 6 题问卷评分（理财操作前的准入评估）。"""
+    """6 道计分题加权评分，并用第 7 题和应急金做降级校验。"""
     today = today or date.today()
     inferred = infer_basic_answers(user, store, today) if (user is not None and store is not None) else {}
     given = {k: v for k, v in (answers or {}).items() if k in BASIC_MAP}
     details: List[Detail] = []
-    total = 0.0
+    weighted = 0.0
+    weight_sum = 0.0
     dimension_totals: Dict[str, Tuple[float, float]] = {}
-    for question in BASIC_QUESTIONS:
+    weights = {"b1": 1.5, "b2": 1.5, "b3": 1.0, "b4": 1.5, "b5": 1.0, "b6": 1.0}
+    for question in BASIC_SCORED_QUESTIONS:
         key = given.get(question.qid) or inferred.get(question.qid)
         option = question.option(key) if key else None
         if option is None:
@@ -319,19 +414,44 @@ def evaluate_basic(
         details.append(Detail(question.qid, question.dimension, question.text,
                               option.label, option.score, question.max_score,
                               question.qid not in given))
-        total += option.score
+        scores = [item.score for item in question.options]
+        span = max(scores) - min(scores)
+        normalized = (option.score - min(scores)) / span if span else 0.0
+        weight = weights[question.qid]
+        weighted += normalized * weight
+        weight_sum += weight
         earned, maximum = dimension_totals.get(question.dimension, (0.0, 0.0))
-        dimension_totals[question.dimension] = (earned + option.score, maximum + question.max_score)
-    total = round(total, 1)
+        dimension_totals[question.dimension] = (earned + normalized * 100, maximum + 100)
+    total = round(weighted / weight_sum * 100, 1) if weight_sum else 0.0
     level = 3
     for threshold, mapped in LEVEL_THRESHOLDS:
         if total >= threshold:
             level = mapped
             break
+    notes: List[str] = []
+    selected = [answers.get(q.qid) for q in BASIC_SCORED_QUESTIONS if q.qid in given]
+    straight_line = len(selected) == len(BASIC_SCORED_QUESTIONS) and len(set(selected)) == 1
+    if straight_line:
+        notes.append("检测到 6 道计分题全部选择同一选项，建议放慢速度重新确认。")
+    if given.get("b4") == "a" and given.get("b7") == "d":
+        level = max(1, level - 1)
+        notes.append("亏损承受与下跌 15% 加仓的回答不一致，已按较低等级处理。")
+    emergency_months = 0.0
+    caps: List[str] = []
+    if user is not None and store is not None:
+        accounts = store.accounts_of(user.user_id)
+        liquid = sum(a.balance for a in accounts if a.kind in {"current", "wallet"})
+        monthly = _monthly_expense(store, user.user_id, today) or max(user.monthly_income * 0.6, 1.0)
+        emergency_months = liquid / monthly if monthly else 0.0
+        if emergency_months < 1:
+            level = min(level, 2)
+            caps.append("活期资金覆盖不足 1 个月，最高评级限制为 C2，建议先保留应急资金。")
     return QuestionnaireResult(
         total=total, level=level, label=CUSTOMER_LABELS[level],
         details=details, dimension_totals=dimension_totals,
         answered=len(given), inferred=len(BASIC_QUESTIONS) - len(given),
+        caps=caps, consistency_notes=notes,
+        emergency_months=round(emergency_months, 2), straight_line=straight_line,
     )
 
 

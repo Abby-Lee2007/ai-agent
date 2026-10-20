@@ -29,6 +29,8 @@ class Pending:
     answers: Dict[str, str] = field(default_factory=dict)
     queue: List[str] = field(default_factory=list)
     origin: Any = None
+    inferences: Dict[str, Any] = field(default_factory=dict)
+    inference_confirmed_at: str = ""
 
 
 CMD_WORDS = {

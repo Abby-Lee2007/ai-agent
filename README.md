@@ -1,5 +1,7 @@
 # AI Banking Agent · 智能银行代理系统
 
+> 合并版 v3：当前业务、风险问卷、确认流程、异常量化、OCR 防护、网页上传和部署能力的完整集合。
+
 > 2026 FinTechathon 深圳国际金融科技大赛（微众银行金融科技大学生挑战赛）· 人工智能国内赛道
 >
 > 赛题：构建 AI Banking Agent 智能银行代理系统
@@ -19,7 +21,7 @@
   -> 槽位补全（多轮对话追问）
   -> 任务规划（单步 or 跨工具多步计划）
   -> 风控校验（限额 / 二次确认 / 身份验证 / 拦截）
-  -> 工具执行（31 个银行业务工具）
+  -> 工具执行（35 个银行业务工具）
   -> 自然语言应答 + 工具调用轨迹
 ```
 
@@ -64,18 +66,49 @@ cd ai_banking_agent
 python run.py
 ```
 
-### 网页版（手机 / 其他设备）
-
-```bash
-python web_app.py --host 0.0.0.0 --port 8000
-```
-
-启动后按打印的局域网地址访问（如 `http://192.168.1.20:8000`）；
-Windows 也可双击 `web.cmd`。公网部署见 `render.yaml`，
-可用 `FINAGENT_WEB_PASSWORD` 设置访问口令。
-
 Windows 用户也可以直接**双击项目目录下的 `start.cmd`**，
 会自动切到 UTF-8 编码、进入本目录并启动对话，不需要敲任何命令。
+
+### H5 / APP / IM 接口
+
+启动 HTTP 服务和 H5 聊天页面：
+
+```powershell
+python run_api.py --host 0.0.0.0 --port 8000
+```
+
+Windows 也可以直接双击 `start_web.cmd`。电脑访问：
+
+```text
+http://127.0.0.1:8000
+```
+
+同一 Wi-Fi 下的手机使用终端显示的局域网地址，例如：
+
+```text
+http://192.168.1.25:8000
+```
+
+H5 支持点击回形针上传账单图片/文本、全页面拖拽上传和剪贴板粘贴图片。
+上传后会先进入 OCR 核对页，不会直接导入流水。
+若设置了 `FINAGENT_WEB_PASSWORD`，网页首次请求会自动弹出口令输入框。
+
+当前提供以下接口：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/v1/sessions` | 创建会话 |
+| `POST` | `/v1/messages` | 发送消息并返回完整回复 |
+| `POST` | `/v1/messages/stream` | 发送消息并通过 SSE 返回 |
+| `POST` | `/v1/uploads` | 上传账单图片/TXT/CSV 并进入核对页 |
+| `POST` | `/v1/channels/wecom/events` | 企业微信网关事件适配入口 |
+| `GET` | `/health` | 服务健康检查 |
+
+`request_id` 用于请求幂等，同一会话重复提交不会重复转账或申购。
+企业微信网关适配入口接收 JSON，并通过 `X-FinAgent-Signature`
+和 `FINAGENT_WEBHOOK_SECRET` 做 HMAC-SHA256 校验。
+所有涉及资金、卡片、持仓、订阅和绑卡的操作，会先显示关键信息核对页；
+生日惊喜场景还会强制要求用户输入生日，不能直接使用画像中的默认日期。
 
 > 本项目只是桌面上的一个普通文件夹，不会安装进你的 Python 环境，
 > 也不会往 `site-packages` 写任何东西。删掉文件夹即可彻底移除。
@@ -83,13 +116,13 @@ Windows 用户也可以直接**双击项目目录下的 `start.cmd`**，
 看到提示符后直接输入中文即可：
 
 ```
-用户> 给老婆转2000块，备注生日礼物
-Agent> 转账成功：2,000.00 元已转给「林雅雯」
+用户> 给老婆转2000块，备注生日礼物，用微信
+Agent> 转账成功（微信）：2,000.00 元已转给「林雅雯」
        付款账户：活期账户（尾号 6222）  可用余额 30,860.52 元
        流水号：TXN000613
        备注：生日礼物
        工具调用：
-         [OK ] transfer.send(payee='老婆', amount=2000.0, note='生日礼物')
+         [OK ] transfer.send(payee='老婆', amount=2000.0, channel='wechat', note='生日礼物')
 ```
 
 ### 常用启动参数
@@ -196,22 +229,31 @@ python run.py
 ```
 ai_banking_agent/
 ├── run.py                      # 启动入口（命令行参数解析、装配依赖）
+├── run_api.py                  # HTTP/H5/IM 服务入口
+├── start_web.cmd               # Windows 双击启动 H5
+├── web.cmd                     # Windows 控制台启动网页服务
+├── render.yaml                 # Render 公网部署配置
 ├── demo_scenarios.py           # 六大场景一键演示
+├── USER_GUIDE.md               # 用户操作指南
 ├── config.py                   # 全局配置：限额、风控阈值、LLM 接入、路径
 ├── requirements.txt            # 只列可选项（核心零依赖）
 ├── .env.example                # 环境变量示例
 ├── scripts/                    # 可回放的对话脚本
 │   ├── demo_all.txt
+│   ├── demo_anomaly_case.py    #   可复现异常量化样例
+│   ├── make_anomaly_100.py     #   生成 100 条异常样例
 │   ├── demo_transfer.txt
 │   ├── demo_bill.txt
 │   └── make_bill_image.ps1     #   把文本账单渲染成 PNG，用来生成测试截图
+├── web/                        # H5 聊天页面
 ├── samples/                    # 示例账单（图片 + 文本），可直接用于演示
 │   ├── bill_sample.png
 │   ├── bill_sample.txt
+│   ├── anomaly_dataset_100.csv
 │   └── bill_template.txt       # 可直接编辑的账单导入模板
 ├── finagent/
 │   ├── nlu/                    # 自然语言理解层
-│   │   ├── intent_schema.py    #   意图与槽位定义（含 34 个工具的能力清单）
+│   │   ├── intent_schema.py    #   意图与槽位定义（含 35 个工具的能力清单）
 │   │   ├── intent_parser.py    #   混合解析器：LLM 优先 + 规则兜底
 │   │   └── llm_client.py       #   OpenAI 兼容客户端（纯 urllib）
 │   ├── agent/                  # 智能体编排层
@@ -231,7 +273,9 @@ ai_banking_agent/
 │   │   └── account_tools.py    #   账户查询 / 客户画像 / 能力清单
 │   ├── risk/
 │   │   ├── engine.py           # 风控引擎：限额、确认、验证、异常识别
-│   │   └── scorecard.py        # 风险测评评分卡（5 维度 / 10 打分项 / 回撤压力测试）
+│   │   ├── questionnaire.py    # 6 道计分 + 1 道校验、14 题完整问卷、C1-C5 评分
+│   │   └── scorecard.py        # 兼容评分卡与回撤压力测试
+│   ├── api/                    # HTTP、SSE、会话隔离与企业微信网关
 │   ├── vision/                 # 账单截图识别
 │   │   ├── receipt_reader.py   #   三级识别调度：多模态 / Windows OCR / 文本账单
 │   │   ├── receipt_parser.py   #   OCR 后处理与交易解析
@@ -245,7 +289,7 @@ ai_banking_agent/
 │   │   ├── app.py              # 命令行交互界面
 │   │   └── input_reader.py     # 整段粘贴感知的输入读取
 │   └── utils.py                # 金额/日期/期间的中文解析工具
-└── tests/                      # 171 个 unittest 用例，覆盖六大场景 + 风控 + NLU + 视觉 + 行情
+└── tests/                      # 217 个 unittest 用例，覆盖业务、行情、异常量化、确认、API 与上传
 ```
 
 ## 六、架构说明
@@ -254,6 +298,7 @@ ai_banking_agent/
 
 | 层 | 模块 | 职责 | 不负责什么 |
 |----|------|------|-----------|
+| 渠道层 | `api/`、`web/`、`run_api.py` | HTTP、SSE、H5、IM 会话与幂等 | 不包含业务判断 |
 | 交互层 | `cli/app.py`、`run.py` | 输入输出、命令、时间快进 | 不包含任何业务判断 |
 | 理解层 | `nlu/` | 一句话 -> 结构化意图 + 槽位 | 不决定做什么业务动作 |
 | 识别层 | `vision/` | 账单截图 -> 结构化交易（多模态 / 系统 OCR） | 不写库、不判断异常 |
@@ -264,12 +309,12 @@ ai_banking_agent/
 
 ### 一次请求的完整链路
 
-以「给老婆转2000块，备注生日礼物」为例：
+以「给老婆转2000块，备注生日礼物，用微信」为例：
 
-1. `IntentParser` 解析出 `transfer.send`，槽位 `{payee: 老婆, amount: 2000, note: 生日礼物}`；
+1. `IntentParser` 解析出 `transfer.send`，槽位 `{payee: 老婆, amount: 2000, channel: wechat, note: 生日礼物}`；
 2. `Planner` 查注册表，发现 `transfer.send` 的必填参数都齐了，生成单步计划；
-3. `Planner._describe_step` 把"老婆"解析成"林雅雯"，生成给人看的操作描述；
-4. `RiskEngine.check_transfer` 校验：常用收款人、2000 元低于 5000 元确认门槛、余额充足 -> 放行；
+3. `Planner._describe_step` 解析收款人、收款渠道和付款账户，生成关键信息核对页；
+4. 用户确认收款人、渠道、付款账户和金额后，进入风控校验；
 5. `TransferTool.run` 扣款、记流水、更新收款人常用列表；
 6. `AgentReply` 返回话术 + 结构化数据 + 工具调用轨迹。
 
@@ -287,7 +332,7 @@ ai_banking_agent/
 
 多步计划只做**一次**二次确认，确认文案会把三步都列清楚。
 
-## 七、工具清单（34 个）
+## 七、工具清单（35 个）
 
 | 业务域 | 工具 | 说明 | 风险级 |
 |--------|------|------|--------|
@@ -311,6 +356,7 @@ ai_banking_agent/
 | | `wealth.redeem` | 一键赎回 | 中 |
 | | `wealth.portfolio` | 持仓与收益 | 低 |
 | 卡片管理 | `card.list` | 卡片列表与交易开关 | 低 |
+| | `card.bind` | 绑定他行储蓄卡（卡号校验 + 密码验证） | 高 |
 | | `card.apply` | 申请新卡 | 低 |
 | | `card.limit_adjust` | 额度调整 | 中 |
 | | `card.control` | 线上/境外/免密开关 | 中 |
@@ -456,6 +502,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\make_bill_image.ps1 
 | `overseas` | 境外商户消费 | 提示 |
 
 命中"高危"时还会自动写入提醒（`store.alerts`），体现主动风控。
+异常结果同时带有 0-100 风险分和量化指标，例如金额离群会输出
+`zscore / category_mean / threshold`，深夜大额会输出命中小时，
+便于答辩时解释"为什么判为异常"。可运行：
+
+```powershell
+python scripts\demo_anomaly_case.py
+```
 
 ### 4. 风险测评：可解释评分卡，不是黑盒模型
 
@@ -492,14 +545,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\make_bill_image.ps1 
 "能不能买"由评分卡统一裁决，推荐、申购、持仓复查三处口径一致。
 
 **理财操作前必须先做问卷。** 任何「推荐 / 申购 / 风险测评」请求，都会先触发一份
-6 题的基础风险问卷（收入、可投资资产、投资年限、亏损容忍、投资期限、应急金覆盖）。
+“6 道计分题 + 1 道一致性校验题”的基础风险问卷。第 6 题改为投资目标，
+活期覆盖月数改为降级触发器：不足 1 个月时无论总分多少最高只能评为 C2。
 问卷没完成前不会调用任何推荐或交易工具：
 
 ```
 用户> 给我推荐几个基金
-Agent> 开始推荐前，先花 1 分钟做一份 6 题的风险测评。
+Agent> 开始推荐前，先完成 6 道计分题和 1 道一致性校验题。
        这是投资者适当性管理的要求：没有评估风险承受能力，不能推荐或销售理财产品。
-       第 1/6 题：您的年收入大约是多少？
+       第 1/7 题：您的年收入大约是多少？
+         为什么问：这题决定您的现金流稳定性和可承受的投资金额。
          A. 10 万以下   B. 10-30 万   C. 30-100 万   D. 100 万以上
 用户> b
 ...
@@ -507,8 +562,12 @@ Agent> 评估完成：C3 平衡型（65/100）。
        可买产品：R1-R3；R4 需签风险不匹配警示书并二次确认；R5 及以上禁止销售。
 ```
 
-支持回复字母、序号或选项原文；回复「跳过」按账户数据推断；回复「取消」中止。
+支持回复字母、序号或选项原文；回复「跳过」时先展示推断值、依据和置信度，
+用户确认后才采用并记录确认时间；回复「取消」中止。
 问卷结果写入会话，后续推荐按实测 C 级执行，`/reset` 会清空重来。
+第 5 题使用反向选项；第 7 题与亏损容忍交叉校验，不一致时取较低等级。
+活期资金不足 1 个月时会强制封顶 C2。C1 客户购买 R2 产品必须记录风险不匹配警示，
+进入 24 小时冷静期，结束后才能再次确认申购。
 
 ### 6. 产品体系与数据来源（真实 / 演示分列）
 
@@ -559,7 +618,7 @@ Agent> 评估完成：C3 平衡型（65/100）。
 python -m unittest discover -s tests -t .
 ```
 
-171 个用例，约 2 秒跑完，默认全部离线（不依赖大模型和网络）：
+217 个用例，Windows OCR 测试会略慢；除一个默认跳过的联网行情测试外，全部离线运行：
 
 | 文件 | 覆盖内容 |
 |------|---------|
@@ -575,8 +634,13 @@ python -m unittest discover -s tests -t .
 | `tests/test_scorecard.py` | 评分卡维度与分值、阈值映射、单调性、回撤压力测试 |
 | `tests/test_paste_input.py` | 整段粘贴收集、完整性与静默窗口、模板导入、时间戳不当收款人、自我说明 |
 | `tests/test_market.py` | 行情解析、实时/演示分列、股票/债券/基金/衍生品四类推荐 |
-| `tests/test_questionnaire.py` | 14 题问卷结构、加权计分、C1-C5 映射、C 级与 R 级匹配规则 |
-| `tests/test_questionnaire_gate.py` | 理财操作前的 6 题闸门、选项校验、跳过/取消、答完解锁推荐 |
+| `tests/test_anomaly_quant.py` | 异常风险分、统计指标、可复现异常样例 |
+| `tests/test_questionnaire.py` | 6+1 基础问卷、反向题、降级触发器、14 题完整问卷与等级匹配 |
+| `tests/test_questionnaire_gate.py` | 6 道计分 + 1 道校验闸门、推断确认、解释与复测提示 |
+| `tests/test_confirmations.py` | 生日输入、系统推断确认、转账/卡片/订阅/赎回/绑卡关键信息核对 |
+| `tests/test_api_service.py` | 会话隔离、IM 用户映射、请求幂等 |
+| `tests/test_api_http.py` | REST API、SSE、文件上传、访问口令、H5 页和企业微信签名 |
+| `tests/test_run_api.py` | 本机与局域网访问地址生成 |
 
 ## 十二、四条可直接复制的测试对话
 
@@ -585,8 +649,9 @@ python -m unittest discover -s tests -t .
 ### 对话一：转账 + 账单 + 异常识别
 
 ```
-给老婆转2000块，备注生日礼物
-下个月5号自动给房东转3800房租
+给老婆转2000块，备注生日礼物，用微信
+确认
+下个月5号自动给房东转3800房租，用银行卡
 确认
 昨晚聚餐960，我、王强、李思琪AA
 确认
@@ -605,9 +670,10 @@ python -m unittest discover -s tests -t .
 帮我做个风险测评
 b
 b
-b
 c
 d
+a
+c
 c
 我有5万块，稳健一点怎么配置
 买1万块稳利债券A
@@ -623,7 +689,8 @@ c
 确认
 ```
 
-前 6 个 `b/b/b/c/d/c` 是在回答 6 题风险问卷（年收入 / 可投资产 / 投资年限 / 亏损容忍 / 期限 / 应急金），
+前 7 个 `b/b/b/c/d/c/c` 是在回答 6 道计分题和 1 道校验题
+（年收入 / 可投资产 / 投资年限 / 亏损容忍 / 期限 / 投资目标 / 下跌行为），
 答完才会进入理财推荐。
 
 预期：问卷给出 C3 与可买范围；推荐只给 R3 以内的产品；
@@ -634,13 +701,14 @@ c
 
 ```
 我老婆快生日了，帮我准备一下
+11月20日
 确认
 今天有什么要注意的
 /advance 40
 我的理财持仓
 ```
 
-预期：Agent 自动查出爱人生日 2026-11-20，锁定 1000 元活期，
+预期：Agent 要求用户输入并确认爱人生日，然后锁定 1000 元活期，
 并预约 2026-11-18（生日前 2 天）下单鲜花与蛋糕；
 每日简报汇总异常、订阅、待执行计划与资金目标；
 `/advance 40` 把时间快进到生日附近，两条预约任务被自动执行。

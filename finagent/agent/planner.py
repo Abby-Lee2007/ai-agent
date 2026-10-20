@@ -15,7 +15,9 @@ from typing import Any, Dict, List, Tuple
 from finagent.agent.registry import ToolRegistry
 from finagent.nlu.intent_schema import Intent
 from finagent.tools.base import ToolContext
+from finagent.tools.card_tools import BANK_BINS
 from finagent.tools.crossscene_tools import lookup_person
+from finagent.tools.transfer_tools import channel_account, resolve_account
 from finagent.utils import parse_date
 
 
@@ -119,6 +121,38 @@ DEFAULT_QUESTIONS = {
 
 NUMERIC_SLOTS = {"amount", "total", "target_amount", "new_limit", "budget", "limit_request", "days", "risk_level"}
 DATE_SLOTS = {"when", "deadline", "date", "birthday"}
+CHANNEL_LABELS = {
+    "phone": "手机号（数字人民币）",
+    "wechat": "微信",
+    "alipay": "支付宝",
+    "bank": "银行卡",
+}
+CARD_KIND_LABELS = {
+    "credit": "信用卡",
+    "debit": "借记卡",
+    "virtual": "虚拟卡",
+    "supplementary": "附属卡",
+}
+
+# Writes that depend on inferred, resolved, or defaulted business data must be
+# reviewed as a whole before any tool is allowed to mutate state.
+DATA_CONFIRM_INTENTS = {
+    "transfer.send",
+    "transfer.schedule",
+    "transfer.split_aa",
+    "wealth.subscribe",
+    "wealth.redeem",
+    "card.apply",
+    "card.bind",
+    "card.limit_adjust",
+    "card.control",
+    "card.freeze",
+    "card.unlock",
+    "card.report_lost",
+    "subscription.cancel",
+    "goal.create",
+    "crossscene.birthday_plan",
+}
 
 
 class Planner:
@@ -183,17 +217,20 @@ class Planner:
         person = slots.get("person") or "爱人"
         target_person, birthday = lookup_person(ctx, person)
         display_name = target_person.name if target_person else person
-        # 用户在多轮对话里直接告知了生日时，以用户提供的日期为准
         given = slots.get("birthday")
-        if given:
-            parsed = parse_date(str(given), ctx.clock.today())
-            if parsed is not None:
-                birthday = parsed
-        if birthday is None:
+        if not given:
             plan = Plan(intent=intent.name, slots=slots, missing=["birthday"])
-            plan.question = (f"我还不知道「{display_name}」的生日，可以告诉我具体日期吗？"
-                             f"例如「11月20日」。")
+            hint = (f"系统记录为 {birthday.isoformat()}，请重新输入确认。"
+                    if birthday else "系统目前没有记录。")
+            plan.question = (f"请先输入「{display_name}」的生日，格式例如「11月20日」或「2026-11-20」。"
+                             f"\n{hint}")
             return plan
+        parsed = parse_date(str(given), ctx.clock.today())
+        if parsed is None:
+            plan = Plan(intent=intent.name, slots=slots, missing=["birthday"])
+            plan.question = "这个生日日期无法识别，请重新输入，例如「11月20日」。"
+            return plan
+        birthday = parsed
         budget = float(slots.get("budget") or 1000.0)
         lock_amount = float(slots["budget"]) if slots.get("budget") else 1000.0
         gift_day = birthday - timedelta(days=2)
@@ -234,21 +271,49 @@ class Planner:
         tool = step.tool
         try:
             if tool == "transfer.send":
-                text = (f"向「{self._payee_label(ctx, args.get('payee'))}」"
-                        f"转账 {float(args.get('amount', 0)):,.2f} 元")
-                return text + (f"，备注：{args['note']}" if args.get("note") else "")
+                channel = str(args.get("channel") or "phone")
+                payee = ctx.store.find_payee(ctx.user_id, str(args.get("payee") or ""))
+                target = channel_account(payee, channel) if payee else ""
+                payer = resolve_account(ctx, str(args.get("account") or ""))
+                parts = [
+                    f"向「{self._payee_label(ctx, args.get('payee'))}」"
+                    f"转账 {float(args.get('amount', 0)):,.2f} 元",
+                    f"收款方式：{CHANNEL_LABELS.get(channel, channel)}",
+                ]
+                if target:
+                    parts.append(f"收款账号：{target}")
+                if payer:
+                    parts.append(f"付款账户：{payer.name}（尾号 {payer.tail}）")
+                if args.get("note"):
+                    parts.append(f"备注：{args['note']}")
+                return "；".join(parts)
             if tool == "transfer.schedule":
                 repeat = {"once": "一次性", "monthly": "每月", "weekly": "每周"}.get(
                     str(args.get("repeat", "once")), "一次性"
                 )
+                channel = str(args.get("channel") or "phone")
+                payee = ctx.store.find_payee(ctx.user_id, str(args.get("payee") or ""))
+                target = channel_account(payee, channel) if payee else ""
                 when = str(args.get("when", ""))
                 parsed = parse_date(when, ctx.clock.today())
                 when_text = parsed.isoformat() if parsed else when
-                return (f"{repeat}向「{self._payee_label(ctx, args.get('payee'))}」"
-                        f"转账 {float(args.get('amount', 0)):,.2f} 元，首次执行 {when_text}")
+                parts = [
+                    f"{repeat}向「{self._payee_label(ctx, args.get('payee'))}」"
+                    f"转账 {float(args.get('amount', 0)):,.2f} 元",
+                    f"收款方式：{CHANNEL_LABELS.get(channel, channel)}",
+                    f"首次执行：{when_text}",
+                ]
+                if target:
+                    parts.append(f"收款账号：{target}")
+                return "；".join(parts)
             if tool == "transfer.split_aa":
                 people = args.get("participants") or []
-                return f"按 {len(people)} 人平摊 {float(args.get('total', 0)):,.2f} 元并发起 AA 收款"
+                total = float(args.get("total", 0))
+                share = total / len(people) if people else 0.0
+                channel = str(args.get("channel") or "wechat")
+                return (f"AA 收款 {total:,.2f} 元；{len(people)} 人平摊，"
+                        f"每人 {share:,.2f} 元；收款方式：{CHANNEL_LABELS.get(channel, channel)}；"
+                        "发起人：本人")
             if tool == "bill.analyze":
                 return f"统计 {args.get('period', 'this_month')} 的消费分类与收支情况"
             if tool == "bill.anomaly":
@@ -258,30 +323,83 @@ class Planner:
             if tool == "bill.search":
                 return f"检索与「{args.get('keyword')}」相关的消费"
             if tool == "wealth.subscribe":
-                return f"申购「{args.get('product')}」{float(args.get('amount', 0)):,.2f} 元"
+                product = ctx.store.find_product(str(args.get("product") or ""))
+                payer = resolve_account(ctx, str(args.get("account") or ""))
+                product_text = (f"「{product.name}」（{product.product_id}，R{product.risk_level}）"
+                                if product else f"「{args.get('product')}」")
+                parts = [f"申购{product_text} {float(args.get('amount', 0)):,.2f} 元"]
+                if payer:
+                    parts.append(f"扣款账户：{payer.name}（尾号 {payer.tail}）")
+                return "；".join(parts)
             if tool == "wealth.redeem":
-                text = f"赎回「{args.get('product')}」" if args.get("product") else "赎回理财持仓"
-                if args.get("amount"):
-                    text += f" {float(args['amount']):,.2f} 元"
-                return text
+                holdings = ctx.store.holdings_of(ctx.user_id, status="holding")
+                product_key = str(args.get("product") or "")
+                product = ctx.store.find_product(product_key) if product_key else None
+                if product:
+                    holdings = [h for h in holdings if h.product_id == product.product_id]
+                names = []
+                for holding in holdings:
+                    item = ctx.store.products.get(holding.product_id)
+                    names.append(item.name if item else holding.product_id)
+                scope = "全部持仓" if not product_key else f"「{product.name if product else product_key}」"
+                amount_text = (f" {float(args['amount']):,.2f} 元"
+                               if args.get("amount") else "（全部可赎回份额）")
+                return f"赎回{scope}{amount_text}；涉及：{'、'.join(names) or '无持仓'}"
+            if tool == "card.apply":
+                kind = str(args.get("kind") or "virtual")
+                defaults = {"credit": 20_000.0, "virtual": 5_000.0, "supplementary": 10_000.0}
+                limit = args.get("limit_request")
+                limit = float(limit) if limit is not None else defaults.get(kind, 5_000.0)
+                return (f"申请{CARD_KIND_LABELS.get(kind, kind)}；"
+                        f"发卡行：{args.get('bank') or '银联'}；"
+                        f"期望额度：{limit:,.0f} 元")
+            if tool == "card.bind":
+                number = "".join(ch for ch in str(args.get("card_no") or "") if ch.isdigit())
+                bank = str(args.get("bank") or BANK_BINS.get(number[:6], "未识别银行"))
+                phone = str(args.get("phone") or "未提供")
+                return (f"绑定{bank}储蓄卡（尾号{number[-4:]}）；"
+                        f"预留手机号：{phone}")
             if tool in {"card.freeze", "card.unlock", "card.report_lost"}:
                 card = ctx.store.find_card(ctx.user_id, str(args.get("card", "")))
-                label = f"尾号{card.tail}的卡片" if card else "默认卡片"
+                label = (f"{CARD_KIND_LABELS.get(card.kind, card.kind)}（尾号{card.tail}）"
+                         if card else "未识别的卡片")
                 if tool == "card.freeze":
                     return f"冻结{label}，暂停全部交易"
                 if tool == "card.unlock":
                     return f"解冻{label}"
                 return f"为{label}办理挂失并补卡（原卡将永久失效）"
             if tool == "card.limit_adjust":
-                return f"把额度调整为 {float(args.get('new_limit', 0)):,.0f} 元"
+                card = ctx.store.find_card(ctx.user_id, str(args.get("card", "")))
+                label = (f"{CARD_KIND_LABELS.get(card.kind, card.kind)}（尾号{card.tail}）"
+                         if card else "未识别的卡片")
+                return f"把{label}的额度调整为 {float(args.get('new_limit', 0)):,.0f} 元"
             if tool == "card.control":
+                card = ctx.store.find_card(ctx.user_id, str(args.get("card", "")))
+                label = (f"{CARD_KIND_LABELS.get(card.kind, card.kind)}（尾号{card.tail}）"
+                         if card else "未识别的卡片")
                 scope = {"online": "线上交易", "overseas": "境外交易",
                          "contactless": "小额免密"}.get(str(args.get("scope")), str(args.get("scope")))
-                return f"{'开启' if args.get('enable') else '关闭'}{scope}"
+                return f"{'开启' if args.get('enable') else '关闭'}{label}的{scope}"
             if tool == "subscription.cancel":
-                return f"取消「{args.get('merchant')}」的自动续费"
+                keyword = str(args.get("merchant") or "")
+                target = next(
+                    (sub for sub in ctx.store.subscriptions_of(ctx.user_id, status="active")
+                     if keyword and (keyword in sub.merchant or sub.merchant in keyword)),
+                    None,
+                )
+                if target is None:
+                    return f"取消「{keyword}」的自动续费（未找到明确匹配）"
+                return (f"取消「{target.merchant}」的自动续费；"
+                        f"扣费金额：{target.amount:,.2f} 元；"
+                        f"下次扣费：{target.next_charge_date}")
             if tool == "goal.create":
-                return f"锁定 {float(args.get('target_amount', 0)):,.2f} 元到目标「{args.get('name')}」"
+                account = ctx.store.primary_account(ctx.user_id)
+                parts = [f"锁定 {float(args.get('target_amount', 0)):,.2f} 元到目标「{args.get('name')}」"]
+                if account:
+                    parts.append(f"锁定账户：{account.name}（尾号 {account.tail}）")
+                if args.get("deadline"):
+                    parts.append(f"目标日期：{args['deadline']}")
+                return "；".join(parts)
             if tool == "crossscene.schedule_gift":
                 return (f"预约 {args.get('date')} 为{args.get('person')}下单{args.get('item')}，"
                         f"预算 {float(args.get('budget', 0)):,.2f} 元")

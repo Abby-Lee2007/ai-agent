@@ -10,6 +10,9 @@ runtime_uploads/
 
 # 环境变量与密钥
 .env
+ui-artifacts/
+.chrome-profile/
+.edge-profile/
 
 # 编辑器
 .vscode/

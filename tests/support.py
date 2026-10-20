@@ -62,17 +62,23 @@ def run_to_completion(
 
 
 def answer_basic_questionnaire(agent: BankingAgent, answers: str = "b"):
-    """按顺序回答 6 题基础问卷，返回最后一轮回复。"""
+    """按顺序回答基础问卷（6 道计分 + 1 道校验），返回最后一轮回复。"""
     reply = None
-    for _ in range(6):
+    for _ in range(7):
         reply = agent.handle(answers)
+        pending = agent.session.pending
+        if pending is None or pending.kind != "questionnaire":
+            break
     return reply
 
 
 def send_money(agent: BankingAgent, text: str, channel: str = "微信"):
-    """发起转账并自动回答渠道追问（手机号/微信/支付宝）。"""
+    """发起转账，自动回答渠道追问并确认关键数据。"""
     reply = agent.handle(text)
     pending = agent.session.pending
     if reply.kind == "question" and pending is not None and "channel" in pending.missing:
         reply = agent.handle(channel)
+        pending = agent.session.pending
+    if reply.kind == "confirm" and pending is not None and pending.kind == "data_confirm":
+        reply = agent.handle("确认")
     return reply

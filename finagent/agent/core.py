@@ -13,11 +13,19 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from config import LLMConfig, RiskPolicy
 from finagent.agent.dialogue import DialogueSession, Pending, classify_control
-from finagent.agent.planner import NUMERIC_SLOTS, DATE_SLOTS, Plan, Planner, PlanStep
+from finagent.agent.planner import (
+    DATA_CONFIRM_INTENTS,
+    NUMERIC_SLOTS,
+    DATE_SLOTS,
+    Plan,
+    Planner,
+    PlanStep,
+)
 from finagent.agent.registry import ToolRegistry, build_default_registry
 from finagent.agent.scheduler import Scheduler
 from finagent.data.store import Clock, DataStore
@@ -31,7 +39,7 @@ from finagent.risk.questionnaire import (
     BASIC_MAP,
     BASIC_QUESTIONS,
     evaluate_basic,
-    infer_basic_answers,
+    infer_basic_answers_detailed,
 )
 from finagent.tools.base import ToolContext, ToolResult
 from finagent.tools.transfer_tools import resolve_account
@@ -94,6 +102,8 @@ class BankingAgent:
         self.scratch: Dict[str, Any] = {}
         self.risk_answers: Dict[str, str] = {}
         self.risk_level: Optional[int] = None
+        self.risk_assessed_at = ""
+        self.risk_inference_confirmed_at = ""
         self.verify_attempts = 0
         self.last_intent_name = ""
 
@@ -105,6 +115,8 @@ class BankingAgent:
         self.scratch.clear()
         self.risk_answers.clear()
         self.risk_level = None
+        self.risk_assessed_at = ""
+        self.risk_inference_confirmed_at = ""
         self.verify_attempts = 0
 
     def context(self) -> ToolContext:
@@ -152,6 +164,17 @@ class BankingAgent:
     def _route(self, text: str) -> AgentReply:
         pending = self.session.pending
 
+        if pending is not None and pending.kind == "risk_cooling":
+            return self._handle_risk_cooling(pending, text)
+
+        if pending is not None and pending.kind == "data_confirm":
+            control = classify_control(text)
+            if control == "confirm":
+                return self._after_data_confirm(pending)
+            if control == "deny":
+                self.session.clear_pending()
+                return AgentReply("好的，本次操作已取消，没有执行任何业务动作。")
+
         if pending is not None and pending.kind == "confirm":
             control = classify_control(text)
             if control == "confirm":
@@ -165,6 +188,19 @@ class BankingAgent:
 
         if pending is not None and pending.kind == "slot":
             return self._resume_from_slots(pending, text)
+
+        if pending is not None and pending.kind == "questionnaire_confirm":
+            control = classify_control(text)
+            if control == "confirm":
+                return self._finish_questionnaire(pending)
+            if control == "deny":
+                self.session.clear_pending()
+                return AgentReply("好的，系统推断结果未采用，本次不做任何理财推荐。")
+            return AgentReply(
+                "请回复「确认」采用这组系统推断答案，或回复「取消」放弃。",
+                kind="question",
+                needs_input=True,
+            )
 
         if pending is not None and pending.kind == "questionnaire":
             return self._handle_questionnaire(pending, text)
@@ -234,9 +270,10 @@ class BankingAgent:
         )
         self.session.pending = pending
         head = (
-            "开始推荐前，先花 1 分钟做一份 6 题的风险测评。\n"
+            "开始推荐前，先完成 6 道计分题和 1 道一致性校验题。\n"
             "  这是投资者适当性管理的要求：没有评估风险承受能力，不能推荐或销售理财产品。\n"
-            "  可以直接回复选项字母，也可以回复文字；回复「跳过」则按你的账户数据推断。\n"
+            "  可以直接回复选项字母，也可以回复文字；回复「跳过」时，系统会先展示推断答案，"
+            "只有你确认后才会采用。\n"
         )
         return AgentReply(head + "\n" + self._question_text(pending),
                           intent=intent.name, kind="question", needs_input=True)
@@ -247,6 +284,8 @@ class BankingAgent:
         total = len(BASIC_QUESTIONS)
         index = total - len(pending.queue) + 1
         lines = [f"第 {index}/{total} 题：{question.text}"]
+        if question.why:
+            lines.append(f"  为什么问：{question.why}")
         lines.extend(f"  {option.key.upper()}. {option.label}" for option in question.options)
         lines.append(f"请回复 A-{question.options[-1].key.upper()} 之一。")
         return "\n".join(lines)
@@ -275,11 +314,22 @@ class BankingAgent:
             self.session.clear_pending()
             return AgentReply("好的，风险评估已取消，本次不做任何理财推荐。")
         if cleaned in self.SKIP_WORDS:
-            inferred = infer_basic_answers(self.store.get_user(self.user_id), self.store,
-                                           self.clock.today())
+            inferred = infer_basic_answers_detailed(
+                self.store.get_user(self.user_id),
+                self.store,
+                self.clock.today(),
+            )
+            pending.inferences = dict(inferred)
             for qid in list(pending.queue):
-                pending.answers[qid] = inferred.get(qid, pending.answers.get(qid, "a"))
+                pending.answers[qid] = inferred.get(qid).option if qid in inferred else pending.answers.get(qid, "a")
             pending.queue = []
+            pending.kind = "questionnaire_confirm"
+            return AgentReply(
+                self._questionnaire_review_text(pending),
+                intent=pending.intent,
+                kind="confirm",
+                needs_input=True,
+            )
         else:
             qid = pending.queue[0]
             key = self._parse_option(qid, cleaned)
@@ -294,20 +344,66 @@ class BankingAgent:
         if pending.queue:
             return AgentReply(self._question_text(pending), kind="question", needs_input=True)
 
+        return self._finish_questionnaire(pending)
+
+    def _questionnaire_review_text(self, pending: Pending) -> str:
+        lines = ["系统推断结果如下，尚未用于理财评估："]
+        for question in BASIC_QUESTIONS:
+            key = pending.answers.get(question.qid, "")
+            option = question.option(key)
+            label = option.label if option else key.upper()
+            inference = pending.inferences.get(question.qid)
+            lines.append(f"  {question.text}  {key.upper()}. {label}")
+            if inference is not None:
+                lines.append(
+                    f"    依据：{inference.reason}；置信度：{inference.confidence:.0%}"
+                )
+        lines.append("")
+        lines.append("请回复「确认」采用这组推断答案，或回复「取消」放弃。")
+        return "\n".join(lines)
+
+    def _finish_questionnaire(self, pending: Pending) -> AgentReply:
         user = self.store.get_user(self.user_id)
         result = evaluate_basic(pending.answers, user, self.store, self.clock.today())
         self.risk_answers = dict(pending.answers)
         self.risk_level = result.level
+        self.risk_assessed_at = self.clock.iso()
+        if pending.inferences:
+            self.risk_inference_confirmed_at = self.clock.iso()
+            pending.inference_confirmed_at = self.risk_inference_confirmed_at
+            self.store.log(
+                "risk.inference_confirmed",
+                answers=dict(pending.answers),
+                confirmed_at=self.risk_inference_confirmed_at,
+            )
+        self.store.log(
+            "risk.assessed",
+            level=result.level,
+            total=result.total,
+            emergency_months=result.emergency_months,
+            caps=list(result.caps),
+        )
         origin = pending.origin
         self.session.clear_pending()
         return self._after_questionnaire(result, origin)
 
     def _after_questionnaire(self, result, origin: Optional[Intent]) -> AgentReply:
+        weakest = result.weakest_details(3)
+        weakest_text = "、".join(
+            f"{item.question} {item.answer}（{item.score:g}/{item.max_score:g}）"
+            for item in weakest
+        )
         summary = (
             f"评估完成：{result.label}（{result.total:.0f}/100）。\n"
             f"  可买产品：R1-R{result.level}；R{min(result.level + 1, 5)} 需签风险不匹配警示书并二次确认；"
-            f"R{min(result.level + 2, 5)} 及以上禁止销售。"
+            f"R{min(result.level + 2, 5)} 及以上禁止销售。\n"
+            f"  主要拉低项：{weakest_text or '无'}\n"
+            f"  建议 12 个月后或资产发生重大变化时复测。"
         )
+        for note in [*result.caps, *result.consistency_notes]:
+            summary += f"\n  提示：{note}"
+        if result.straight_line:
+            summary += "\n  请确认是否认真阅读题目；系统已记录本次一致性异常。"
         target = origin if origin is not None else Intent("wealth.risk_assess", {})
         ctx = self.context()
         plan = self.planner.plan(target, ctx)
@@ -492,7 +588,7 @@ class BankingAgent:
     # ==================================================================
     # 风控闸门
     # ==================================================================
-    def _gate_and_execute(self, plan: Plan) -> AgentReply:
+    def _gate_and_execute(self, plan: Plan, data_confirmed: bool = False) -> AgentReply:
         ctx = self.context()
         decisions: List[RiskDecision] = []
         blockers: List[str] = []
@@ -510,8 +606,33 @@ class BankingAgent:
         requires_verification = any(d.requires_verification for d in decisions)
         requires_confirmation = any(d.requires_confirmation for d in decisions)
         risk_notes = [d.summary() for d in decisions if d.reasons]
+        cooling_product = self._cooling_product(plan)
+        if cooling_product is not None:
+            risk_notes.append(
+                f"客户评级 C1，目标产品「{cooling_product.name}」为 R2；"
+                "已签署风险不匹配警示提示，进入 24 小时冷静期"
+            )
 
-        if requires_confirmation:
+        if plan.intent in DATA_CONFIRM_INTENTS and not data_confirmed:
+            self.session.pending = Pending(
+                kind="data_confirm",
+                intent=plan.intent,
+                plan=plan,
+                slots=dict(plan.slots),
+            )
+            tail = "\n\n请回复「确认」执行，或「取消」放弃。"
+            if requires_verification:
+                tail = ("\n\n请回复「确认」继续。确认后还需要输入 6 位短信验证码"
+                        f"（演示环境固定为 {RiskPolicy.DEMO_SMS_CODE}）。")
+            return AgentReply(
+                self._confirm_text(plan, risk_notes, header="请核对关键信息，尚未执行：") + tail,
+                intent=plan.intent,
+                kind="confirm",
+                needs_input=True,
+                plan=plan.tools(),
+            )
+
+        if requires_confirmation and not data_confirmed:
             self.session.pending = Pending(kind="confirm", intent=plan.intent, plan=plan,
                                            slots=dict(plan.slots))
             tail = "\n\n请回复「确认」执行，或「取消」放弃。"
@@ -535,6 +656,84 @@ class BankingAgent:
                 plan=plan.tools(),
             )
         return self._execute(plan, ctx)
+
+    def _after_data_confirm(self, pending: Pending) -> AgentReply:
+        if pending.plan is None:
+            self.session.clear_pending()
+            return AgentReply("计划已失效，请重新说一次您的需求。", ok=False, kind="error")
+        plan = pending.plan
+        product = self._cooling_product(plan)
+        if product is not None:
+            available_at = (self.clock.now() + timedelta(hours=24)).isoformat(timespec="seconds")
+            self.session.pending = Pending(
+                kind="risk_cooling",
+                intent=plan.intent,
+                plan=plan,
+                slots={
+                    "product_id": product.product_id,
+                    "available_at": available_at,
+                },
+            )
+            self.store.log(
+                "risk.cooling_started",
+                product=product.name,
+                risk_level=product.risk_level,
+                available_at=available_at,
+            )
+            return AgentReply(
+                f"风险不匹配警示已记录。目标产品「{product.name}」为 R2，"
+                "高于您的 C1 承受能力。\n"
+                f"冷静期将持续到 {available_at}。冷静期结束前不会执行申购。\n"
+                "冷静期结束后回复「确认」继续，或回复「取消」放弃。",
+                intent=plan.intent,
+                kind="question",
+                needs_input=True,
+            )
+        self.session.clear_pending()
+        return self._gate_and_execute(plan, data_confirmed=True)
+
+    def _handle_risk_cooling(self, pending: Pending, text: str) -> AgentReply:
+        control = classify_control(text)
+        if control == "deny":
+            self.session.clear_pending()
+            return AgentReply("好的，风险不匹配申购已取消，本次不会扣款。")
+        if control != "confirm":
+            return AgentReply(
+                "请回复「确认」检查冷静期状态，或回复「取消」放弃本次申购。",
+                kind="question",
+                needs_input=True,
+            )
+        available_at = datetime.fromisoformat(str(pending.slots.get("available_at") or ""))
+        now = self.clock.now()
+        if now < available_at:
+            remaining = available_at - now
+            hours = max(1, int(remaining.total_seconds() // 3600) + 1)
+            return AgentReply(
+                f"冷静期尚未结束，还需约 {hours} 小时。"
+                f"可在 {available_at.isoformat(timespec='seconds')} 后再次确认。",
+                kind="question",
+                needs_input=True,
+            )
+        if pending.plan is None:
+            self.session.clear_pending()
+            return AgentReply("计划已失效，请重新发起申购。", ok=False, kind="error")
+        plan = pending.plan
+        self.store.log(
+            "risk.cooling_completed",
+            intent=plan.intent,
+            completed_at=self.clock.iso(),
+        )
+        self.session.clear_pending()
+        return self._gate_and_execute(plan, data_confirmed=True)
+
+    def _cooling_product(self, plan: Plan):
+        if plan.intent != "wealth.subscribe" or self.risk_level != 1:
+            return None
+        step = next((item for item in plan.steps if item.tool == "wealth.subscribe"), None)
+        if step is None:
+            return None
+        product = self.store.find_product(str(step.args.get("product") or ""))
+        return product if product is not None and product.risk_level == 2 else None
 
     def _assess_step(self, tool_name: str, args: Dict[str, Any], ctx: ToolContext) -> RiskDecision:
         if tool_name == "transfer.send":
@@ -563,8 +762,13 @@ class BankingAgent:
             "wealth.subscribe": "理财申购",
         }.get(tool_name, tool_name)
 
-    def _confirm_text(self, plan: Plan, risk_notes: List[str]) -> str:
-        header = "以下操作需要您确认：" if plan.description else "请确认本次操作："
+    def _confirm_text(
+        self,
+        plan: Plan,
+        risk_notes: List[str],
+        header: str = "",
+    ) -> str:
+        header = header or ("以下操作需要您确认：" if plan.description else "请确认本次操作：")
         lines = [header]
         if plan.description:
             lines.append(plan.description)

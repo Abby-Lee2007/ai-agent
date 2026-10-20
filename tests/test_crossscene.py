@@ -6,12 +6,19 @@ import unittest
 from tests.support import make_agent, run_to_completion, send_money
 
 
+def begin_birthday_plan(agent, text: str = "我老婆快生日了，帮我准备一下"):
+    reply = agent.handle(text)
+    if reply.kind == "question" and agent.session.pending is not None:
+        reply = agent.handle("11月20日")
+    return reply
+
+
 class TestCrossScene(unittest.TestCase):
     def setUp(self):
         self.agent = make_agent()
 
     def test_birthday_plan_is_multi_step(self):
-        reply = self.agent.handle("我老婆快生日了，帮我准备一下")
+        reply = begin_birthday_plan(self.agent)
         self.assertEqual(reply.intent, "crossscene.birthday_plan")
         self.assertEqual(reply.kind, "confirm")
         self.assertEqual(reply.plan, ["goal.create", "crossscene.schedule_gift", "crossscene.schedule_gift"])
@@ -19,7 +26,7 @@ class TestCrossScene(unittest.TestCase):
         self.assertIn("1,000.00", reply.text)
 
     def test_birthday_plan_execution_locks_money_and_books_gifts(self):
-        reply = run_to_completion(self.agent, self.agent.handle("我老婆快生日了，帮我准备一下"))
+        reply = run_to_completion(self.agent, begin_birthday_plan(self.agent))
         self.assertTrue(reply.ok)
         self.assertEqual(len(reply.trace), 3)
         goal = self.agent.store.goals_of("u_001", status="active")[0]
@@ -33,7 +40,7 @@ class TestCrossScene(unittest.TestCase):
         self.assertEqual({t.run_date for t in tasks}, {"2026-11-18"})
 
     def test_birthday_plan_with_custom_budget(self):
-        reply = self.agent.handle("帮我准备生日惊喜，预算2000")
+        reply = begin_birthday_plan(self.agent, "帮我准备生日惊喜，预算2000")
         self.assertIn("2,000.00", reply.text)
 
     def test_birthday_plan_asks_for_unknown_birthday(self):
@@ -46,7 +53,7 @@ class TestCrossScene(unittest.TestCase):
         self.assertIn("2027-03-02", reply.text)
 
     def test_due_tasks_execute_on_time_travel(self):
-        run_to_completion(self.agent, self.agent.handle("我老婆快生日了，帮我准备一下"))
+        run_to_completion(self.agent, begin_birthday_plan(self.agent))
         self.assertEqual(self.agent.run_due_tasks(), [])
         self.agent.clock.advance(days=40)
         messages = self.agent.run_due_tasks()
@@ -70,7 +77,7 @@ class TestCrossScene(unittest.TestCase):
             self.assertIn(section, reply.text)
 
     def test_goal_list(self):
-        run_to_completion(self.agent, self.agent.handle("我老婆快生日了，帮我准备一下"))
+        run_to_completion(self.agent, begin_birthday_plan(self.agent))
         reply = self.agent.handle("我的攒钱目标")
         self.assertEqual(reply.intent, "goal.list")
         self.assertIn("生日惊喜金", reply.text)

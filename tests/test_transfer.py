@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from tests.support import make_agent, send_money
+from tests.support import make_agent, run_to_completion, send_money
 
 
 class TestSmartTransfer(unittest.TestCase):
@@ -29,7 +29,7 @@ class TestSmartTransfer(unittest.TestCase):
         send_money(self.agent, "给王强转500块")
         self.assertAlmostEqual(account.balance, before - 500, places=2)
 
-    def test_small_transfer_needs_no_confirmation(self):
+    def test_small_transfer_completes_after_data_review(self):
         reply = send_money(self.agent, "给王强转500块")
         self.assertEqual(reply.kind, "executed")
         self.assertIsNone(self.agent.session.pending)
@@ -37,8 +37,7 @@ class TestSmartTransfer(unittest.TestCase):
     def test_scheduled_transfer_creates_task(self):
         reply = send_money(self.agent, "下个月5号自动给房东转3800房租")
         self.assertEqual(reply.intent, "transfer.schedule")
-        self.assertEqual(reply.kind, "confirm")
-        reply = self.agent.handle("确认")
+        self.assertEqual(reply.kind, "executed")
         self.assertTrue(reply.ok)
         tasks = self.agent.store.tasks_of("u_001", status="pending")
         self.assertEqual(len(tasks), 1)
@@ -61,6 +60,7 @@ class TestSmartTransfer(unittest.TestCase):
         self.assertIn("amount", self.agent.session.pending.missing)
         reply = self.agent.handle("600")
         reply = self.agent.handle("微信")
+        reply = run_to_completion(self.agent, reply)
         self.assertTrue(reply.ok)
         self.assertEqual(self.agent.store.transactions_of("u_001")[0].amount, -600.0)
 
@@ -90,8 +90,6 @@ class TestTransferRisk(unittest.TestCase):
 
     def test_large_transfer_requires_confirm_then_sms(self):
         reply = send_money(self.agent, "给老婆转25000块")
-        self.assertEqual(reply.kind, "confirm")
-        reply = self.agent.handle("确认")
         self.assertEqual(reply.kind, "verify")
         reply = self.agent.handle("123456")
         self.assertTrue(reply.ok)
@@ -99,13 +97,15 @@ class TestTransferRisk(unittest.TestCase):
 
     def test_wrong_sms_code_rejected(self):
         send_money(self.agent, "给老婆转25000块")
-        self.agent.handle("确认")
         reply = self.agent.handle("000000")
         self.assertEqual(reply.kind, "verify")
         self.assertIn("不正确", reply.text)
 
     def test_deny_cancels_operation(self):
-        send_money(self.agent, "下个月5号自动给房东转3800房租")
+        agent = self.agent
+        reply = agent.handle("下个月5号自动给房东转3800房租，用银行卡")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertEqual(agent.session.pending.kind, "data_confirm")
         count_before = len(self.agent.store.transactions_of("u_001"))
         reply = self.agent.handle("取消")
         self.assertIn("取消", reply.text)
