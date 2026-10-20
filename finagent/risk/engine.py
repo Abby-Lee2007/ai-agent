@@ -51,6 +51,8 @@ class Anomaly:
     level: str                             # info / warning / danger
     reason: str
     suggestion: str = ""
+    score: float = 0.0                     # 0-100 风险分
+    metrics: Dict[str, Any] = field(default_factory=dict)
 
 
 class RiskEngine:
@@ -334,6 +336,10 @@ class RiskEngine:
                                 f"该笔 {size:,.0f} 元明显偏离历史区间"
                             ),
                             suggestion="确认是否本人消费；若不是，可立即冻结卡片并申请交易争议处理",
+                            score=round(min(95.0, 55.0 + max((size - threshold) / (stdev or 1), 0) * 5), 1),
+                            metrics={"category_mean": round(mean, 2), "category_stdev": round(stdev, 2),
+                                     "threshold": round(threshold, 2),
+                                     "zscore": round((size - mean) / (stdev or 1), 2)},
                         )
                     )
         return result
@@ -354,6 +360,8 @@ class RiskEngine:
                         level="danger",
                         reason=f"{hour:02d}:00 左右的深夜大额支出 {abs(t.amount):,.2f} 元，与日常消费时段不符",
                         suggestion="深夜大额交易是盗刷高发特征，建议核对本人及家人是否为持卡人",
+                        score=round(min(95.0, 70.0 + abs(t.amount) / 1000.0 * 5), 1),
+                        metrics={"hour": hour, "amount": abs(t.amount)},
                     )
                 )
         return result
@@ -390,6 +398,9 @@ class RiskEngine:
                             f"被扣款 {len(group)} 次，每笔 {abs(group[0].amount):,.2f} 元，疑似重复扣款"
                         ),
                         suggestion="可联系商户核实并申请退回多扣款项，或通过异议交易通道发起调单",
+                        score=70.0,
+                        metrics={"window_minutes": RiskPolicy.DUPLICATE_WINDOW_MINUTES,
+                                 "count": len(group), "unit_amount": abs(group[0].amount)},
                     )
                 )
         return result
@@ -411,6 +422,8 @@ class RiskEngine:
                         level="info",
                         reason=f"检测到境外商户消费 {abs(t.amount):,.2f} 元，请确认是否为本人出境使用",
                         suggestion="如非本人出境消费，建议关闭境外交易开关并冻结卡片",
+                        score=45.0,
+                        metrics={"amount": abs(t.amount)},
                     )
                 )
         return result
@@ -444,6 +457,8 @@ class RiskEngine:
                         level="warning",
                         reason=f"1 小时内出现 {len(small)} 笔 20 元以下小额扣款，合计 {total:,.2f} 元，疑似试探性盗刷",
                         suggestion="建议先冻结卡片，再逐笔确认",
+                        score=60.0,
+                        metrics={"window_minutes": 60, "count": len(small), "total": round(total, 2)},
                     )
                 )
                 i = j
@@ -474,6 +489,8 @@ class RiskEngine:
                             level="warning",
                             reason=f"首次在「{t.merchant}」消费即达到 {abs(t.amount):,.2f} 元",
                             suggestion="首次交易大额商户属于典型风险特征，建议确认是否本人操作",
+                            score=round(min(90.0, 50.0 + abs(t.amount) / 1000.0 * 3), 1),
+                            metrics={"amount": abs(t.amount), "first_seen": True},
                         )
                     )
         return result
@@ -501,6 +518,9 @@ class RiskEngine:
                             f"（涨幅 {increase:.0f}%）"
                         ),
                         suggestion="若已不需要该服务，可以让 Agent 一键取消订阅",
+                        score=round(min(75.0, 40.0 + increase / 2), 1),
+                        metrics={"previous_amount": previous, "current_amount": sub.amount,
+                                 "increase_pct": round(increase, 1)},
                     )
                 )
         return result

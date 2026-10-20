@@ -182,12 +182,13 @@ class BillAnomalyTool(Tool):
                 summary=f"{label}未发现异常交易",
             )
         rows = [
-            [LEVEL_ICON.get(a.level, a.level), a.date, a.merchant, format_money(a.amount), a.reason[:38]]
+            [LEVEL_ICON.get(a.level, a.level), f"{a.score:.0f}", a.date, a.merchant,
+             format_money(a.amount), a.reason[:34]]
             for a in anomalies
         ]
         lines = [
             f"{label}共发现 {len(anomalies)} 笔值得注意的交易：",
-            render_table(["级别", "日期", "商户", "金额", "原因"], rows),
+            render_table(["级别", "风险分", "日期", "商户", "金额", "原因"], rows),
             "",
             "处理建议：",
         ]
