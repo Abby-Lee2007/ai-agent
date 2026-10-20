@@ -1,0 +1,5 @@
+# 账单分析场景回放：python run.py --script scripts/demo_bill.txt
+分析我这个月的账单
+帮我看看有没有异常交易
+我今年在星巴克花了多少钱
+生成我的年度账单报告

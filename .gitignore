@@ -1,0 +1,16 @@
+# Python 运行时产物
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 本地数据快照（由 python run.py --save 生成，属于运行时状态，不入库）
+runtime_data/
+
+# 环境变量与密钥
+.env
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
