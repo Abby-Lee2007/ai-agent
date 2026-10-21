@@ -14,7 +14,9 @@ from datetime import date, timedelta
 from typing import Any, List, Optional, Tuple
 
 from finagent.data.models import User
+from finagent.data.providers import MerchantOfferProvider
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, format_money, render_table
+from finagent.tools.transfer_tools import resolve_account
 from finagent.utils import parse_date
 
 
@@ -47,7 +49,11 @@ def lookup_person(ctx: ToolContext, name: str) -> Tuple[Optional[User], Optional
             person = candidate
             break
     if person is None:
-        payee = store.find_payee(user.user_id, resolved_name)
+        payee = (
+            ctx.providers.payees.find(user.user_id, resolved_name)
+            if getattr(ctx, "providers", None) is not None
+            else store.find_payee(user.user_id, resolved_name)
+        )
         if payee:
             resolved_name = payee.name
             for candidate in store.users.values():
@@ -114,7 +120,7 @@ class GoalCreateTool(Tool):
         if amount <= 0:
             return ToolResult(False, "锁定金额需要大于 0。")
 
-        account = store.primary_account(ctx.user_id)
+        account = resolve_account(ctx)
         if account is None:
             return ToolResult(False, "没有找到可用的活期账户。")
         if account.available < amount:
@@ -123,17 +129,30 @@ class GoalCreateTool(Tool):
                 f"活期可用余额不足：可用 {account.available:,.2f} 元，需要锁定 {amount:,.2f} 元。",
             )
 
-        goal = store.add_goal(
-            user_id=ctx.user_id,
-            name=name,
-            target_amount=amount,
-            deadline=deadline or "",
-            scenario=scenario,
-            account_id=account.account_id,
-            note=note,
+        goal = (
+            ctx.providers.goals.add(
+                user_id=ctx.user_id,
+                name=name,
+                target_amount=amount,
+                deadline=deadline or "",
+                scenario=scenario,
+                account_id=account.account_id,
+                note=note,
+            )
+            if getattr(ctx, "providers", None) is not None
+            else store.add_goal(
+                user_id=ctx.user_id,
+                name=name,
+                target_amount=amount,
+                deadline=deadline or "",
+                scenario=scenario,
+                account_id=account.account_id,
+                note=note,
+            )
         )
         goal.locked_amount = amount
         account.locked = round(account.locked + amount, 2)
+        store.touch(goal, account)
 
         lines = [
             f"已创建资金目标「{name}」，锁定 {amount:,.2f} 元",
@@ -163,7 +182,11 @@ class GoalListTool(Tool):
     examples = ["我的攒钱目标", "看看我锁了多少钱"]
 
     def run(self, ctx: ToolContext) -> ToolResult:  # type: ignore[override]
-        goals = ctx.store.goals_of(ctx.user_id)
+        goals = (
+            ctx.providers.goals.of(ctx.user_id)
+            if getattr(ctx, "providers", None) is not None
+            else ctx.store.goals_of(ctx.user_id)
+        )
         if not goals:
             return ToolResult(True, "您还没有设置资金目标。", summary="暂无目标")
         rows = []
@@ -225,27 +248,71 @@ class ScheduleGiftTool(Tool):
             return ToolResult(False, f"没能理解下单日期「{date}」。")
 
         try:
-            money = float(budget) if budget is not None else self.DEFAULT_BUDGET.get(item, 300.0)
+            max_budget = float(budget) if budget is not None else None
         except (TypeError, ValueError):
-            money = self.DEFAULT_BUDGET.get(item, 300.0)
+            max_budget = None
+        merchant_provider = (
+            ctx.providers.merchants
+            if getattr(ctx, "providers", None) is not None
+            else MerchantOfferProvider(store)
+        )
+        offer = merchant_provider.find_offer(
+            item=item,
+            budget=max_budget,
+            delivery_date=run_day.isoformat(),
+            city=ctx.user.city,
+        )
+        if offer is None:
+            return ToolResult(
+                False,
+                f"当前没有可预约的{item}商户，可能超出预算、库存不足或配送范围不支持。",
+            )
+        money = offer.price
 
-        task = store.add_task(
-            user_id=ctx.user_id,
-            kind="gift_order",
-            run_date=run_day.isoformat(),
-            title=f"为{display_name}预订{item}（预算 {money:,.0f} 元）",
-            payload={
-                "person": display_name,
-                "item": item,
-                "budget": money,
-                "note": note,
-                "channel": "同城即时配送",
-            },
+        task = (
+            ctx.providers.tasks.add(
+                user_id=ctx.user_id,
+                kind="gift_order",
+                run_date=run_day.isoformat(),
+                title=f"为{display_name}在{offer.merchant}预订{item}（{money:,.0f} 元）",
+                payload={
+                    "person": display_name,
+                    "item": item,
+                    "budget": money,
+                    "offer_id": offer.offer_id,
+                    "merchant": offer.merchant,
+                    "delivery_radius_km": offer.delivery_radius_km,
+                    "source": offer.source,
+                    "is_demo": offer.is_demo,
+                    "note": note,
+                    "channel": "同城即时配送",
+                },
+            )
+            if getattr(ctx, "providers", None) is not None
+            else store.add_task(
+                user_id=ctx.user_id,
+                kind="gift_order",
+                run_date=run_day.isoformat(),
+                title=f"为{display_name}在{offer.merchant}预订{item}（{money:,.0f} 元）",
+                payload={
+                    "person": display_name,
+                    "item": item,
+                    "budget": money,
+                    "offer_id": offer.offer_id,
+                    "merchant": offer.merchant,
+                    "delivery_radius_km": offer.delivery_radius_km,
+                    "source": offer.source,
+                    "is_demo": offer.is_demo,
+                    "note": note,
+                    "channel": "同城即时配送",
+                },
+            )
         )
         lines = [
             f"已预约：{run_day.isoformat()} 为「{display_name}」下单{item}，预算 {money:,.2f} 元",
+            f"  商户：{offer.merchant}（{offer.source}）",
             f"  预约单号：{task.task_id}",
-            "  配送方案：同城即时配送，当日 10:00-18:00 送达（原型为模拟下单）",
+            f"  配送方案：同城即时配送，覆盖半径 {offer.delivery_radius_km:g} 公里（原型为模拟下单）",
         ]
         if note:
             lines.append(f"  贺卡留言：{note}")
@@ -274,7 +341,11 @@ class DailyBriefTool(Tool):
         summary_bits: List[str] = []
 
         since = (today - timedelta(days=6)).isoformat()
-        recent = store.transactions_of(ctx.user_id, since, today.isoformat())
+        recent = (
+            ctx.providers.transactions.of(ctx.user_id, since, today.isoformat())
+            if getattr(ctx, "providers", None) is not None
+            else store.transactions_of(ctx.user_id, since, today.isoformat())
+        )
         anomalies = ctx.risk.detect_anomalies(ctx.user_id, recent)
         if anomalies:
             summary_bits.append(f"{len(anomalies)} 笔异常交易")
@@ -284,7 +355,12 @@ class DailyBriefTool(Tool):
             sections.append("【风险提醒】近 7 天没有发现异常交易。")
 
         upcoming = []
-        for sub in store.subscriptions_of(ctx.user_id, status="active"):
+        subscriptions = (
+            ctx.providers.subscriptions.of(ctx.user_id, "active")
+            if getattr(ctx, "providers", None) is not None
+            else store.subscriptions_of(ctx.user_id, status="active")
+        )
+        for sub in subscriptions:
             try:
                 delta = (date.fromisoformat(sub.next_charge_date) - today).days
             except ValueError:
@@ -298,7 +374,12 @@ class DailyBriefTool(Tool):
         else:
             sections.append("【订阅扣费】未来 7 天没有订阅扣费。")
 
-        tasks = [t for t in store.tasks_of(ctx.user_id, status="pending") if t.run_date >= today.isoformat()]
+        tasks_source = (
+            ctx.providers.tasks.of(ctx.user_id, "pending")
+            if getattr(ctx, "providers", None) is not None
+            else store.tasks_of(ctx.user_id, status="pending")
+        )
+        tasks = [t for t in tasks_source if t.run_date >= today.isoformat()]
         if tasks:
             summary_bits.append(f"{len(tasks)} 项待执行任务")
             rows = [[t.run_date, t.title] for t in tasks[:5]]
@@ -306,7 +387,11 @@ class DailyBriefTool(Tool):
         else:
             sections.append("【待执行计划】暂无待执行任务。")
 
-        goals = store.goals_of(ctx.user_id, status="active")
+        goals = (
+            ctx.providers.goals.of(ctx.user_id, "active")
+            if getattr(ctx, "providers", None) is not None
+            else store.goals_of(ctx.user_id, status="active")
+        )
         if goals:
             rows = [[g.name, f"{g.locked_amount:,.0f}/{g.target_amount:,.0f}", g.deadline or "-"] for g in goals]
             sections.append("【资金目标】\n" + render_table(["目标", "已锁定/目标", "日期"], rows))

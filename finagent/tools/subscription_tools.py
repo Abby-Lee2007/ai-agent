@@ -9,7 +9,20 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, List
 
 from finagent.data.models import Subscription
+from finagent.data.provenance import source_badge
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, render_table
+
+
+def _transactions(ctx: ToolContext):
+    if getattr(ctx, "providers", None) is not None:
+        return ctx.providers.transactions.of(ctx.user_id)
+    return ctx.store.transactions_of(ctx.user_id)
+
+
+def _subscriptions(ctx: ToolContext, status: str = "active"):
+    if getattr(ctx, "providers", None) is not None:
+        return ctx.providers.subscriptions.of(ctx.user_id, status)
+    return ctx.store.subscriptions_of(ctx.user_id, status or None)
 
 
 def detect_subscriptions(ctx: ToolContext) -> List[Dict[str, Any]]:
@@ -22,7 +35,7 @@ def detect_subscriptions(ctx: ToolContext) -> List[Dict[str, Any]]:
     4. 排除房租、加油、话费这类天然按月发生的非订阅支出。
     涨价单独识别，所以只要求"除最近一次外"金额稳定。
     """
-    txns = ctx.store.transactions_of(ctx.user_id)
+    txns = _transactions(ctx)
     grouped: Dict[str, List] = defaultdict(list)
     exclude_categories = {"转账", "还款", "住房", "理财", "收入"}
     for t in txns:
@@ -101,7 +114,7 @@ class SubscriptionDetectTool(Tool):
             lines.append(f"  其中有 {len(hiked)} 项涨价：" + "、".join(d["merchant"] for d in hiked))
 
         # 把识别结果同步到订阅表，保证后续"取消订阅"能按商户找到记录
-        existing = {s.merchant for s in ctx.store.subscriptions_of(ctx.user_id)}
+        existing = {s.merchant for s in _subscriptions(ctx, status="")}
         for item in detected:
             if item["merchant"] in existing:
                 continue
@@ -115,6 +128,7 @@ class SubscriptionDetectTool(Tool):
                 next_charge_date=(date.fromisoformat(item["last_date"]) + timedelta(days=30)).isoformat(),
                 auto_detected=True,
             )
+            ctx.store.touch(sub)
             ctx.store.subscriptions[sub.sub_id] = sub
         return ToolResult(
             True,
@@ -135,7 +149,7 @@ class SubscriptionListTool(Tool):
     examples = ["我的订阅都有什么", "每个月自动扣多少钱"]
 
     def run(self, ctx: ToolContext) -> ToolResult:  # type: ignore[override]
-        subs = ctx.store.subscriptions_of(ctx.user_id, status="active")
+        subs = _subscriptions(ctx)
         if not subs:
             return ToolResult(True, "您当前没有进行中的订阅。", summary="无订阅")
         today = ctx.clock.today()
@@ -147,11 +161,19 @@ class SubscriptionListTool(Tool):
             except ValueError:
                 days = "-"
             status = "涨价提醒" if (s.price_history and s.amount > max(s.price_history[:-1] or [s.amount]) * 1.2) else "正常"
-            rows.append([s.merchant, s.category, f"{s.amount:,.2f}", s.next_charge_date, days, status])
+            rows.append([
+                s.merchant,
+                s.category,
+                f"{s.amount:,.2f}",
+                s.next_charge_date,
+                days,
+                status,
+                source_badge(s.source, s.is_live, s.is_demo),
+            ])
         monthly = ctx.store.monthly_subscription_total(ctx.user_id)
         lines = [
             f"当前生效的订阅共 {len(subs)} 项，月度合计约 {monthly:,.2f} 元：",
-            render_table(["商户", "类别", "金额", "下次扣费", "倒计时", "状态"], rows),
+            render_table(["商户", "类别", "金额", "下次扣费", "倒计时", "状态", "来源"], rows),
         ]
         return ToolResult(
             True,
@@ -175,7 +197,7 @@ class SubscriptionCancelTool(Tool):
     examples = ["取消腾讯视频会员", "把iCloud订阅取消掉"]
 
     def run(self, ctx: ToolContext, merchant: str) -> ToolResult:  # type: ignore[override]
-        subs = ctx.store.subscriptions_of(ctx.user_id, status="active")
+        subs = _subscriptions(ctx)
         target = None
         for s in subs:
             if merchant and (merchant in s.merchant or s.merchant in merchant):
@@ -186,6 +208,7 @@ class SubscriptionCancelTool(Tool):
             return ToolResult(False, f"没有找到「{merchant}」的订阅。当前有：{names}")
 
         target.status = "cancelled"
+        ctx.store.touch(target)
         ctx.store.add_task(
             user_id=ctx.user_id,
             kind="subscription_cancel",
@@ -226,7 +249,7 @@ class SubscriptionRemindTool(Tool):
             window = 7
         today = ctx.clock.today()
         upcoming = []
-        for s in ctx.store.subscriptions_of(ctx.user_id, status="active"):
+        for s in _subscriptions(ctx):
             try:
                 delta = (date.fromisoformat(s.next_charge_date) - today).days
             except ValueError:

@@ -6,8 +6,9 @@
 
 设计原则：
 1. **诚实**：拿不到就明确说"实时行情不可用"，绝不拿模拟数字冒充真实数据；
-2. **可降级**：断网、被墙、接口改版时自动进入冷却期，不影响其它业务；
-3. **可复现**：结果缓存 60 秒，避免一次对话里反复打接口。
+2. **可降级**：主源失败时尝试东方财富备用源，再失败才进入冷却期；
+3. **可复现**：结果缓存 60 秒，避免一次对话里反复打接口；
+4. **可观测**：来源、更新时间、缓存命中、失败次数和过期状态都可查询。
 
 注意：这里提供的是**当前价格与当日涨跌**，不是"预期收益"。
 历史涨跌不代表未来收益，界面文案里必须写清楚。
@@ -16,19 +17,35 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Dict, List, Optional
 
+from finagent.data.provenance import is_stale
+
 QUOTE_URL = "https://qt.gtimg.cn/q={symbols}"
+FALLBACK_QUOTE_URL = (
+    "https://push2.eastmoney.com/api/qt/stock/get"
+    "?secid={secid}&fields=f43,f44,f45,f46,f47,f48,f57,f58,f59,f60,f167,f168,f169,f170"
+)
 FUND_URL = ("https://api.fund.eastmoney.com/f10/lsjz"
             "?fundCode={code}&pageIndex=1&pageSize=1")
+FUND_FALLBACK_URL = "https://fundgz.1234567.com.cn/js/{code}.js?rt={stamp}"
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"),
 }
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
 
 
 @dataclass
@@ -50,6 +67,19 @@ class Quote:
     timestamp: str = ""
     source: str = "腾讯财经"
     live: bool = True
+    updated_at: str = field(
+        default_factory=lambda: datetime.now().isoformat(timespec="seconds")
+    )
+    is_demo: bool = False
+    freshness_seconds: int = 60
+
+    @property
+    def is_live(self) -> bool:
+        return self.live
+
+    @property
+    def stale(self) -> bool:
+        return is_stale(self.updated_at, self.freshness_seconds)
 
 
 @dataclass
@@ -62,11 +92,24 @@ class FundNav:
     date: str
     source: str = "东方财富"
     live: bool = True
+    updated_at: str = field(
+        default_factory=lambda: datetime.now().isoformat(timespec="seconds")
+    )
+    is_demo: bool = False
+    freshness_seconds: int = 86400
+
+    @property
+    def is_live(self) -> bool:
+        return self.live
+
+    @property
+    def stale(self) -> bool:
+        return is_stale(self.updated_at, self.freshness_seconds)
 
 
 def _to_float(value: str) -> Optional[float]:
     try:
-        return float(value.strip())
+        return float(str(value).strip())
     except (TypeError, ValueError):
         return None
 
@@ -80,15 +123,30 @@ class MarketDataProvider:
         timeout: float = 5.0,
         ttl: float = 60.0,
         cooldown: float = 120.0,
+        max_retries: int = 1,
+        min_interval: float = 0.2,
     ) -> None:
         self.mode = (mode or os.getenv("FINAGENT_MARKET_MODE", "live")).strip().lower()
         self.timeout = timeout
         self.ttl = ttl
         self.cooldown = cooldown
+        self.max_retries = max(0, int(max_retries))
+        self.min_interval = max(0.0, float(min_interval))
+        self.quote_freshness_seconds = _env_positive_int(
+            "FINAGENT_QUOTE_FRESHNESS_SECONDS", 60
+        )
+        self.fund_freshness_seconds = _env_positive_int(
+            "FINAGENT_FUND_FRESHNESS_SECONDS", 86400
+        )
         self._cache: Dict[str, tuple] = {}
         self._cooldown_until = 0.0
+        self._last_attempt_at = 0.0
+        self.last_success_at = ""
         self.last_error = ""
+        self.last_source = ""
         self.calls = 0
+        self.failures = 0
+        self.cache_hits = 0
 
     @property
     def enabled(self) -> bool:
@@ -98,30 +156,45 @@ class MarketDataProvider:
     def _cached(self, key: str):
         item = self._cache.get(key)
         if item and item[0] > time.time():
+            self.cache_hits += 1
             return item[1]
         return None
 
     def _store(self, key: str, value) -> None:
         self._cache[key] = (time.time() + self.ttl, value)
 
-    def _fetch(self, url: str, encoding: str = "gbk",
-               extra_headers: Optional[Dict[str, str]] = None) -> Optional[str]:
+    def _fetch(
+        self,
+        url: str,
+        encoding: str = "gbk",
+        extra_headers: Optional[Dict[str, str]] = None,
+        bypass_cooldown: bool = False,
+    ) -> Optional[str]:
         if not self.enabled:
             return None
-        if time.time() < self._cooldown_until:
+        if not bypass_cooldown and time.time() < self._cooldown_until:
             return None
-        try:
-            headers = dict(HEADERS)
-            if extra_headers:
-                headers.update(extra_headers)
-            request = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                self.calls += 1
-                return response.read().decode(encoding, errors="replace")
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError) as exc:
-            self.last_error = f"{type(exc).__name__}: {exc}"
-            self._cooldown_until = time.time() + self.cooldown
-            return None
+        headers = dict(HEADERS)
+        if extra_headers:
+            headers.update(extra_headers)
+        for attempt in range(self.max_retries + 1):
+            wait = self.min_interval - (time.time() - self._last_attempt_at)
+            if wait > 0:
+                time.sleep(wait)
+            self._last_attempt_at = time.time()
+            try:
+                request = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    self.calls += 1
+                    self.last_success_at = datetime.now().isoformat(timespec="seconds")
+                    return response.read().decode(encoding, errors="replace")
+            except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError) as exc:
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                self.failures += 1
+                if attempt >= self.max_retries:
+                    self._cooldown_until = time.time() + self.cooldown
+                    return None
+        return None
 
     # ------------------------------------------------------------------
     def quotes(self, symbols: List[str]) -> Dict[str, Quote]:
@@ -140,8 +213,16 @@ class MarketDataProvider:
         if not missing:
             return result
         raw = self._fetch(QUOTE_URL.format(symbols=",".join(missing)))
-        if not raw:
-            return result
+        if raw:
+            self.last_source = "腾讯财经"
+            result.update(self._parse_tencent_quotes(raw))
+        missing = [symbol for symbol in wanted if symbol not in result]
+        if missing:
+            result.update(self._fetch_fallback_quotes(missing))
+        return result
+
+    def _parse_tencent_quotes(self, raw: str) -> Dict[str, Quote]:
+        result: Dict[str, Quote] = {}
         for chunk in raw.split(";"):
             if "=" not in chunk:
                 continue
@@ -168,10 +249,83 @@ class MarketDataProvider:
                 pb=_to_float(parts[46]) if len(parts) > 46 else None,
                 total_cap=_to_float(parts[45]) if len(parts) > 45 else None,
                 timestamp=self._format_stamp(parts[30]),
+                updated_at=datetime.now().isoformat(timespec="seconds"),
+                freshness_seconds=self.quote_freshness_seconds,
             )
             result[symbol] = quote
             self._store(f"q:{symbol}", quote)
         return result
+
+    def _fetch_fallback_quotes(self, symbols: List[str]) -> Dict[str, Quote]:
+        result: Dict[str, Quote] = {}
+        for symbol in symbols:
+            secid = self._eastmoney_secid(symbol)
+            if not secid:
+                continue
+            raw = self._fetch(
+                FALLBACK_QUOTE_URL.format(secid=secid),
+                encoding="utf-8",
+                bypass_cooldown=True,
+            )
+            quote = self._parse_eastmoney_quote(symbol, raw or "")
+            if quote is not None:
+                result[symbol] = quote
+                self._store(f"q:{symbol}", quote)
+                self.last_source = "东方财富"
+        return result
+
+    @staticmethod
+    def _eastmoney_secid(symbol: str) -> str:
+        text = (symbol or "").strip().lower()
+        if text.startswith("sh") and len(text) == 8:
+            return f"1.{text[2:]}"
+        if text.startswith("sz") and len(text) == 8:
+            return f"0.{text[2:]}"
+        return ""
+
+    def _parse_eastmoney_quote(self, symbol: str, raw: str) -> Optional[Quote]:
+        try:
+            payload = json.loads(raw)
+            data = payload.get("data") or {}
+            scale = int(data.get("f59", 2) or 2)
+            divisor = 10 ** scale
+            price = MarketDataProvider._scaled_number(data.get("f43"), divisor)
+            prev_close = MarketDataProvider._scaled_number(data.get("f60"), divisor)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if price is None or price <= 0 or prev_close is None:
+            return None
+        open_price = MarketDataProvider._scaled_number(data.get("f46"), divisor)
+        high = MarketDataProvider._scaled_number(data.get("f44"), divisor)
+        low = MarketDataProvider._scaled_number(data.get("f45"), divisor)
+        return Quote(
+            symbol=(symbol or "").lower(),
+            name=str(data.get("f58") or symbol or "").strip(),
+            price=price,
+            prev_close=prev_close,
+            change=MarketDataProvider._scaled_number(data.get("f169"), divisor) or 0.0,
+            change_pct=_to_float(data.get("f170")) or 0.0,
+            open_price=open_price,
+            high=high,
+            low=low,
+            pe=_to_float(data.get("f168")),
+            pb=_to_float(data.get("f167")),
+            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            source="东方财富",
+            updated_at=datetime.now().isoformat(timespec="seconds"),
+            freshness_seconds=self.quote_freshness_seconds,
+        )
+
+    @staticmethod
+    def _scaled_number(value: object, divisor: int) -> Optional[float]:
+        number = _to_float(value)
+        if number is None:
+            return None
+        if isinstance(value, float) and not value.is_integer():
+            return number
+        if isinstance(value, str) and "." in value:
+            return number
+        return number / divisor
 
     def quote(self, symbol: str) -> Optional[Quote]:
         return self.quotes([symbol]).get(symbol)
@@ -191,12 +345,40 @@ class MarketDataProvider:
             extra_headers={"Referer": "https://fundf10.eastmoney.com/"},
         )
         if not raw:
+            raw = self._fetch(
+                FUND_FALLBACK_URL.format(code=code, stamp=int(time.time() * 1000)),
+                encoding="utf-8",
+                extra_headers={"Referer": "https://fund.eastmoney.com/"},
+                bypass_cooldown=True,
+            )
+            fallback_source = "天天基金"
+        else:
+            fallback_source = ""
+        if not raw:
             return None
         try:
             payload = json.loads(raw)
             rows = (payload.get("Data") or {}).get("LSJZList") or []
             if not rows:
-                return None
+                match = re.search(r"jsonpgz\((.*)\)\s*;?", raw.strip(), re.S)
+                if not match:
+                    return None
+                payload = json.loads(match.group(1))
+                nav = _to_float(payload.get("dwjz"))
+                if nav is None:
+                    return None
+                result = FundNav(
+                    code=code,
+                    nav=nav,
+                    change_pct=_to_float(payload.get("gszzl")),
+                    date=str(payload.get("jzrq") or ""),
+                    source=fallback_source or "天天基金",
+                    updated_at=datetime.now().isoformat(timespec="seconds"),
+                    freshness_seconds=self.fund_freshness_seconds,
+                )
+                self.last_source = result.source
+                self._store(f"f:{code}", result)
+                return result
             row = rows[0]
             nav = _to_float(row.get("DWJZ", ""))
             if nav is None:
@@ -206,10 +388,14 @@ class MarketDataProvider:
                 nav=nav,
                 change_pct=_to_float(row.get("JZZZL", "")),
                 date=str(row.get("FSRQ", "")),
+                source="东方财富",
+                updated_at=datetime.now().isoformat(timespec="seconds"),
+                freshness_seconds=self.fund_freshness_seconds,
             )
         except (json.JSONDecodeError, AttributeError, TypeError):
             self.last_error = "基金净值接口返回格式异常"
             return None
+        self.last_source = result.source
         self._store(f"f:{code}", result)
         return result
 
@@ -225,7 +411,23 @@ class MarketDataProvider:
         return {
             "mode": self.mode,
             "enabled": self.enabled,
+            "role": "public-data-enhancement",
+            "production_grade": False,
             "cooling_down": time.time() < self._cooldown_until,
+            "cooldown_seconds": max(0, round(self._cooldown_until - time.time())),
             "last_error": self.last_error,
+            "last_success_at": self.last_success_at,
+            "last_source": self.last_source,
+            "source_order": ["腾讯财经", "东方财富"],
+            "fund_source_order": ["东方财富", "天天基金"],
+            "quote_freshness_seconds": self.quote_freshness_seconds,
+            "fund_freshness_seconds": self.fund_freshness_seconds,
             "calls": self.calls,
+            "failures": self.failures,
+            "cache_hits": self.cache_hits,
+            "cache_entries": len(self._cache),
+            "stale_cache_entries": sum(
+                1 for _, value in self._cache.values()
+                if bool(getattr(value, "stale", False))
+            ),
         }

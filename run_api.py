@@ -7,10 +7,11 @@ import socket
 from datetime import datetime
 from pathlib import Path
 
-from config import LLMConfig, STORE_FILE
+from config import DB_FILE, LLMConfig, STORE_FILE
 from finagent.api.server import create_server
 from finagent.api.service import AgentSessionService
 from finagent.data.store import Clock, DataStore
+from finagent.data.sqlite import SQLiteRepository
 
 
 def detect_lan_ip() -> str:
@@ -46,6 +47,7 @@ def parse_args(argv=None):
     parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
     parser.add_argument("--port", type=int, default=8000, help="监听端口，默认 8000")
     parser.add_argument("--today", default="", help="固定演示日期，格式 YYYY-MM-DD")
+    parser.add_argument("--db", default=str(DB_FILE), help="SQLite 持久化文件路径")
     parser.add_argument(
         "--llm",
         default=LLMConfig.MODE,
@@ -82,6 +84,7 @@ def main(argv=None) -> int:
         build_store(args.today),
         llm_mode=args.llm,
         store_factory=lambda: build_session_store(args.today),
+        repository=SQLiteRepository(args.db),
     )
     server = create_server(
         service,

@@ -283,13 +283,16 @@ ai_banking_agent/
 │   ├── data/
 │   │   ├── models.py           # 领域模型（dataclass）
 │   │   ├── seed.py             # 模拟数据生成（12 个月流水 + 4 类埋点异常）
-│   │   ├── store.py            # 内存仓储 + 可控时钟 + JSON 快照
-│   │   └── market.py           # 实时行情：A股/ETF/债券 + 场外基金净值
+│   │   ├── store.py            # 领域仓储 + 可控时钟 + JSON 快照
+│   │   ├── providers.py        # 统一数据提供接口（账户/流水/卡片/理财/订阅/商户/任务）
+│   │   ├── bank_adapter.py     # 银行沙箱适配边界（可替换为 Open Banking）
+│   │   ├── sqlite.py           # 会话、幂等、业务对象和审计日志持久化
+│   │   └── market.py           # 行情：公开数据增强 + 缓存/重试/熔断/备用源
 │   ├── cli/
 │   │   ├── app.py              # 命令行交互界面
 │   │   └── input_reader.py     # 整段粘贴感知的输入读取
 │   └── utils.py                # 金额/日期/期间的中文解析工具
-└── tests/                      # 217 个 unittest 用例，覆盖业务、行情、异常量化、确认、API 与上传
+└── tests/                      # 230 个 unittest 用例，覆盖业务、行情、异常量化、确认、API 与上传
 ```
 
 ## 六、架构说明
@@ -305,7 +308,7 @@ ai_banking_agent/
 | 编排层 | `agent/` | 补槽、规划、状态管理、调度 | 不实现具体业务逻辑 |
 | 风控层 | `risk/engine.py`、`risk/scorecard.py` | 限额、确认、验证、异常识别、风险测评评分卡 | 不直接改数据 |
 | 工具层 | `tools/` | 一个工具只做一件事 | 不做风控判断 |
-| 数据层 | `data/` | 模型、模拟数据、存储、时钟 | 不含业务规则 |
+| 数据层 | `data/` | 模型、统一提供接口、沙箱适配器、行情、SQLite 持久化、时钟 | 不含业务规则 |
 
 ### 一次请求的完整链路
 
@@ -589,15 +592,29 @@ Agent> 评估完成：C3 平衡型（65/100）。
 实时行情默认开启，断网或接口异常会自动降级为演示数据并明确提示。
 想强制离线：`set FINAGENT_MARKET_MODE=off`（Windows）。
 
+### 6.1 数据提供与持久化边界
+
+业务工具通过 `ToolContext.providers` 获取数据，不在工具里直接决定“默认账户”或散落 Mock 查询：
+
+- `accounts`、`transactions`、`cards`、`wealth`、`subscriptions`、`merchants` 都有独立 Provider；
+- `bank` 是 `DemoBankAdapter` 沙箱边界，后续可替换为 Open Banking/银行沙箱实现；
+- 每条账户、流水、卡片、订阅、产品、持仓和商户报价都带 `source`、`updated_at`、`is_live`、`is_demo`；
+- 行情 Provider 带 60 秒缓存、最小请求间隔、失败冷却、重试、腾讯/东方财富主备源和陈旧标记；
+- SQLite 的 `accounts`、`transactions`、`cards`、`subscriptions`、`holdings`、`tasks`、`audit_logs` 等表与 JSON 快照同步写入，便于查询、审计和重启恢复。
+
+腾讯财经和东方财富被定位为**公开数据增强**，不是生产级行情源；没有行情时只展示明确标注的演示参数。
+
 ## 十、数据与模拟数据说明
 
 - 演示客户：陈晓明（`u_001`），31 岁，深圳，互联网产品经理，风险偏好平衡型（R3）
 - 账户：活期 32,860.52 / 定期 150,000 / 信用卡（额度 50,000，已用 12,340）/ 电子钱包 1,200
 - 流水：最近 **12 个月**、约 600 笔，覆盖餐饮、交通、购物、住房、娱乐、医疗、教育、
   生活缴费、订阅、转账、还款、理财、收入 13 个类别
-- 理财：6 只产品（R1-R5）+ 3 笔初始持仓
+- 理财：18 只产品（R1-R5，含公开行情标的与演示产品）+ 3 笔初始持仓
 - 订阅：6 项（腾讯视频、QQ音乐、iCloud、美团外卖会员、Keep、百度网盘）
 - 卡片：3 张（信用卡 / 借记卡 / 虚拟卡）
+- 商户报价：鲜花/蛋糕库存、价格、配送城市、配送半径和可预约日期
+- SQLite：会话、幂等记录、业务对象投影和审计日志；账户/持仓/任务不再只依赖进程内存
 
 为了让异常识别有真实的分析对象，数据里埋了 5 处可疑交易：
 
@@ -618,7 +635,7 @@ Agent> 评估完成：C3 平衡型（65/100）。
 python -m unittest discover -s tests -t .
 ```
 
-217 个用例，Windows OCR 测试会略慢；除一个默认跳过的联网行情测试外，全部离线运行：
+230 个用例，Windows OCR 测试会略慢；除一个默认跳过的联网行情测试外，全部离线运行：
 
 | 文件 | 覆盖内容 |
 |------|---------|
@@ -634,6 +651,9 @@ python -m unittest discover -s tests -t .
 | `tests/test_scorecard.py` | 评分卡维度与分值、阈值映射、单调性、回撤压力测试 |
 | `tests/test_paste_input.py` | 整段粘贴收集、完整性与静默窗口、模板导入、时间戳不当收款人、自我说明 |
 | `tests/test_market.py` | 行情解析、实时/演示分列、股票/债券/基金/衍生品四类推荐 |
+| `tests/test_market_resilience.py` | 行情新鲜度、公开数据增强标记、主备源降级 |
+| `tests/test_data_layer.py` | Provider、来源标签、产品披露和商户报价 |
+| `tests/test_sqlite_persistence.py` | SQLite 会话、账户/持仓/任务/审计和幂等恢复 |
 | `tests/test_anomaly_quant.py` | 异常风险分、统计指标、可复现异常样例 |
 | `tests/test_questionnaire.py` | 6+1 基础问卷、反向题、降级触发器、14 题完整问卷与等级匹配 |
 | `tests/test_questionnaire_gate.py` | 6 道计分 + 1 道校验闸门、推断确认、解释与复测提示 |
@@ -793,16 +813,16 @@ class ExchangeRateTool(Tool):
 - **接入新的 OCR 引擎**：在 `finagent/vision/receipt_reader.py` 里加一个
   `_from_xxx()` 方法并挂进 `read()` 的优先级链，解析部分可以复用
   `receipt_parser.parse_receipt_text()`。
-- **换数据源**：实现一个和 `DataStore` 同接口的类（或改成数据库实现），
-  工具层代码完全不用改。
+- **换数据源**：实现 `BankAdapter` 或替换 `build_data_providers()` 的 Provider，
+  工具层仍然只消费统一接口；生产部署再替换公开行情源和 SQLite 投影。
 
 ## 十四、已知限制与后续规划
 
 | 限制 | 说明 |
 |------|------|
-| 无并发与事务 | 单进程内存存储，定时保存快照；生产需要数据库 + 事务 |
+| 仍是原型事务边界 | SQLite 已保存会话、账户、持仓、任务和审计投影，但未实现生产级连接池、分布式锁和完整事务编排 |
 | 验证码是固定值 | 演示环境固定 `123456` |
-| 无真实对接 | 不接征信、支付通道、银行核心系统 |
+| 无真实对接 | 不接征信、支付通道、银行核心系统；目前使用可控的银行沙箱适配器 |
 | 意图清单是白名单 | 规则与 LLM 都只认已登记的意图，超出范围会引导用户换个说法 |
 | 订阅识别是启发式 | 基于金额稳定性与扣费间隔，不是商户协议数据库 |
 | OCR 有误差 | Windows 离线 OCR 对清晰截图识别率尚可，但版式复杂的真实截图建议走多模态模型；识别结果一律先让用户核对再入库 |

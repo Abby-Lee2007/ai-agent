@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from finagent.data.models import Card
+from finagent.data.provenance import source_badge
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, render_table
 
 KIND_LABEL = {
@@ -29,6 +30,18 @@ SCOPE_LABEL = {
     "overseas": "境外交易",
     "contactless": "小额免密/闪付",
 }
+
+
+def _cards(ctx: ToolContext, status: str = ""):
+    if getattr(ctx, "providers", None) is not None:
+        return ctx.providers.cards.of(ctx.user_id, status or None)
+    return ctx.store.cards_of(ctx.user_id, status or None)
+
+
+def _find_card(ctx: ToolContext, keyword: str = ""):
+    if getattr(ctx, "providers", None) is not None:
+        return ctx.providers.cards.find(ctx.user_id, keyword)
+    return ctx.store.find_card(ctx.user_id, keyword)
 
 
 def _as_bool(value: Any, default: bool = True) -> bool:
@@ -55,7 +68,7 @@ class CardListTool(Tool):
     examples = ["我有哪些卡", "我的信用卡额度"]
 
     def run(self, ctx: ToolContext) -> ToolResult:  # type: ignore[override]
-        cards = ctx.store.cards_of(ctx.user_id)
+        cards = _cards(ctx)
         if not cards:
             return ToolResult(True, "您名下暂无卡片。", summary="无卡片")
         rows = []
@@ -68,11 +81,12 @@ class CardListTool(Tool):
                     "闪付✓" if c.contactless_enabled else "闪付✗",
                 ]
             )
+            source = source_badge(c.source, c.is_live, c.is_demo)
             rows.append([KIND_LABEL.get(c.kind, c.kind), f"尾号{c.tail}", STATUS_LABEL.get(c.status, c.status),
-                         limit, switches])
+                         limit, switches, source])
         lines = [
             f"您名下共有 {len(cards)} 张卡片：",
-            render_table(["卡种", "卡号", "状态", "额度/限额", "交易开关"], rows),
+            render_table(["卡种", "卡号", "状态", "额度/限额", "交易开关", "来源"], rows),
         ]
         return ToolResult(True, "\n".join(lines), data={"count": len(cards)}, summary=f"共 {len(cards)} 张卡片")
 
@@ -137,7 +151,7 @@ class CardBindTool(Tool):
         if str(password).strip() != self.DEMO_PASSWORD:
             return ToolResult(False, "取款密码不正确，绑定失败。", data={"reason": "bad_password"})
         tail = number[-4:]
-        for existing in ctx.store.cards_of(ctx.user_id):
+        for existing in _cards(ctx):
             if existing.tail == tail and existing.note.startswith(bank_name):
                 return ToolResult(True, f"{bank_name}尾号 {tail} 的卡已经绑定过了。", summary="卡片已存在")
         card = Card(
@@ -154,6 +168,7 @@ class CardBindTool(Tool):
             note=f"{bank_name}储蓄卡（绑定）",
         )
         ctx.store.cards[card.card_id] = card
+        ctx.store.touch(card)
         ctx.store.log("card.bind", card_id=card.card_id, bank=bank_name, tail=tail)
         lines = [
             f"绑定成功：{bank_name} 储蓄卡（尾号 {tail}）",
@@ -220,6 +235,7 @@ class CardApplyTool(Tool):
             note=note or "新申请",
         )
         ctx.store.cards[card.card_id] = card
+        ctx.store.touch(card)
         task = ctx.store.add_task(
             user_id=user.user_id,
             kind="reminder",
@@ -263,7 +279,7 @@ class CardLimitAdjustTool(Tool):
         new_limit: Any,
         card: str = "",
     ) -> ToolResult:
-        target = ctx.store.find_card(ctx.user_id, card)
+        target = _find_card(ctx, card)
         if target is None:
             return ToolResult(False, "没有找到对应的卡片。")
         try:
@@ -283,6 +299,7 @@ class CardLimitAdjustTool(Tool):
             old = target.single_limit
             target.single_limit = min(limit, target.daily_limit)
             field_name = "单笔限额"
+        ctx.store.touch(target)
 
         direction = "提升" if limit > old else "调低"
         lines = [
@@ -323,7 +340,7 @@ class CardControlTool(Tool):
         enable: Any = True,
         card: str = "",
     ) -> ToolResult:
-        target = ctx.store.find_card(ctx.user_id, card)
+        target = _find_card(ctx, card)
         if target is None:
             return ToolResult(False, "没有找到对应的卡片。")
         scope_key = (scope or "").strip().lower()
@@ -336,6 +353,7 @@ class CardControlTool(Tool):
         attr = {"online": "online_enabled", "overseas": "overseas_enabled", "contactless": "contactless_enabled"}[scope_key]
         before = getattr(target, attr)
         setattr(target, attr, value)
+        ctx.store.touch(target)
         action = "已开启" if value else "已关闭"
         lines = [
             f"{KIND_LABEL.get(target.kind, target.kind)}（尾号{target.tail}）{SCOPE_LABEL[scope_key]}{action}",
@@ -368,13 +386,14 @@ class CardFreezeTool(Tool):
     examples = ["把信用卡冻结", "我的卡好像被盗刷了，先冻结"]
 
     def run(self, ctx: ToolContext, card: str = "", reason: str = "") -> ToolResult:  # type: ignore[override]
-        target = ctx.store.find_card(ctx.user_id, card)
+        target = _find_card(ctx, card)
         if target is None:
             return ToolResult(False, "没有找到对应的卡片。")
         if target.status == "frozen":
             return ToolResult(True, f"{KIND_LABEL.get(target.kind, target.kind)}（尾号{target.tail}）已经是冻结状态。",
                               summary="卡片已处于冻结状态")
         target.status = "frozen"
+        ctx.store.touch(target)
         ctx.store.log("card.freeze", card_id=target.card_id, reason=reason)
         lines = [
             f"已冻结{KIND_LABEL.get(target.kind, target.kind)}（尾号{target.tail}）",
@@ -401,7 +420,7 @@ class CardUnlockTool(Tool):
     examples = ["解冻信用卡"]
 
     def run(self, ctx: ToolContext, card: str = "") -> ToolResult:  # type: ignore[override]
-        target = ctx.store.find_card(ctx.user_id, card)
+        target = _find_card(ctx, card)
         if target is None:
             return ToolResult(False, "没有找到对应的卡片。")
         if target.status == "lost":
@@ -410,6 +429,7 @@ class CardUnlockTool(Tool):
         target.online_enabled = True
         if target.kind != "virtual":
             target.contactless_enabled = True
+        ctx.store.touch(target)
         ctx.store.log("card.unlock", card_id=target.card_id)
         return ToolResult(
             True,
@@ -433,11 +453,12 @@ class CardReportLostTool(Tool):
     examples = ["我的卡丢了，帮我挂失", "挂失信用卡"]
 
     def run(self, ctx: ToolContext, card: str = "") -> ToolResult:  # type: ignore[override]
-        target = ctx.store.find_card(ctx.user_id, card)
+        target = _find_card(ctx, card)
         if target is None:
             return ToolResult(False, "没有找到对应的卡片。")
 
         target.status = "lost"
+        ctx.store.touch(target)
         # 补卡流程：新卡待激活 + 生成一条提醒任务
         new_card = Card(
             card_id=ctx.store.next_id("cards"),
@@ -453,6 +474,7 @@ class CardReportLostTool(Tool):
             note=f"补卡（原卡尾号{target.tail}）",
         )
         ctx.store.cards[new_card.card_id] = new_card
+        ctx.store.touch(new_card)
         task = ctx.store.add_task(
             user_id=ctx.user_id,
             kind="reminder",

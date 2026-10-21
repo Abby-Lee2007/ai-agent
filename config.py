@@ -42,6 +42,7 @@ DISCLAIMER = (
 BASE_DIR = Path(__file__).resolve().parent
 RUNTIME_DIR = Path(os.getenv("FINAGENT_RUNTIME_DIR", str(BASE_DIR / "runtime_data")))
 STORE_FILE = RUNTIME_DIR / "store.json"
+DB_FILE = Path(os.getenv("FINAGENT_DB_PATH", str(RUNTIME_DIR / "finagent.db")))
 
 # 默认演示用户（Demo 内置的模拟客户）
 DEFAULT_USER_ID = "u_001"

@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from config import RiskPolicy
 from finagent.data.models import Account, Payee, Transaction, User
+from finagent.data.providers import DataProviderRegistry, build_data_providers
 from finagent.data.store import Clock, DataStore
 
 
@@ -88,9 +89,15 @@ class RiskEngine:
         "card.limit_adjust",
     }
 
-    def __init__(self, store: DataStore, clock: Clock) -> None:
+    def __init__(
+        self,
+        store: DataStore,
+        clock: Clock,
+        providers: Optional[DataProviderRegistry] = None,
+    ) -> None:
         self.store = store
         self.clock = clock
+        self.providers = providers or build_data_providers(store)
 
     # ==================================================================
     # 一、转账风控
@@ -202,14 +209,14 @@ class RiskEngine:
         """当日已转出金额（转账 + AA 收款）。"""
         target = day or self.clock.date_str()
         total = 0.0
-        for txn in self.store.transactions_of(user_id, start=target, end=target):
+        for txn in self.providers.transactions.of(user_id, target, target):
             if txn.amount < 0 and txn.category in {"转账", "AA收款"}:
                 total += abs(txn.amount)
         return round(total, 2)
 
     def _recent_transfers(self, user_id: str, minutes: int) -> List[Transaction]:
         since = (self.clock.now() - timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S")
-        rows = self.store.transactions_of(user_id, start=since)
+        rows = self.providers.transactions.of(user_id, since)
         return [t for t in rows if t.amount < 0 and t.category in {"转账", "AA收款"}]
 
     # ==================================================================
@@ -291,7 +298,7 @@ class RiskEngine:
         include_subscriptions 用来控制是否连带检查订阅涨价。
         导入一小批账单时应该关掉，否则会把跟这批数据无关的订阅涨价也报出来。
         """
-        rows = txns if txns is not None else self.store.transactions_of(user_id)
+        rows = txns if txns is not None else self.providers.transactions.of(user_id)
         rows = [t for t in rows if t.amount < 0 and t.status == "success"]
         found: List[Anomaly] = []
         found.extend(self._detect_amount_outliers(rows))
@@ -497,7 +504,7 @@ class RiskEngine:
 
     def _detect_subscription_hikes(self, user_id: str) -> List[Anomaly]:
         result: List[Anomaly] = []
-        for sub in self.store.subscriptions_of(user_id, status="active"):
+        for sub in self.providers.subscriptions.of(user_id, "active"):
             history = [x for x in sub.price_history if x > 0]
             if len(history) < 2:
                 continue

@@ -21,7 +21,7 @@ class _StubProvider(MarketDataProvider):
         super().__init__(mode="live")
         self.payload = payload
 
-    def _fetch(self, url: str, encoding: str = "gbk"):
+    def _fetch(self, url: str, encoding: str = "gbk", **kwargs):
         return self.payload
 
 

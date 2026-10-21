@@ -343,6 +343,9 @@ class RuleIntentParser:
             channel = self._channel(text)
             if channel:
                 slots["channel"] = channel
+            account = self._account(text)
+            if account:
+                slots["account"] = account
             amount = parse_amount(text)
             if amount is not None:
                 slots["amount"] = amount
@@ -582,6 +585,13 @@ class RuleIntentParser:
         if RE_PHONE.search(text):
             return "phone"
         return ""
+
+    def _account(self, text: str) -> str:
+        match = re.search(
+            r"(?:从|用)([^，,。；;\s]{1,16}?(?:卡|账户|活期|零钱|钱包))",
+            text,
+        )
+        return match.group(1) if match else ""
 
     @staticmethod
     def _clean_name(name: str) -> str:

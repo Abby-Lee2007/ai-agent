@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Dict, List, Type, TypeVar
 
 T = TypeVar("T")
@@ -45,6 +46,10 @@ class User:
     birthday: str = ""
     preferences: Dict[str, Any] = field(default_factory=dict)
     verified: bool = False                 # 是否已完成实名/人脸核身（原型里用布尔模拟）
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 
 
 @dataclass
@@ -61,6 +66,10 @@ class Account:
     credit_limit: float = 0.0  # 仅信用卡
     locked: float = 0.0        # 被目标/计划锁定的金额
     status: str = "active"
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 
     @property
     def available(self) -> float:
@@ -88,6 +97,10 @@ class Payee:
     wallet_phone: str = ""
     wechat: str = ""
     alipay: str = ""
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 
 
 @dataclass
@@ -109,6 +122,10 @@ class Transaction:
     is_subscription: bool = False
     subscription_id: str = ""
     tags: List[str] = field(default_factory=list)
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 
     @property
     def direction(self) -> str:
@@ -137,6 +154,10 @@ class Card:
     contactless_enabled: bool = True
     issued_at: str = ""
     note: str = ""
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 
 
 # --------------------------------------------------------------------------
@@ -159,6 +180,10 @@ class Subscription:
     free_trial_end: str = ""
     auto_detected: bool = True
     price_history: List[float] = field(default_factory=list)
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 
 
 # --------------------------------------------------------------------------
@@ -172,7 +197,7 @@ class WealthProduct:
     name: str
     category: str              # 货币基金 / 债券基金 / 混合基金 / 指数基金 / 股票基金 / 大额存单
     risk_level: int
-    expected_return: float     # 年化收益率，如 0.036 表示 3.6%
+    expected_return: float     # 演示参数，仅用于原型测算，不是实时收益率
     min_amount: float = 1.0
     term_days: int = 0         # 0 表示活期随时赎回
     liquidity: str = "T+1"
@@ -183,6 +208,13 @@ class WealthProduct:
     symbol: str = ""
     symbol_type: str = ""          # stock / fund / ""（无行情数据）
     asset_class: str = "fund"      # stock / bond / fund / derivative / deposit
+    fee_rate: float = 0.0
+    redemption_rule: str = ""
+    risk_disclosure: str = ""
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 
     @property
     def has_live_data(self) -> bool:
@@ -202,6 +234,29 @@ class Holding:
     status: str = "holding"     # holding / redeemed
     redeem_date: str = ""
     profit: float = 0.0
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
+
+
+@dataclass
+class MerchantOffer:
+    """External merchant offer for gifts and other cross-scene services."""
+
+    offer_id: str
+    merchant: str
+    item: str
+    price: float
+    inventory: int = 0
+    delivery_cities: List[str] = field(default_factory=list)
+    delivery_radius_km: float = 0.0
+    available_from: str = ""
+    available_to: str = ""
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 
 
 # --------------------------------------------------------------------------
@@ -222,6 +277,10 @@ class ScheduledTask:
     created_at: str = ""
     executed_at: str = ""
     result: str = ""
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 
 
 @dataclass
@@ -239,6 +298,10 @@ class Goal:
     scenario: str = ""         # birthday / travel / emergency ...
     note: str = ""
     created_at: str = ""
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 
 
 @dataclass
@@ -253,6 +316,10 @@ class AaSheet:
     status: str = "collecting"
     created_at: str = ""
     note: str = ""
+    source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 
 
 @dataclass
@@ -267,4 +334,7 @@ class Alert:
     created_at: str = ""
     source: str = ""
     read: bool = False
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
 

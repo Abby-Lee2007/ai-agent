@@ -17,6 +17,7 @@ from finagent.nlu.intent_schema import Intent
 from finagent.tools.base import ToolContext
 from finagent.tools.card_tools import BANK_BINS
 from finagent.tools.crossscene_tools import lookup_person
+from finagent.data.providers import MerchantOfferProvider
 from finagent.tools.transfer_tools import channel_account, resolve_account
 from finagent.utils import parse_date
 
@@ -272,7 +273,7 @@ class Planner:
         try:
             if tool == "transfer.send":
                 channel = str(args.get("channel") or "phone")
-                payee = ctx.store.find_payee(ctx.user_id, str(args.get("payee") or ""))
+                payee = ctx.providers.payees.find(ctx.user_id, str(args.get("payee") or ""))
                 target = channel_account(payee, channel) if payee else ""
                 payer = resolve_account(ctx, str(args.get("account") or ""))
                 parts = [
@@ -292,7 +293,7 @@ class Planner:
                     str(args.get("repeat", "once")), "一次性"
                 )
                 channel = str(args.get("channel") or "phone")
-                payee = ctx.store.find_payee(ctx.user_id, str(args.get("payee") or ""))
+                payee = ctx.providers.payees.find(ctx.user_id, str(args.get("payee") or ""))
                 target = channel_account(payee, channel) if payee else ""
                 when = str(args.get("when", ""))
                 parsed = parse_date(when, ctx.clock.today())
@@ -323,23 +324,27 @@ class Planner:
             if tool == "bill.search":
                 return f"检索与「{args.get('keyword')}」相关的消费"
             if tool == "wealth.subscribe":
-                product = ctx.store.find_product(str(args.get("product") or ""))
+                product = ctx.providers.wealth.find(str(args.get("product") or ""))
                 payer = resolve_account(ctx, str(args.get("account") or ""))
                 product_text = (f"「{product.name}」（{product.product_id}，R{product.risk_level}）"
                                 if product else f"「{args.get('product')}」")
                 parts = [f"申购{product_text} {float(args.get('amount', 0)):,.2f} 元"]
+                if product:
+                    parts.append(f"费率：{product.fee_rate * 100:.2f}%")
+                    parts.append(f"赎回：{product.redemption_rule}")
+                    parts.append(f"数据：{product.source or '未知来源'}")
                 if payer:
                     parts.append(f"扣款账户：{payer.name}（尾号 {payer.tail}）")
                 return "；".join(parts)
             if tool == "wealth.redeem":
-                holdings = ctx.store.holdings_of(ctx.user_id, status="holding")
+                holdings = ctx.providers.wealth.holdings(ctx.user_id, "holding")
                 product_key = str(args.get("product") or "")
-                product = ctx.store.find_product(product_key) if product_key else None
+                product = ctx.providers.wealth.find(product_key) if product_key else None
                 if product:
                     holdings = [h for h in holdings if h.product_id == product.product_id]
                 names = []
                 for holding in holdings:
-                    item = ctx.store.products.get(holding.product_id)
+                    item = ctx.providers.wealth.get(holding.product_id)
                     names.append(item.name if item else holding.product_id)
                 scope = "全部持仓" if not product_key else f"「{product.name if product else product_key}」"
                 amount_text = (f" {float(args['amount']):,.2f} 元"
@@ -360,7 +365,7 @@ class Planner:
                 return (f"绑定{bank}储蓄卡（尾号{number[-4:]}）；"
                         f"预留手机号：{phone}")
             if tool in {"card.freeze", "card.unlock", "card.report_lost"}:
-                card = ctx.store.find_card(ctx.user_id, str(args.get("card", "")))
+                card = ctx.providers.cards.find(ctx.user_id, str(args.get("card", "")))
                 label = (f"{CARD_KIND_LABELS.get(card.kind, card.kind)}（尾号{card.tail}）"
                          if card else "未识别的卡片")
                 if tool == "card.freeze":
@@ -369,12 +374,12 @@ class Planner:
                     return f"解冻{label}"
                 return f"为{label}办理挂失并补卡（原卡将永久失效）"
             if tool == "card.limit_adjust":
-                card = ctx.store.find_card(ctx.user_id, str(args.get("card", "")))
+                card = ctx.providers.cards.find(ctx.user_id, str(args.get("card", "")))
                 label = (f"{CARD_KIND_LABELS.get(card.kind, card.kind)}（尾号{card.tail}）"
                          if card else "未识别的卡片")
                 return f"把{label}的额度调整为 {float(args.get('new_limit', 0)):,.0f} 元"
             if tool == "card.control":
-                card = ctx.store.find_card(ctx.user_id, str(args.get("card", "")))
+                card = ctx.providers.cards.find(ctx.user_id, str(args.get("card", "")))
                 label = (f"{CARD_KIND_LABELS.get(card.kind, card.kind)}（尾号{card.tail}）"
                          if card else "未识别的卡片")
                 scope = {"online": "线上交易", "overseas": "境外交易",
@@ -383,7 +388,7 @@ class Planner:
             if tool == "subscription.cancel":
                 keyword = str(args.get("merchant") or "")
                 target = next(
-                    (sub for sub in ctx.store.subscriptions_of(ctx.user_id, status="active")
+                    (sub for sub in ctx.providers.subscriptions.of(ctx.user_id, "active")
                      if keyword and (keyword in sub.merchant or sub.merchant in keyword)),
                     None,
                 )
@@ -393,7 +398,7 @@ class Planner:
                         f"扣费金额：{target.amount:,.2f} 元；"
                         f"下次扣费：{target.next_charge_date}")
             if tool == "goal.create":
-                account = ctx.store.primary_account(ctx.user_id)
+                account = resolve_account(ctx)
                 parts = [f"锁定 {float(args.get('target_amount', 0)):,.2f} 元到目标「{args.get('name')}」"]
                 if account:
                     parts.append(f"锁定账户：{account.name}（尾号 {account.tail}）")
@@ -401,8 +406,21 @@ class Planner:
                     parts.append(f"目标日期：{args['deadline']}")
                 return "；".join(parts)
             if tool == "crossscene.schedule_gift":
-                return (f"预约 {args.get('date')} 为{args.get('person')}下单{args.get('item')}，"
-                        f"预算 {float(args.get('budget', 0)):,.2f} 元")
+                provider = (
+                    ctx.providers.merchants
+                    if getattr(ctx, "providers", None) is not None
+                    else MerchantOfferProvider(ctx.store)
+                )
+                offer = provider.find_offer(
+                    str(args.get("item") or ""),
+                    float(args.get("budget") or 0) or None,
+                    str(args.get("date") or ""),
+                    ctx.user.city,
+                )
+                if offer is None:
+                    return f"预约 {args.get('date')} 为{args.get('person')}下单{args.get('item')}（当前无可用商户）"
+                return (f"预约 {args.get('date')} 由「{offer.merchant}」为{args.get('person')}下单"
+                        f"{args.get('item')}，价格 {offer.price:,.2f} 元")
         except (TypeError, ValueError):
             pass
         tool_obj = self.registry.get(tool)
@@ -412,7 +430,7 @@ class Planner:
     def _payee_label(ctx: ToolContext, raw) -> str:
         """把"房东"这类备注解析成真实姓名，让二次确认界面更明确。"""
         keyword = str(raw or "")
-        payee = ctx.store.find_payee(ctx.user_id, keyword)
+        payee = ctx.providers.payees.find(ctx.user_id, keyword)
         if payee and payee.name:
             return payee.name if payee.name == keyword else f"{payee.name}（{keyword}）"
         return keyword

@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from config import LLMConfig
+from finagent.data.provenance import source_badge
 from finagent.tools.base import Tool, ToolContext, ToolResult, render_table
 
 KIND_LABEL = {
@@ -25,21 +26,22 @@ class BalanceTool(Tool):
     examples = ["我还有多少钱", "查一下余额"]
 
     def run(self, ctx: ToolContext) -> ToolResult:  # type: ignore[override]
-        accounts = ctx.store.accounts_of(ctx.user_id)
+        accounts = ctx.providers.accounts.of(ctx.user_id) if ctx.providers else ctx.store.accounts_of(ctx.user_id)
         rows = []
         total = 0.0
         for acc in accounts:
+            source = source_badge(acc.source, acc.is_live, acc.is_demo)
             if acc.kind == "credit":
                 rows.append([KIND_LABEL.get(acc.kind, acc.kind), f"尾号{acc.tail}",
-                             f"已用 {acc.balance:,.2f}", f"可用 {acc.available:,.2f}"])
+                             f"已用 {acc.balance:,.2f}", f"可用 {acc.available:,.2f}", source])
             else:
                 total += acc.balance
                 locked = f"（锁定 {acc.locked:,.2f}）" if acc.locked else ""
                 rows.append([KIND_LABEL.get(acc.kind, acc.kind), f"尾号{acc.tail}",
-                             f"{acc.balance:,.2f}{locked}", f"可用 {acc.available:,.2f}"])
+                             f"{acc.balance:,.2f}{locked}", f"可用 {acc.available:,.2f}", source])
         lines = [
             f"总资产 {total:,.2f} 元：",
-            render_table(["账户", "卡号", "余额/已用", "可用"], rows),
+            render_table(["账户", "卡号", "余额/已用", "可用", "来源"], rows),
         ]
         return ToolResult(
             True,

@@ -15,11 +15,21 @@ from finagent.data.models import (
     Account,
     Card,
     Holding,
+    MerchantOffer,
     Payee,
     Subscription,
     User,
     WealthProduct,
 )
+
+
+def _mark_demo(record, store, source: str = "seed:demo"):
+    record.source = source
+    record.updated_at = store.clock.iso()
+    record.is_live = False
+    record.is_demo = True
+    return record
+
 
 RNG_SEED = 20260101
 
@@ -121,8 +131,8 @@ def _add_users(store) -> None:
             "notify_channel": "APP",
         },
     )
-    store.users[owner.user_id] = owner
-    store.users["u_002"] = User(
+    store.users[owner.user_id] = _mark_demo(owner, store)
+    store.users["u_002"] = _mark_demo(User(
         user_id="u_002",
         name="林雅雯",
         phone="13900002222",
@@ -136,8 +146,8 @@ def _add_users(store) -> None:
         birthday="1996-11-20",
         verified=True,
         preferences={"spouse": "陈晓明"},
-    )
-    store.users["u_003"] = User(
+    ), store)
+    store.users["u_003"] = _mark_demo(User(
         user_id="u_003",
         name="王强",
         phone="13700003333",
@@ -147,8 +157,8 @@ def _add_users(store) -> None:
         risk_score=5,
         birthday="1994-03-02",
         verified=True,
-    )
-    store.users["u_004"] = User(
+    ), store)
+    store.users["u_004"] = _mark_demo(User(
         user_id="u_004",
         name="李思琪",
         phone="13600004444",
@@ -159,7 +169,7 @@ def _add_users(store) -> None:
         risk_score=4,
         birthday="1997-08-09",
         verified=True,
-    )
+    ), store)
 
 
 def _add_accounts(store) -> None:
@@ -170,7 +180,7 @@ def _add_accounts(store) -> None:
         Account("ACC000004", "u_001", "wallet", "WeBank 电子钱包", "0000", 1200.00),
     ]
     for acc in accounts:
-        store.accounts[acc.account_id] = acc
+        store.accounts[acc.account_id] = _mark_demo(acc, store)
     store.counters["accounts"] = 4
 
 
@@ -216,7 +226,7 @@ def _add_cards(store) -> None:
         ),
     ]
     for c in cards:
-        store.cards[c.card_id] = c
+        store.cards[c.card_id] = _mark_demo(c, store)
     store.counters["cards"] = 3
 
 
@@ -305,6 +315,13 @@ def _add_products(store) -> None:
                       asset_class="derivative"),
     ]
     for p in products:
+        _mark_demo(p, store)
+        p.fee_rate = 0.0015 if p.asset_class == "fund" else 0.0
+        p.redemption_rule = f"{p.liquidity} 赎回；期限 {p.term_days or '随时'} 天"
+        p.risk_disclosure = (
+            f"R{p.risk_level} 产品，演示参数不构成收益承诺；"
+            "实际收益与本金均可能发生波动。"
+        )
         store.products[p.product_id] = p
 
 
@@ -315,8 +332,32 @@ def _add_holdings(store) -> None:
         Holding("HLD000003", "u_001", "P003", 5000.0, 5118.75, "2026-06-20T09:30:00", profit=118.75),
     ]
     for h in holdings:
-        store.holdings[h.holding_id] = h
+        store.holdings[h.holding_id] = _mark_demo(h, store)
     store.counters["holdings"] = 3
+
+
+def _add_merchant_offers(store) -> None:
+    offers = [
+        MerchantOffer(
+            "OFFER000001", "花间集", "鲜花", 299.0, 20, ["深圳"], 15.0,
+            "2026-01-01", "2027-12-31",
+        ),
+        MerchantOffer(
+            "OFFER000002", "Rose Only", "鲜花", 399.0, 8, ["深圳"], 10.0,
+            "2026-01-01", "2027-12-31",
+        ),
+        MerchantOffer(
+            "OFFER000003", "麦香蛋糕", "蛋糕", 368.0, 12, ["深圳"], 20.0,
+            "2026-01-01", "2027-12-31",
+        ),
+        MerchantOffer(
+            "OFFER000004", "云端甜品", "蛋糕", 428.0, 5, ["深圳"], 12.0,
+            "2026-01-01", "2027-12-31",
+        ),
+    ]
+    for offer in offers:
+        store.merchant_offers[offer.offer_id] = _mark_demo(offer, store, source="seed:merchant-demo")
+    store.counters["merchant_offers"] = len(offers)
 
 
 def _add_subscriptions(store) -> None:
@@ -349,6 +390,7 @@ def _add_subscriptions(store) -> None:
             auto_detected=True,
             price_history=history,
         )
+        _mark_demo(sub, store)
         store.subscriptions[sub.sub_id] = sub
     store.counters["subscriptions"] = len(SUBSCRIPTION_CATALOG)
 
@@ -474,6 +516,7 @@ def _add_transactions(store) -> None:
             timestamp=_ts(y, m, d, hour, minute),
             **extra,
         )
+        _mark_demo(txn, store)
         if txn.is_subscription:
             sub = next(
                 (s for s in store.subscriptions.values() if s.merchant == merchant),
@@ -509,6 +552,7 @@ def build_seed(store) -> None:
     _add_payees(store)
     _add_products(store)
     _add_holdings(store)
+    _add_merchant_offers(store)
     _add_subscriptions(store)
     _add_transactions(store)
     _add_goals(store)

@@ -11,6 +11,7 @@ from datetime import date
 from typing import Any, List, Optional
 
 from finagent.data.models import Account
+from finagent.data.providers import build_data_providers
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, render_table
 from finagent.utils import parse_date
 
@@ -39,28 +40,8 @@ def channel_account(payee, channel: str) -> str:
 
 def resolve_account(ctx: ToolContext, keyword: str = "") -> Optional[Account]:
     """把"信用卡 / 零钱 / 活期"这类口语映射到具体账户。"""
-    keyword = (keyword or "").strip()
-    store = ctx.store
-    if not keyword:
-        return store.primary_account(ctx.user_id)
-    mapping = {
-        "信用": "credit",
-        "信用卡": "credit",
-        "活期": "current",
-        "储蓄": "savings",
-        "定期": "savings",
-        "钱包": "wallet",
-        "零钱": "wallet",
-    }
-    for cn, kind in mapping.items():
-        if cn in keyword:
-            found = store.accounts_of(ctx.user_id, kind)
-            if found:
-                return found[0]
-    for acc in store.accounts_of(ctx.user_id):
-        if keyword and (keyword in acc.name or acc.tail == "".join(c for c in keyword if c.isdigit())):
-            return acc
-    return store.primary_account(ctx.user_id)
+    providers = ctx.providers or build_data_providers(ctx.store)
+    return providers.accounts.resolve(ctx.user_id, keyword)
 
 
 class TransferTool(Tool):
@@ -90,13 +71,14 @@ class TransferTool(Tool):
     ) -> ToolResult:
         user = ctx.user
         store = ctx.store
+        providers = ctx.providers or build_data_providers(store)
         try:
             value = round(float(amount), 2)
         except (TypeError, ValueError):
             return ToolResult(False, f"金额「{amount}」无法识别，请用数字金额，例如 500 或 1.5万。")
 
         payer = resolve_account(ctx, account)
-        payee_obj = store.find_payee(user.user_id, payee)
+        payee_obj = providers.payees.find(user.user_id, payee)
         channel = (channel or "phone").strip().lower()
         if channel not in CHANNEL_LABELS:
             channel = "phone"
@@ -112,7 +94,7 @@ class TransferTool(Tool):
         # 收款人不在通讯录时，先落库为常用联系人（后续可按备注直接转）
         if payee_obj is None:
             phone = "".join(ch for ch in payee if ch.isdigit())
-            payee_obj = store.remember_payee(
+            payee_obj = providers.payees.remember(
                 user.user_id,
                 name=payee,
                 phone=phone if len(phone) >= 11 else "",
@@ -145,6 +127,7 @@ class TransferTool(Tool):
             tags=["transfer", channel],
         )
         payer.balance = round(payer.balance - value, 2)
+        ctx.store.touch(payer, payee_obj)
         self._credit_payee(ctx, payee_obj, value)
 
         lines = [
@@ -175,9 +158,11 @@ class TransferTool(Tool):
         """如果收款人也是本原型里的模拟用户，则同步给 ta 记一笔入账，方便演示双向流水。"""
         for user in ctx.store.users.values():
             if user.name == payee.name:
-                account = ctx.store.primary_account(user.user_id)
+                providers = ctx.providers or build_data_providers(ctx.store)
+                account = providers.accounts.default_for_payment(user.user_id)
                 if account:
                     account.balance = round(account.balance + value, 2)
+                    ctx.store.touch(account)
                     ctx.store.add_transaction(
                         user_id=user.user_id,
                         account_id=account.account_id,
@@ -220,6 +205,7 @@ class ScheduledTransferTool(Tool):
     ) -> ToolResult:
         user = ctx.user
         store = ctx.store
+        providers = ctx.providers or build_data_providers(store)
         try:
             value = round(float(amount), 2)
         except (TypeError, ValueError):
@@ -229,17 +215,17 @@ class ScheduledTransferTool(Tool):
         if run_day is None:
             return ToolResult(False, f"没能理解执行时间「{when}」，可以试试「明天」「下个月5号」「2026-12-01」。")
 
-        payee_obj = store.find_payee(user.user_id, payee)
+        payee_obj = providers.payees.find(user.user_id, payee)
         if payee_obj is None:
             phone = "".join(ch for ch in payee if ch.isdigit())
-            payee_obj = store.remember_payee(
+            payee_obj = providers.payees.remember(
                 user.user_id, name=payee, phone=phone if len(phone) >= 11 else "", relation="其他"
             )
 
         repeat_label = {"once": "一次性", "monthly": "每月", "weekly": "每周"}.get(repeat, "一次性")
         channel = (channel or "phone").strip().lower()
         channel_label = CHANNEL_LABELS.get(channel, CHANNEL_LABELS["phone"])
-        task = store.add_task(
+        task = providers.tasks.add(
             user_id=user.user_id,
             kind="scheduled_transfer",
             run_date=run_day.isoformat(),
@@ -368,7 +354,8 @@ class ListScheduledTransferTool(Tool):
     examples = ["我有哪些定时转账"]
 
     def run(self, ctx: ToolContext) -> ToolResult:  # type: ignore[override]
-        tasks = ctx.store.tasks_of(ctx.user_id, status="pending")
+        providers = ctx.providers or build_data_providers(ctx.store)
+        tasks = providers.tasks.of(ctx.user_id, "pending")
         if not tasks:
             return ToolResult(True, "当前没有待执行的定时任务。", data={"count": 0}, summary="没有定时任务")
         rows = [

@@ -82,6 +82,7 @@ class ToolContext:
     risk: RiskEngine
     user_id: str
     session: Dict[str, Any] = field(default_factory=dict)
+    providers: Any = None
 
     @property
     def user(self) -> User:

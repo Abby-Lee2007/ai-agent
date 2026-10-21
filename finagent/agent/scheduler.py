@@ -6,10 +6,11 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import List
+from typing import List, Optional
 
 from finagent.agent.registry import ToolRegistry
 from finagent.data.models import ScheduledTask
+from finagent.data.providers import DataProviderRegistry, build_data_providers
 from finagent.data.store import Clock, DataStore
 from finagent.risk.engine import RiskEngine
 from finagent.tools.base import ToolContext
@@ -18,11 +19,19 @@ from finagent.tools.base import ToolContext
 class Scheduler:
     """按日期执行到期的计划任务。"""
 
-    def __init__(self, store: DataStore, clock: Clock, risk: RiskEngine, registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        store: DataStore,
+        clock: Clock,
+        risk: RiskEngine,
+        registry: ToolRegistry,
+        providers: Optional[DataProviderRegistry] = None,
+    ) -> None:
         self.store = store
         self.clock = clock
         self.risk = risk
         self.registry = registry
+        self.providers = providers or build_data_providers(store)
 
     def due(self, user_id: str) -> List[ScheduledTask]:
         return self.store.due_tasks(user_id)
@@ -30,7 +39,13 @@ class Scheduler:
     def run_due(self, user_id: str) -> List[str]:
         """执行全部到期任务，返回给用户看的执行记录。"""
         messages: List[str] = []
-        ctx = ToolContext(store=self.store, clock=self.clock, risk=self.risk, user_id=user_id)
+        ctx = ToolContext(
+            store=self.store,
+            clock=self.clock,
+            risk=self.risk,
+            user_id=user_id,
+            providers=self.providers,
+        )
         for task in self.due(user_id):
             message = self._execute(ctx, task)
             if message:
@@ -54,6 +69,7 @@ class Scheduler:
                 task.status = "done" if result.ok else "failed"
                 task.executed_at = self.clock.iso()
                 task.result = result.summary
+                self.store.touch(task)
                 return f"[定时任务] {task.title}\n  {result.summary}"
 
             if task.kind == "gift_order":
@@ -61,6 +77,7 @@ class Scheduler:
                 task.status = "done"
                 task.executed_at = self.clock.iso()
                 task.result = "已下单"
+                self.store.touch(task)
                 return (
                     f"[预约下单] {task.title}\n"
                     f"  已为 {payload.get('person', '')} 下单 {payload.get('item', '')}，"
@@ -72,15 +89,18 @@ class Scheduler:
                 task.status = "done"
                 task.executed_at = self.clock.iso()
                 task.result = "已提醒"
+                self.store.touch(task)
                 return f"[提醒] {task.title}"
 
             task.status = "done"
             task.executed_at = self.clock.iso()
+            self.store.touch(task)
             return f"[任务] {task.title}"
         except Exception as exc:  # 原型阶段不让单个任务失败拖垮整个循环
             task.status = "failed"
             task.executed_at = self.clock.iso()
             task.result = f"执行失败：{exc}"
+            self.store.touch(task)
             return f"[任务失败] {task.title}：{exc}"
 
     def _reschedule(self, task: ScheduledTask) -> None:

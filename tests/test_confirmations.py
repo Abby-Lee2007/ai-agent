@@ -57,6 +57,16 @@ class TestQuestionnaireConfirmation(unittest.TestCase):
 
 
 class TestActionDataConfirmation(unittest.TestCase):
+    def test_unknown_payment_account_does_not_silently_use_primary(self):
+        agent = make_agent()
+        before = agent.store.primary_account("u_001").balance
+
+        reply = agent.handle("给王强转1块，用微信，从不存在卡")
+
+        self.assertFalse(reply.ok)
+        self.assertIn("付款账户", reply.text)
+        self.assertAlmostEqual(agent.store.primary_account("u_001").balance, before, places=2)
+
     def test_transfer_review_shows_resolved_payee_channel_and_payer(self):
         agent = make_agent()
         account = agent.store.primary_account("u_001")

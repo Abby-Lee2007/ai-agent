@@ -14,11 +14,28 @@ from datetime import date, timedelta
 from typing import Any, Dict, List, Tuple
 
 from finagent.data.models import Transaction
+from finagent.data.provenance import source_badge
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, format_money, render_table
+from finagent.tools.transfer_tools import resolve_account
 from finagent.utils import parse_period, period_bounds
 from finagent.vision.receipt_reader import ReceiptReader
 
 LEVEL_ICON = {"danger": "高危", "warning": "关注", "info": "提示"}
+
+
+def _transactions(ctx: ToolContext, start: str = "", end: str = ""):
+    if getattr(ctx, "providers", None) is not None:
+        return ctx.providers.transactions.of(ctx.user_id, start, end)
+    return ctx.store.transactions_of(ctx.user_id, start or None, end or None)
+
+
+def _source_summary(txns: List[Transaction]) -> str:
+    labels = {
+        source_badge(item.source, item.is_live, item.is_demo)
+        for item in txns
+        if getattr(item, "source", "")
+    }
+    return "、".join(sorted(labels)) if labels else "未知来源"
 
 
 def _previous_bounds(period: str, today: date) -> Tuple[str, str, str]:
@@ -120,7 +137,7 @@ class BillAnalyzeTool(Tool):
         today = ctx.clock.today()
         period_key = parse_period(str(period), today)
         start, end, label = period_bounds(period_key, today)
-        txns = ctx.store.transactions_of(ctx.user_id, start, end)
+        txns = _transactions(ctx, start, end)
         if category:
             txns = [t for t in txns if category in t.category or category in t.merchant]
         if not txns:
@@ -129,7 +146,7 @@ class BillAnalyzeTool(Tool):
         stats = _summarize(txns)
         rows, _totals = _category_table(txns)
         prev_start, prev_end, _ = _previous_bounds(period_key, today)
-        prev_stats = _summarize(ctx.store.transactions_of(ctx.user_id, prev_start, prev_end))
+        prev_stats = _summarize(_transactions(ctx, prev_start, prev_end))
         delta = (
             (stats["expense"] - prev_stats["expense"]) / prev_stats["expense"] * 100
             if prev_stats["expense"]
@@ -139,6 +156,7 @@ class BillAnalyzeTool(Tool):
 
         lines = [
             f"{label}账单概览（{start} ~ {end}，共 {stats['count']} 笔）",
+            f"  数据来源：{_source_summary(txns)}",
             f"  收入 {stats['income']:,.2f} 元 | 支出 {stats['expense']:,.2f} 元 | 结余 {stats['net']:,.2f} 元",
             f"  单笔平均支出 {stats['avg']:,.2f} 元 | 环比上月支出{trend} {abs(delta):.1f}%",
             "",
@@ -172,7 +190,7 @@ class BillAnomalyTool(Tool):
         today = ctx.clock.today()
         period_key = parse_period(str(period), today)
         start, end, label = period_bounds(period_key, today)
-        txns = ctx.store.transactions_of(ctx.user_id, start, end)
+        txns = _transactions(ctx, start, end)
         anomalies = ctx.risk.detect_anomalies(ctx.user_id, txns)
         if not anomalies:
             return ToolResult(
@@ -232,7 +250,7 @@ class BillReportTool(Tool):
         if mode == "annual" and period_key in {"this_month", "last_month"}:
             period_key = "this_year"
         start, end, label = period_bounds(period_key, today)
-        txns = ctx.store.transactions_of(ctx.user_id, start, end)
+        txns = _transactions(ctx, start, end)
         if not txns:
             return ToolResult(True, f"{label}没有交易记录，无法生成报告。", summary=f"{label}无数据")
 
@@ -247,6 +265,7 @@ class BillReportTool(Tool):
             f"【{label}账单报告】{start} ~ {end}",
             "=" * 46,
             "一、收支总览",
+            f"  数据来源：{_source_summary(txns)}",
             f"  收入 {stats['income']:,.2f} 元",
             f"  支出 {stats['expense']:,.2f} 元",
             f"  结余 {stats['net']:,.2f} 元（储蓄率 {saving_rate:.1f}%）",
@@ -323,7 +342,7 @@ class BillSearchTool(Tool):
         period_key = parse_period(str(period), today)
         start, end, label = period_bounds(period_key, today)
         txns = [
-            t for t in ctx.store.transactions_of(ctx.user_id, start, end)
+            t for t in _transactions(ctx, start, end)
             if keyword in t.merchant or keyword in t.category or keyword in t.note
         ]
         if not txns:
@@ -439,9 +458,9 @@ class ReceiptImportTool(Tool):
 
         existing = {
             (t.timestamp[:16], t.merchant, round(t.amount, 2))
-            for t in ctx.store.transactions_of(ctx.user_id)
+            for t in _transactions(ctx)
         }
-        account = ctx.store.primary_account(ctx.user_id)
+        account = resolve_account(ctx)
         imported: List[Transaction] = []
         skipped = 0
         for record in cache["records"]:
@@ -451,7 +470,12 @@ class ReceiptImportTool(Tool):
                 skipped += 1
                 continue
             source = Path(cache["source"]).name if cache.get("source") else "粘贴的账单文本"
-            txn = ctx.store.add_transaction(
+            add_transaction = (
+                ctx.providers.transactions.add
+                if getattr(ctx, "providers", None) is not None
+                else ctx.store.add_transaction
+            )
+            txn = add_transaction(
                 user_id=ctx.user_id,
                 account_id=account.account_id if account else "",
                 amount=float(record["amount"]),

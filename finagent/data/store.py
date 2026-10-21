@@ -4,9 +4,11 @@
 1. 用一张"内存字典表"承载全部业务数据，读写是 O(1) 级别；
 2. 提供面向业务的查询方法（按时间取流水、按人名找收款人……），
    业务工具层不需要关心底层结构；
-3. 支持整体快照落盘 / 加载，方便演示"关机再打开数据还在"。
+3. 支持整体快照落盘 / 加载，方便演示"关机再打开数据还在"；
+4. 通过 `SQLiteRepository` 把账户、持仓、任务和审计日志投影到查询表。
 
-注意：这是赛事原型，刻意不做并发、事务与加密，真实银行系统必须另做设计。
+注意：领域数据仍在进程内运行，SQLite 负责可恢复的持久化投影；
+真实银行系统必须另做并发、事务、加密和 Open Banking 对接设计。
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from finagent.data.models import (
     Card,
     Goal,
     Holding,
+    MerchantOffer,
     Payee,
     ScheduledTask,
     Subscription,
@@ -79,6 +82,7 @@ class DataStore:
         "subscriptions",
         "products",
         "holdings",
+        "merchant_offers",
         "tasks",
         "goals",
         "aa_sheets",
@@ -94,6 +98,7 @@ class DataStore:
         "subscriptions": Subscription,
         "products": WealthProduct,
         "holdings": Holding,
+        "merchant_offers": MerchantOffer,
         "tasks": ScheduledTask,
         "goals": Goal,
         "aa_sheets": AaSheet,
@@ -107,6 +112,7 @@ class DataStore:
         "cards": "CARD",
         "subscriptions": "SUB",
         "holdings": "HLD",
+        "merchant_offers": "OFFER",
         "tasks": "TASK",
         "goals": "GOAL",
         "aa_sheets": "AA",
@@ -135,6 +141,16 @@ class DataStore:
         record = {"at": self.clock.iso(), "event": event, **detail}
         self.audit.append(record)
         return record
+
+    def touch(self, *records: Any, source: str = "") -> None:
+        """Refresh provenance metadata after a business mutation."""
+        for record in records:
+            if record is None:
+                continue
+            if hasattr(record, "updated_at"):
+                record.updated_at = self.clock.iso()
+            if source and hasattr(record, "source"):
+                record.source = source
 
     # ------------------------------------------------------------------
     # 用户 / 账户
@@ -203,6 +219,10 @@ class DataStore:
         subscription_id: str = "",
         tags: Optional[List[str]] = None,
         status: str = "success",
+        source: str = "agent:simulation",
+        updated_at: str = "",
+        is_live: bool = False,
+        is_demo: bool = True,
     ) -> Transaction:
         txn = Transaction(
             txn_id=self.next_id("transactions"),
@@ -219,6 +239,10 @@ class DataStore:
             is_subscription=is_subscription,
             subscription_id=subscription_id,
             tags=list(tags or []),
+            source=source,
+            updated_at=updated_at or self.clock.iso(),
+            is_live=is_live,
+            is_demo=is_demo,
         )
         self.transactions[txn.txn_id] = txn
         return txn
@@ -269,6 +293,7 @@ class DataStore:
         existing = self.find_payee(user_id, name) or (self.find_payee(user_id, phone) if phone else None)
         if existing:
             existing.last_used = self.clock.iso()
+            existing.updated_at = self.clock.iso()
             if phone and not existing.phone:
                 existing.phone = phone
             if alias and not existing.alias:
@@ -285,6 +310,7 @@ class DataStore:
             relation=relation,
             last_used=self.clock.iso(),
         )
+        payee.updated_at = self.clock.iso()
         self.payees[payee.payee_id] = payee
         return payee
 
@@ -406,6 +432,7 @@ class DataStore:
             repeat=repeat,
             created_at=self.clock.iso(),
         )
+        task.updated_at = self.clock.iso()
         self.tasks[task.task_id] = task
         return task
 
@@ -444,6 +471,7 @@ class DataStore:
             note=note,
             created_at=self.clock.iso(),
         )
+        goal.updated_at = self.clock.iso()
         self.goals[goal.goal_id] = goal
         return goal
 
@@ -464,6 +492,7 @@ class DataStore:
             note=note,
             created_at=self.clock.iso(),
         )
+        sheet.updated_at = self.clock.iso()
         self.aa_sheets[sheet.sheet_id] = sheet
         return sheet
 
@@ -484,6 +513,7 @@ class DataStore:
             source=source,
             created_at=self.clock.iso(),
         )
+        alert.updated_at = self.clock.iso()
         self.alerts[alert.alert_id] = alert
         return alert
 

@@ -30,6 +30,7 @@ from finagent.agent.registry import ToolRegistry, build_default_registry
 from finagent.agent.scheduler import Scheduler
 from finagent.data.store import Clock, DataStore
 from finagent.data.market import MarketDataProvider
+from finagent.data.providers import build_data_providers
 from finagent.nlu.intent_parser import IntentParser
 from finagent.nlu.intent_parser import normalize_synonyms
 from finagent.nlu.intent_schema import Intent
@@ -86,10 +87,17 @@ class BankingAgent:
         self.clock: Clock = store.clock
         self.user_id = user_id
         self.registry = registry or build_default_registry()
-        self.risk = RiskEngine(store, self.clock)
         self.planner = Planner(self.registry)
-        self.scheduler = Scheduler(store, self.clock, self.risk, self.registry)
         self.market = MarketDataProvider()
+        self.providers = build_data_providers(store, self.market)
+        self.risk = RiskEngine(store, self.clock, providers=self.providers)
+        self.scheduler = Scheduler(
+            store,
+            self.clock,
+            self.risk,
+            self.registry,
+            providers=self.providers,
+        )
         self.llm = llm if llm is not None else LLMClient()
         self.parser = IntentParser(
             store=store,
@@ -129,6 +137,7 @@ class BankingAgent:
         ctx.session["parser_source"] = self.parser.last_source
         ctx.session["risk_answers"] = self.risk_answers
         ctx.session["risk_level"] = self.risk_level
+        ctx.providers = self.providers
         return ctx
 
     def run_due_tasks(self) -> List[str]:
@@ -732,14 +741,14 @@ class BankingAgent:
         step = next((item for item in plan.steps if item.tool == "wealth.subscribe"), None)
         if step is None:
             return None
-        product = self.store.find_product(str(step.args.get("product") or ""))
+        product = self.providers.wealth.find(str(step.args.get("product") or ""))
         return product if product is not None and product.risk_level == 2 else None
 
     def _assess_step(self, tool_name: str, args: Dict[str, Any], ctx: ToolContext) -> RiskDecision:
         if tool_name == "transfer.send":
             user = ctx.user
             payer = resolve_account(ctx, str(args.get("account", "")))
-            payee = ctx.store.find_payee(user.user_id, str(args.get("payee", "")))
+            payee = ctx.providers.payees.find(user.user_id, str(args.get("payee", "")))
             return self.risk.check_transfer(user, payer, payee, str(args.get("payee", "")),
                                             float(args.get("amount", 0) or 0))
         tool = self.registry.get(tool_name)

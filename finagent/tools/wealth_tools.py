@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from finagent.data.models import Holding
+from finagent.data.provenance import source_badge
 from finagent.risk.scorecard import assess_risk_profile
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, render_table
 from finagent.tools.transfer_tools import resolve_account
@@ -21,6 +22,36 @@ RISK_LABEL = {
     4: "R4 成长型",
     5: "R5 进取型",
 }
+
+
+def _accounts(ctx: ToolContext):
+    if getattr(ctx, "providers", None) is not None:
+        return ctx.providers.accounts.of(ctx.user_id)
+    return ctx.store.accounts_of(ctx.user_id)
+
+
+def _products(ctx: ToolContext):
+    if getattr(ctx, "providers", None) is not None:
+        return ctx.providers.wealth.products()
+    return list(ctx.store.products.values())
+
+
+def _products_by_risk(ctx: ToolContext, max_risk: int):
+    if getattr(ctx, "providers", None) is not None:
+        return ctx.providers.wealth.products_by_risk(max_risk)
+    return ctx.store.products_by_risk(max_risk)
+
+
+def _find_product(ctx: ToolContext, keyword: str):
+    if getattr(ctx, "providers", None) is not None:
+        return ctx.providers.wealth.find(keyword)
+    return ctx.store.find_product(keyword)
+
+
+def _holdings(ctx: ToolContext, status: str = "holding"):
+    if getattr(ctx, "providers", None) is not None:
+        return ctx.providers.wealth.holdings(ctx.user_id, status)
+    return ctx.store.holdings_of(ctx.user_id, status)
 
 
 def assess_user_risk(ctx: ToolContext) -> Dict[str, Any]:
@@ -177,7 +208,7 @@ class ProductRecommendTool(Tool):
         except (TypeError, ValueError):
             invest = 0.0
 
-        accounts = ctx.store.accounts_of(ctx.user_id)
+        accounts = _accounts(ctx)
         liquid = round(sum(a.balance for a in accounts if a.kind in {"current", "wallet"}), 2)
         emergency_need = round(profile.monthly_expense * 3, 2)
         investable = max(0.0, round(liquid - emergency_need, 2))
@@ -198,7 +229,7 @@ class ProductRecommendTool(Tool):
             lines.append("  真正低风险的是货币基金、国债、大额存单，年化通常只有 2%-3%。")
             lines.append("")
             if user_level <= 2:
-                alternatives = [p.name for p in ctx.store.products_by_risk(user_level)][:3]
+                alternatives = [p.name for p in _products_by_risk(ctx, user_level)][:3]
                 lines.append(f"按你的测评等级「{assessment['label']}」，R4 的股票比承受能力高两级，")
                 lines.append("按投资者适当性管理不适合直接配置。可以先看这些同等级产品：")
                 lines.append("  " + "、".join(alternatives))
@@ -209,7 +240,7 @@ class ProductRecommendTool(Tool):
                     summary="股票风险等级超出承受能力，已改为提示低风险替代品",
                 )
             max_risk = 4
-            pool = [p for p in ctx.store.products.values()
+            pool = [p for p in _products(ctx)
                     if p.asset_class == "stock" and p.risk_level <= max_risk]
             # 有实时数据时只保留能取到真实行情的品种，避免表里混入演示产品
             if market.enabled:
@@ -219,18 +250,18 @@ class ProductRecommendTool(Tool):
             lines.append("下面给你的是「权益类里相对低波动」的选择，注意它们仍然是 R4、不是低风险资产：")
         elif wants_bond:
             max_risk = 3
-            pool = [p for p in ctx.store.products.values()
+            pool = [p for p in _products(ctx)
                     if p.asset_class == "bond" or p.category == "债券基金"]
             lines.append("债券类产品（国债 / 可转债 / 债券基金）：")
             lines.append("  国债以持有到期吃票息为主；可转债有股性，波动明显大于纯债。")
         elif wants_fund:
             max_risk = user_level
-            pool = [p for p in ctx.store.products.values()
+            pool = [p for p in _products(ctx)
                     if p.asset_class == "fund" and p.risk_level <= max_risk]
             lines.append(f"按你的风险等级「{assessment['label']}」，可选的基金如下：")
         elif wants_deposit:
             max_risk = 1
-            pool = [p for p in ctx.store.products.values() if p.asset_class == "deposit"]
+            pool = [p for p in _products(ctx) if p.asset_class == "deposit"]
             lines.append("存款类产品（受存款保险保护，不属于理财）：")
         else:
             try:
@@ -240,10 +271,10 @@ class ProductRecommendTool(Tool):
             max_risk = max(1, min(5, max_risk))
             if max_risk > user_level:
                 max_risk = user_level
-            pool = [p for p in ctx.store.products_by_risk(max_risk)
+            pool = [p for p in _products_by_risk(ctx, max_risk)
                     if p.min_amount <= (invest or p.min_amount)]
             if not pool:
-                pool = ctx.store.products_by_risk(max_risk)
+                pool = _products_by_risk(ctx, max_risk)
             lines.append(f"根据您的风险等级「{assessment['label']}」，为您筛选出 {len(pool)} 只产品：")
 
         pool = pool[:5]
@@ -266,27 +297,41 @@ class ProductRecommendTool(Tool):
             if product.symbol_type == "stock" and product.symbol in quotes:
                 quote = quotes[product.symbol]
                 live_rows.append([product.name, quote.symbol.upper(), f"{quote.price:,.3f}",
-                                  f"{quote.change_pct:+.2f}%", product.category, "实时"])
+                                  f"{quote.change_pct:+.2f}%", product.category,
+                                  source_badge(quote.source, quote.live, quote.is_demo, quote.stale)])
             elif product.symbol_type == "fund" and product.symbol in navs:
                 nav = navs[product.symbol]
                 change = f"{nav.change_pct:+.2f}%" if nav.change_pct is not None else "-"
                 live_rows.append([product.name, product.symbol, f"{nav.nav:,.4f}",
-                                  change, product.category, f"净值 {nav.date}"])
+                                  change, product.category,
+                                  f"净值 {nav.date} · "
+                                  f"{source_badge(nav.source, nav.live, nav.is_demo, nav.stale)}"])
             else:
                 demo_rows.append([
                     product.name, f"R{product.risk_level}",
                     f"{product.expected_return * 100:.2f}%" if product.expected_return else "-",
-                    f"{product.min_amount:,.0f}", product.category,
+                    f"{product.fee_rate * 100:.2f}%",
+                    f"{product.min_amount:,.0f}", product.redemption_rule,
                 ])
 
         if live_rows:
             lines.append(render_table(
                 ["产品", "代码", "价格/净值", "今日涨跌", "类型", "数据"], live_rows))
             stamps = [q.timestamp for q in quotes.values() if q.timestamp]
+            quote_sources = sorted({q.source for q in quotes.values() if q.source})
             if stamps:
-                lines.append(f"  行情来源：腾讯财经公开行情（{max(stamps)}，A 股实时）")
+                lines.append(
+                    f"  行情来源：{'、'.join(quote_sources) or '公开行情'}（{max(stamps)}，公开数据增强）"
+                )
             if navs:
-                lines.append("  净值来源：东方财富基金净值（场外基金为 T-1 披露）")
+                nav_sources = sorted({nav.source for nav in navs.values() if nav.source})
+                lines.append(
+                    f"  净值来源：{'、'.join(nav_sources) or '公开基金净值'}（场外基金为 T-1 披露）"
+                )
+            stale_count = sum(1 for quote in quotes.values() if quote.stale)
+            stale_count += sum(1 for nav in navs.values() if nav.stale)
+            if stale_count:
+                lines.append(f"  新鲜度提示：{stale_count} 条行情超过时效阈值，已标记为“已过期”。")
             pe_bits = [f"{q.name} PE {q.pe:.1f}" for q in quotes.values() if q.pe]
             if pe_bits:
                 lines.append("  个股参考：" + "；".join(pe_bits))
@@ -294,7 +339,13 @@ class ProductRecommendTool(Tool):
         if demo_rows:
             lines.append("")
             lines.append("以下为原型内置的示例产品（非真实产品，仅演示流程）：")
-            lines.append(render_table(["产品", "风险", "演示年化", "起投", "类型"], demo_rows))
+            lines.append(render_table(
+                ["产品", "风险", "演示年化", "费率", "起投", "赎回规则"],
+                demo_rows,
+            ))
+            sources = sorted({product.source for product in pool if product.source})
+            if sources:
+                lines.append(f"  产品参数来源：{'、'.join(sources)}；均为演示数据")
 
         # ---------------- 生活费检查 ----------------
         if is_living:
@@ -377,7 +428,7 @@ class ProductRecommendTool(Tool):
                            liquid: float, emergency_need: float) -> ToolResult:
         """衍生品：只做科普与风险揭示，不给申购建议。"""
         products = sorted(
-            (p for p in ctx.store.products.values() if p.asset_class == "derivative"),
+            (p for p in _products(ctx) if p.asset_class == "derivative"),
             key=lambda p: p.product_id,
         )
         rows = [[p.name, p.category, "R5", p.description] for p in products]
@@ -509,7 +560,7 @@ class SubscribeTool(Tool):
         except (TypeError, ValueError):
             return ToolResult(False, f"金额「{amount}」无法识别。")
 
-        target = store.find_product(product)
+        target = _find_product(ctx, product)
         if target is None:
             return ToolResult(False, f"没有找到产品「{product}」，可以说「推荐理财产品」看看可选清单。")
         if value < target.min_amount:
@@ -520,7 +571,7 @@ class SubscribeTool(Tool):
         user_level = assessment["score"]
         notice = ""
         if target.risk_level > user_level + 1:
-            alternatives = [p.name for p in store.products_by_risk(user_level)][:3]
+            alternatives = [p.name for p in _products_by_risk(ctx, user_level)][:3]
             return ToolResult(
                 False,
                 f"「{target.name}」风险等级 R{target.risk_level}，高于您的风险承受能力 {assessment['label']}，"
@@ -542,6 +593,7 @@ class SubscribeTool(Tool):
             )
 
         payer.balance = round(payer.balance - value, 2)
+        ctx.store.touch(payer)
         txn = store.add_transaction(
             user_id=user.user_id,
             account_id=payer.account_id,
@@ -553,7 +605,7 @@ class SubscribeTool(Tool):
         )
         # 同一产品已有持仓时直接累加，避免持仓列表里出现一堆零散的同名份额
         holding = next(
-            (h for h in store.holdings_of(user.user_id, status="holding")
+            (h for h in _holdings(ctx, status="holding")
              if h.product_id == target.product_id),
             None,
         )
@@ -566,22 +618,27 @@ class SubscribeTool(Tool):
                 market_value=value,
                 purchase_date=ctx.clock.iso(),
             )
+            ctx.store.touch(holding)
             store.holdings[holding.holding_id] = holding
         else:
             holding.principal = round(holding.principal + value, 2)
             holding.market_value = round(holding.market_value + value, 2)
+            ctx.store.touch(holding)
 
         market = ctx.session.get("market")
         quote = None
         if target.has_live_data and market is not None:
             quote = market.quote(target.symbol)
         annual = value * target.expected_return
+        annual_label = "演示年化" if target.is_demo else "参数年化(非实时)"
         lines = [
             f"申购成功：「{target.name}」{value:,.2f} 元",
-            f"  产品风险等级：R{target.risk_level} | 预期年化 {target.expected_return * 100:.2f}%",
+            f"  产品风险等级：R{target.risk_level} | {annual_label} {target.expected_return * 100:.2f}%",
+            f"  费率：{target.fee_rate * 100:.2f}% | 赎回规则：{target.redemption_rule}",
             f"  预期年收益约 {annual:,.2f} 元（测算值，非承诺收益）",
             f"  扣款账户：{payer.name}（尾号 {payer.tail}）  剩余可用 {payer.available:,.2f} 元",
             f"  持仓编号：{holding.holding_id}   流水号：{txn.txn_id}",
+            f"  风险揭示：{target.risk_disclosure}",
         ]
         if quote is not None:
             shares = int(value // (quote.price * 100)) * 100 if quote.price > 0 else 0
@@ -633,13 +690,13 @@ class WealthRedeemTool(Tool):
     ) -> ToolResult:
         user = ctx.user
         store = ctx.store
-        holdings = store.holdings_of(user.user_id, status="holding")
+        holdings = _holdings(ctx, status="holding")
         if not holdings:
             return ToolResult(True, "您当前没有持仓可以赎回。", summary="无持仓")
 
         targets: List[Holding] = []
         if product:
-            target_product = store.find_product(product)
+            target_product = _find_product(ctx, product)
             if target_product:
                 targets = [h for h in holdings if h.product_id == target_product.product_id]
             if not targets:
@@ -652,11 +709,11 @@ class WealthRedeemTool(Tool):
         except (TypeError, ValueError):
             redeem_amount = None
 
-        account = store.primary_account(user.user_id)
+        account = resolve_account(ctx)
         rows = []
         total_redeemed = 0.0
         for holding in targets:
-            prod = store.products.get(holding.product_id)
+            prod = ctx.providers.wealth.get(holding.product_id) if getattr(ctx, "providers", None) else store.products.get(holding.product_id)
             name = prod.name if prod else holding.product_id
             value = holding.market_value if redeem_amount is None else min(redeem_amount, holding.market_value)
             if value <= 0:
@@ -667,8 +724,10 @@ class WealthRedeemTool(Tool):
                 holding.market_value = 0.0
                 holding.status = "redeemed"
                 holding.redeem_date = ctx.clock.iso()
+            ctx.store.touch(holding)
             if account:
                 account.balance = round(account.balance + value, 2)
+                ctx.store.touch(account)
                 store.add_transaction(
                     user_id=user.user_id,
                     account_id=account.account_id,
@@ -713,13 +772,13 @@ class PortfolioTool(Tool):
     examples = ["我的理财持仓", "看看我赚了多少"]
 
     def run(self, ctx: ToolContext) -> ToolResult:  # type: ignore[override]
-        holdings = ctx.store.holdings_of(ctx.user_id, status="holding")
+        holdings = _holdings(ctx)
         if not holdings:
             return ToolResult(True, "您当前没有理财持仓。", summary="无持仓")
         rows = []
         total_value = total_profit = 0.0
         for h in holdings:
-            prod = ctx.store.products.get(h.product_id)
+            prod = ctx.providers.wealth.get(h.product_id) if getattr(ctx, "providers", None) else ctx.store.products.get(h.product_id)
             name = prod.name if prod else h.product_id
             risk = f"R{prod.risk_level}" if prod else "-"
             total_value += h.market_value
@@ -729,10 +788,11 @@ class PortfolioTool(Tool):
                 f"{h.principal:,.2f}", f"{h.market_value:,.2f}",
                 f"{h.market_value - h.principal:+,.2f}",
                 f"{(h.market_value - h.principal) / h.principal * 100:+.2f}%" if h.principal else "-",
+                source_badge(h.source, h.is_live, h.is_demo),
             ])
         lines = [
             f"持仓总市值 {total_value:,.2f} 元，累计浮动盈亏 {total_profit:+,.2f} 元",
-            render_table(["产品", "风险", "本金", "市值", "盈亏", "收益率"], rows),
+            render_table(["产品", "风险", "本金", "市值", "盈亏", "收益率", "来源"], rows),
         ]
         return ToolResult(
             True,
