@@ -126,6 +126,21 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .history-button {
+      width: 100%;
+      margin-top: 10px;
+      padding: 8px 10px;
+      border: 1px solid #b9d6cf;
+      border-radius: 7px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-weight: 650;
+      text-align: center;
+    }
+    .history-button:hover, .history-button:focus-visible {
+      border-color: var(--accent);
+      outline: none;
+    }
 
     .quick-list { display: grid; gap: 7px; }
     .quick {
@@ -195,6 +210,182 @@
       box-shadow: 0 2px 8px rgba(31, 59, 54, .04);
       white-space: pre-wrap;
       overflow-wrap: anywhere;
+    }
+    .bubble.wide {
+      width: calc(100% - 44px);
+      max-width: calc(100% - 44px);
+    }
+    .bubble-content {
+      min-width: 0;
+      max-width: 100%;
+    }
+    .bubble-content.formatted-response {
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding-bottom: 4px;
+      font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace;
+      font-size: 12.5px;
+      line-height: 1.5;
+      white-space: pre;
+      overflow-wrap: normal;
+      scrollbar-width: thin;
+    }
+    .anomaly-intro {
+      margin-bottom: 10px;
+      font-weight: 650;
+    }
+    .anomaly-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 14px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-soft);
+    }
+    .anomaly-summary-item {
+      min-width: 0;
+      padding: 9px 10px;
+      border-left: 1px solid var(--line);
+    }
+    .anomaly-summary-item:first-child { border-left: 0; }
+    .anomaly-summary-label {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .anomaly-summary-value {
+      display: block;
+      margin-top: 2px;
+      color: var(--ink);
+      font-size: 17px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+    .anomaly-summary-value.danger { color: var(--danger); }
+    .anomaly-summary-value.warning { color: var(--warning); }
+    .anomaly-summary-value.info { color: #316a84; }
+    .anomaly-section-heading {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 0 8px;
+    }
+    .anomaly-section-heading strong { font-size: 13px; }
+    .anomaly-section-heading span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .anomaly-list {
+      display: grid;
+      gap: 10px;
+    }
+    .anomaly-item {
+      padding: 10px 11px;
+      border-left: 3px solid var(--warning);
+      border-radius: 5px;
+      background: var(--surface-soft);
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .anomaly-item.danger { border-left-color: var(--danger); background: #fff7f5; }
+    .anomaly-item.info { border-left-color: #4f8aa8; background: #f4f9fb; }
+    .anomaly-head {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 6px;
+    }
+    .anomaly-head strong {
+      flex: 1 1 160px;
+      min-width: 0;
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+    .anomaly-badge {
+      flex: 0 0 auto;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--warning);
+      background: var(--warning-soft);
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .anomaly-item.danger .anomaly-badge { color: var(--danger); background: #fdecea; }
+    .anomaly-item.info .anomaly-badge { color: #316a84; background: #e6f2f7; }
+    .anomaly-amount {
+      flex: 0 0 auto;
+      margin-left: auto;
+      color: var(--ink);
+      font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .anomaly-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: normal;
+    }
+    .anomaly-meta span {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .anomaly-meta span + span::before {
+      content: "";
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: #9aaba7;
+    }
+    .anomaly-reason,
+    .anomaly-suggestion {
+      font-size: 12.5px;
+      line-height: 1.55;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .anomaly-reason-label,
+    .anomaly-suggestion-label {
+      margin-right: 5px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 750;
+    }
+    .anomaly-reason-label::after,
+    .anomaly-suggestion-label::after { content: "："; }
+    .anomaly-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 7px;
+    }
+    .anomaly-metric {
+      padding: 2px 6px;
+      border: 1px solid #d9e1df;
+      border-radius: 4px;
+      color: #586a66;
+      background: rgba(255, 255, 255, .68);
+      font-size: 10.5px;
+      line-height: 1.45;
+      white-space: normal;
+    }
+    .anomaly-suggestion {
+      margin-top: 6px;
+      color: var(--accent-strong);
+    }
+    .anomaly-suggestion-label { color: var(--accent-strong); }
+    .anomaly-scope {
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 11.5px;
     }
     .message.user .bubble {
       border-color: #c9d9d5;
@@ -341,6 +532,184 @@
     }
     .drop-panel strong { display: block; margin-bottom: 6px; }
     .drop-panel span { color: var(--muted); font-size: 13px; }
+    .history-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 70;
+      display: none;
+      place-items: center;
+      padding: 24px;
+      background: rgba(20, 38, 35, .26);
+    }
+    .history-overlay.show { display: grid; }
+    .history-panel {
+      width: min(680px, calc(100vw - 32px));
+      max-height: min(720px, calc(100dvh - 32px));
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: 0 24px 70px rgba(18, 42, 37, .2);
+    }
+    .history-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .history-header strong { display: block; font-size: 16px; }
+    .history-header p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .history-close {
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--muted);
+      background: var(--surface-soft);
+    }
+    .history-list {
+      min-height: 120px;
+      padding: 4px 18px 16px;
+      overflow-y: auto;
+    }
+    .history-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .history-item:last-child { border-bottom: 0; }
+    .history-copy { min-width: 0; }
+    .history-copy strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .history-copy span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .history-delete {
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      border: 1px solid #e2b6b0;
+      border-radius: 6px;
+      color: var(--danger);
+      background: #fff7f5;
+    }
+    .history-empty {
+      padding: 36px 12px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .settings-body {
+      min-height: 0;
+      padding: 16px 18px 20px;
+      overflow-y: auto;
+    }
+    .settings-section + .settings-section {
+      margin-top: 20px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+    .settings-section h3 {
+      margin: 0 0 10px;
+      font-size: 14px;
+    }
+    .settings-note {
+      margin: 0 0 12px;
+      color: var(--warning);
+      background: var(--warning-soft);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+    }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 12px;
+    }
+    .settings-field {
+      display: grid;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .settings-field input,
+    .settings-field select {
+      min-width: 0;
+      height: 34px;
+      padding: 6px 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: var(--surface);
+      font: inherit;
+    }
+    .settings-field.wide { grid-column: 1 / -1; }
+    .settings-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .profile-save-row { margin-bottom: 20px; }
+    .cards-settings-section { margin-top: 36px !important; }
+    .card-editor:not(.care-person) .settings-actions .history-delete {
+      margin-left: auto;
+    }
+    .settings-save {
+      padding: 8px 13px;
+      border: 0;
+      border-radius: 6px;
+      color: #fff;
+      background: var(--accent);
+      font-weight: 700;
+    }
+    .settings-save:hover { background: var(--accent-strong); }
+    .settings-status {
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .card-editor {
+      margin-top: 10px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-soft);
+    }
+    .card-editor-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 9px;
+      font-size: 13px;
+    }
+    .card-switches {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 16px;
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .card-switches label { display: flex; align-items: center; gap: 5px; }
 
     @media (max-width: 760px) {
       .app {
@@ -371,9 +740,24 @@
       .quick { width: auto; flex: 0 0 auto; white-space: nowrap; }
       .messages { padding: 16px 12px; }
       .bubble { max-width: 88%; }
+      .bubble.wide {
+        width: calc(100% - 40px);
+        max-width: calc(100% - 40px);
+      }
+      .bubble-content.formatted-response { font-size: 11.5px; }
       .composer-area { padding: 9px 12px max(10px, env(safe-area-inset-bottom)); }
       .send { min-width: 62px; }
       .composer-note { display: none; }
+      .history-overlay { padding: 12px; }
+      .history-panel { width: 100%; max-height: calc(100dvh - 24px); }
+      .history-item { align-items: flex-start; }
+      .settings-grid { grid-template-columns: 1fr; }
+      .settings-field.wide { grid-column: auto; }
+      .anomaly-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .anomaly-summary-item:nth-child(odd) { border-left: 0; }
+      .anomaly-summary-item:nth-child(n + 3) { border-top: 1px solid var(--line); }
+      .anomaly-head strong { flex-basis: 100px; }
+      .anomaly-amount { font-size: 11.5px; }
     }
   </style>
 </head>
@@ -395,13 +779,15 @@
         <section class="side-section">
           <p class="side-label">当前会话</p>
           <div class="customer">
-            <strong>陈晓明</strong>
-            <span>模拟客户 · 平衡型投资者</span>
+            <strong id="customer-name">陈晓明</strong>
+            <span id="customer-subtitle">模拟客户 · 平衡型投资者</span>
             <div class="session-state">
               <span>会话</span>
               <code id="session-id">正在创建</code>
             </div>
           </div>
+          <button class="history-button" id="upload-history-button" type="button">查看上传记录</button>
+          <button class="history-button" id="profile-settings-button" type="button">资料与卡片设置</button>
         </section>
 
         <section class="side-section">
@@ -447,11 +833,11 @@
                 <path d="M21 15.5l-4.6-4.6L5.5 21"></path>
               </svg>
             </button>
-            <input id="file-input" type="file" accept="image/*,.txt,.csv" hidden>
+            <input id="file-input" type="file" accept="image/*,.txt,.csv,.xlsx,.xlsm" hidden>
             <textarea id="message-input" rows="1" maxlength="4000" placeholder="输入银行业务需求，Enter 发送，Shift+Enter 换行"></textarea>
             <button class="send" id="send-button" type="submit">发送</button>
           </form>
-          <p class="composer-note">所有账户与交易均为模拟数据，不接入真实银行系统。</p>
+          <p class="composer-note">演示账户不接入真实银行；上传账单仅保存在当前会话数据库，原始文件识别后删除。</p>
         </div>
       </main>
     </div>
@@ -460,8 +846,98 @@
   <div class="drop-overlay" id="drop-overlay">
     <div class="drop-panel">
       <strong>松开以上传账单</strong>
-      <span>支持 PNG、JPG、WEBP、TXT、CSV，单文件不超过 8MB</span>
+      <span>支持 PNG、JPG、WEBP、TXT、CSV、XLSX、XLSM，单文件不超过 8MB</span>
     </div>
+  </div>
+
+  <div class="history-overlay" id="upload-history-overlay" aria-hidden="true">
+    <section class="history-panel" role="dialog" aria-modal="true" aria-labelledby="upload-history-title">
+      <header class="history-header">
+        <div>
+          <strong id="upload-history-title">上传账单记录</strong>
+          <p>原始上传文件在识别后删除；解析后的流水和批次信息保存在当前会话的 SQLite 快照中。</p>
+        </div>
+        <button class="history-close" id="upload-history-close" type="button">关闭</button>
+      </header>
+      <div class="history-list" id="upload-history-list">
+        <div class="history-empty">正在读取上传记录...</div>
+      </div>
+    </section>
+  </div>
+
+  <div class="history-overlay" id="profile-settings-overlay" aria-hidden="true">
+    <section class="history-panel" role="dialog" aria-modal="true" aria-labelledby="profile-settings-title">
+      <header class="history-header">
+        <div>
+          <strong id="profile-settings-title">资料与卡片设置</strong>
+          <p>当前内容为预设演示数据。修改后只保存到当前会话的 SQLite 快照。</p>
+        </div>
+        <button class="history-close" id="profile-settings-close" type="button">关闭</button>
+      </header>
+      <div class="settings-body">
+        <p class="settings-note">个人资料、爱人生日和银行卡目前都来自演示种子数据，可在这里直接修改。</p>
+        <form id="profile-settings-form">
+          <section class="settings-section">
+            <h3>个人资料</h3>
+            <div class="settings-grid">
+              <label class="settings-field">姓名<input name="name" required maxlength="40"></label>
+              <label class="settings-field">手机号<input name="phone" inputmode="tel"></label>
+              <label class="settings-field">城市<input name="city"></label>
+              <label class="settings-field">年龄<input name="age" type="number" min="18" max="100"></label>
+              <label class="settings-field">职业<input name="occupation"></label>
+              <label class="settings-field">月收入<input name="monthly_income" type="number" min="0" step="0.01"></label>
+              <label class="settings-field wide">我的生日<input name="birthday" type="date"></label>
+            </div>
+          </section>
+          <section class="settings-section">
+            <h3>关心的人</h3>
+            <p class="settings-note">自己的生日在上方“个人资料”中维护；这里同时维护生日提醒和转账收款账号。</p>
+            <div id="care-people-list"></div>
+            <button class="history-button" id="add-care-person" type="button">添加关心的人</button>
+          </section>
+          <section class="settings-section">
+            <h3>通知与礼物偏好</h3>
+            <div class="settings-grid">
+              <label class="settings-field">通知渠道<input name="notify_channel"></label>
+            </div>
+          </section>
+          <div class="settings-actions profile-save-row">
+            <button class="settings-save" type="submit">保存个人资料与生日偏好</button>
+            <span class="settings-status" id="profile-settings-status"></span>
+          </div>
+        </form>
+
+        <section class="settings-section cards-settings-section">
+          <h3>银行卡</h3>
+          <div id="profile-cards"></div>
+        </section>
+
+        <section class="settings-section">
+          <h3>添加演示银行卡</h3>
+          <form id="new-card-form">
+            <div class="settings-grid">
+              <label class="settings-field">卡类型
+                <select name="kind">
+                  <option value="debit">借记卡</option>
+                  <option value="credit">信用卡</option>
+                  <option value="virtual">虚拟卡</option>
+                  <option value="supplementary">附属卡</option>
+                </select>
+              </label>
+              <label class="settings-field">发卡行<input name="brand" value="演示银行"></label>
+              <label class="settings-field">尾号四位<input name="tail" value="0000" maxlength="4"></label>
+              <label class="settings-field">日限额<input name="daily_limit" type="number" min="0" value="20000"></label>
+              <label class="settings-field">单笔限额<input name="single_limit" type="number" min="0" value="5000"></label>
+              <label class="settings-field">备注<input name="note" placeholder="例如：网购专用卡"></label>
+            </div>
+            <div class="settings-actions">
+              <button class="settings-save" type="submit">添加银行卡</button>
+              <span class="settings-status" id="card-settings-status"></span>
+            </div>
+          </form>
+        </section>
+      </div>
+    </section>
   </div>
 
   <script>
@@ -474,6 +950,23 @@
     const uploadButton = document.getElementById("upload-button");
     const fileInput = document.getElementById("file-input");
     const dropOverlay = document.getElementById("drop-overlay");
+    const historyButton = document.getElementById("upload-history-button");
+    const historyOverlay = document.getElementById("upload-history-overlay");
+    const historyClose = document.getElementById("upload-history-close");
+    const historyList = document.getElementById("upload-history-list");
+    const profileButton = document.getElementById("profile-settings-button");
+    const profileOverlay = document.getElementById("profile-settings-overlay");
+    const profileClose = document.getElementById("profile-settings-close");
+    const profileForm = document.getElementById("profile-settings-form");
+    const profileCards = document.getElementById("profile-cards");
+    const carePeopleList = document.getElementById("care-people-list");
+    const addCarePersonButton = document.getElementById("add-care-person");
+    const newCardForm = document.getElementById("new-card-form");
+    const profileStatus = document.getElementById("profile-settings-status");
+    const cardStatus = document.getElementById("card-settings-status");
+    const customerName = document.getElementById("customer-name");
+    const customerSubtitle = document.getElementById("customer-subtitle");
+    let carePeople = [];
     let sessionId = localStorage.getItem("finagent_session_id") || "";
     let accessToken = sessionStorage.getItem("finagent_access_token") || "";
     let busy = false;
@@ -527,6 +1020,164 @@
       await createSession();
     }
 
+    function renderAnomalyContent(container, text, reply) {
+      const items = Array.isArray(reply?.data?.items) ? reply.data.items : [];
+      const title = (text || "").split("\n").find((line) => line.trim()) || "异常交易检查结果";
+      const intro = document.createElement("div");
+      intro.className = "anomaly-intro";
+      intro.textContent = title.trim();
+      container.appendChild(intro);
+
+      const counts = items.reduce((result, item) => {
+        const level = ["danger", "warning", "info"].includes(item.level) ? item.level : "warning";
+        result[level] += 1;
+        return result;
+      }, { danger: 0, warning: 0, info: 0 });
+      const summary = document.createElement("div");
+      summary.className = "anomaly-summary";
+      [
+        ["异常总数", items.length, ""],
+        ["高危", counts.danger, "danger"],
+        ["需关注", counts.warning, "warning"],
+        ["提示", counts.info, "info"],
+      ].forEach(([label, value, tone]) => {
+        const metric = document.createElement("div");
+        metric.className = "anomaly-summary-item";
+        const metricLabel = document.createElement("span");
+        metricLabel.className = "anomaly-summary-label";
+        metricLabel.textContent = label;
+        const metricValue = document.createElement("strong");
+        metricValue.className = `anomaly-summary-value ${tone}`.trim();
+        metricValue.textContent = String(value);
+        metric.append(metricLabel, metricValue);
+        summary.appendChild(metric);
+      });
+      container.appendChild(summary);
+
+      const sectionHeading = document.createElement("div");
+      sectionHeading.className = "anomaly-section-heading anomaly-action-heading";
+      const heading = document.createElement("strong");
+      heading.textContent = "逐笔判定与处理建议";
+      const hint = document.createElement("span");
+      hint.textContent = "按风险等级排序";
+      sectionHeading.append(heading, hint);
+      container.appendChild(sectionHeading);
+
+      const list = document.createElement("div");
+      list.className = "anomaly-list";
+      items.forEach((item) => {
+        const level = item.level || "warning";
+        const row = document.createElement("div");
+        row.className = `anomaly-item ${level}`;
+        const head = document.createElement("div");
+        head.className = "anomaly-head";
+        const badge = document.createElement("span");
+        badge.className = "anomaly-badge";
+        badge.textContent = ({ danger: "高危", warning: "关注", info: "提示" })[level] || "关注";
+        const merchant = document.createElement("strong");
+        merchant.textContent = item.merchant || "未知商户";
+        const amountValue = Math.abs(Number(item.amount || 0));
+        const amountNode = document.createElement("span");
+        amountNode.className = "anomaly-amount";
+        amountNode.textContent = `支出 ${amountValue.toLocaleString("zh-CN", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        })} 元`;
+        head.append(badge, merchant, amountNode);
+
+        const meta = document.createElement("div");
+        meta.className = "anomaly-meta";
+        [
+          item.date || "日期未知",
+          item.category || "未分类",
+          `风险分 ${Number(item.score || 0).toFixed(0)}`,
+        ].forEach((value) => {
+          const metaItem = document.createElement("span");
+          metaItem.textContent = value;
+          meta.appendChild(metaItem);
+        });
+
+        const reason = document.createElement("div");
+        reason.className = "anomaly-reason";
+        const reasonLabel = document.createElement("span");
+        reasonLabel.className = "anomaly-reason-label";
+        reasonLabel.textContent = "判定依据";
+        const reasonText = document.createElement("span");
+        reasonText.textContent = item.reason || "命中异常交易规则。";
+        reason.append(reasonLabel, reasonText);
+
+        const metrics = item.metrics && typeof item.metrics === "object"
+          ? document.createElement("div")
+          : null;
+        if (metrics) {
+          metrics.className = "anomaly-metrics";
+          const metricLabels = {
+            category_mean: "同类均值",
+            category_stdev: "标准差",
+            threshold: "告警阈值",
+            zscore: "偏离倍数",
+            hour: "发生时段",
+            window_minutes: "时间窗口",
+            count: "命中笔数",
+            unit_amount: "单笔金额",
+            total: "合计金额",
+            previous_amount: "调整前",
+            current_amount: "当前金额",
+            increase_pct: "涨幅",
+            amount: "涉及金额",
+            first_seen: "首次出现"
+          };
+          Object.entries(item.metrics).forEach(([key, rawValue]) => {
+            const label = metricLabels[key];
+            if (!label || rawValue == null) return;
+            let displayValue = String(rawValue);
+            if (key === "hour") {
+              displayValue = `${String(rawValue).padStart(2, "0")}:00 左右`;
+            } else if (key === "window_minutes") {
+              displayValue = `${rawValue} 分钟`;
+            } else if (key === "increase_pct") {
+              displayValue = `${Number(rawValue).toFixed(0)}%`;
+            } else if (["category_mean", "category_stdev", "threshold", "unit_amount", "total",
+              "previous_amount", "current_amount", "amount"].includes(key)) {
+              displayValue = `${Number(rawValue).toLocaleString("zh-CN", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+              })} 元`;
+            } else if (key === "first_seen") {
+              displayValue = rawValue ? "是" : "否";
+            }
+            const metric = document.createElement("span");
+            metric.className = "anomaly-metric";
+            metric.textContent = `${label} ${displayValue}`;
+            metrics.appendChild(metric);
+          });
+        }
+
+        const suggestion = document.createElement("div");
+        suggestion.className = "anomaly-suggestion";
+        const suggestionLabel = document.createElement("span");
+        suggestionLabel.className = "anomaly-suggestion-label";
+        suggestionLabel.textContent = "建议";
+        const suggestionText = document.createElement("span");
+        suggestionText.textContent = item.suggestion || "请核对交易是否由本人操作。";
+        suggestion.append(suggestionLabel, suggestionText);
+        row.append(head, meta, reason);
+        if (metrics && metrics.childElementCount) row.appendChild(metrics);
+        row.appendChild(suggestion);
+        list.appendChild(row);
+      });
+      container.appendChild(list);
+      const scope = reply?.data?.data_scope;
+      if (scope) {
+        const note = document.createElement("div");
+        note.className = "anomaly-scope";
+        note.textContent = scope === "uploaded"
+          ? "数据范围：仅用户上传流水。"
+          : "数据范围：演示种子数据。";
+        container.appendChild(note);
+      }
+    }
+
     function appendMessage(role, text, reply = null) {
       const article = document.createElement("article");
       article.className = `message ${role}`;
@@ -554,7 +1205,20 @@
       }
 
       const content = document.createElement("div");
-      content.textContent = text;
+      const anomalyItems = reply?.intent === "bill.anomaly"
+        ? (reply.data?.items || [])
+        : [];
+      if (Array.isArray(anomalyItems) && anomalyItems.length) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        renderAnomalyContent(content, text, reply);
+      } else {
+        const hasTable = /\n\s*-{5,}/.test(text || "");
+        const isLongBill = Boolean(reply?.intent?.startsWith?.("bill.")) && (text || "").length > 450;
+        content.className = `bubble-content${hasTable ? " formatted-response" : ""}`;
+        if (hasTable || isLongBill) bubble.classList.add("wide");
+        content.textContent = text;
+      }
       bubble.appendChild(content);
 
       if (reply && Array.isArray(reply.trace) && reply.trace.length) {
@@ -694,9 +1358,9 @@
       const suffix = file.name.includes(".")
         ? file.name.slice(file.name.lastIndexOf(".")).toLowerCase()
         : "";
-      const allowed = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".txt", ".csv"];
+      const allowed = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".txt", ".csv", ".xlsx", ".xlsm"];
       if (!allowed.includes(suffix)) {
-        appendMessage("agent", "只支持 PNG、JPG、WEBP、TXT 或 CSV 账单。", {
+        appendMessage("agent", "只支持 PNG、JPG、WEBP、TXT、CSV 或 Excel（xlsx/xlsm）账单。", {
           kind: "error", intent: "upload"
         });
         return;
@@ -750,8 +1414,474 @@
       }
     }
 
+    function renderUploadHistory(uploads) {
+      historyList.replaceChildren();
+      if (!uploads.length) {
+        const empty = document.createElement("div");
+        empty.className = "history-empty";
+        empty.textContent = "还没有上传过账单。识别并确认导入后，会在这里生成记录。";
+        historyList.appendChild(empty);
+        return;
+      }
+      uploads.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "history-item";
+        const copy = document.createElement("div");
+        copy.className = "history-copy";
+        const name = document.createElement("strong");
+        name.textContent = item.filename || "未命名账单";
+        const meta = document.createElement("span");
+        const importedAt = String(item.imported_at || "").replace("T", " ").slice(0, 19);
+        const total = Number(item.total_expense || 0).toLocaleString("zh-CN", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        });
+        meta.textContent = `${importedAt} · ${item.record_count || 0} 笔交易 · 支出 ${total} 元`;
+        copy.append(name, meta);
+        const remove = document.createElement("button");
+        remove.className = "history-delete";
+        remove.type = "button";
+        remove.textContent = "删除";
+        remove.addEventListener("click", () => deleteUploadBatch(item.batch_id, item.filename));
+        row.append(copy, remove);
+        historyList.appendChild(row);
+      });
+    }
+
+    async function loadUploadHistory() {
+      historyList.innerHTML = '<div class="history-empty">正在读取上传记录...</div>';
+      try {
+        await ensureSession();
+        let response = await fetchWithAuth(`/v1/uploads?session_id=${encodeURIComponent(sessionId)}`);
+        if (response.status === 404) {
+          localStorage.removeItem("finagent_session_id");
+          sessionId = "";
+          await createSession();
+          response = await fetchWithAuth(`/v1/uploads?session_id=${encodeURIComponent(sessionId)}`);
+        }
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "读取上传记录失败");
+        renderUploadHistory(payload.uploads || []);
+      } catch (error) {
+        historyList.innerHTML = "";
+        const failed = document.createElement("div");
+        failed.className = "history-empty";
+        failed.textContent = error.message || "读取上传记录失败";
+        historyList.appendChild(failed);
+      }
+    }
+
+    async function deleteUploadBatch(batchId, filename) {
+      if (!batchId) return;
+      if (!window.confirm(`确认删除「${filename || "这笔上传"}」及其导入的流水吗？`)) return;
+      try {
+        const response = await fetchWithAuth(
+          `/v1/uploads/${encodeURIComponent(batchId)}?session_id=${encodeURIComponent(sessionId)}`,
+          { method: "DELETE" }
+        );
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "删除失败");
+        await loadUploadHistory();
+      } catch (error) {
+        historyList.innerHTML = "";
+        const failed = document.createElement("div");
+        failed.className = "history-empty";
+        failed.textContent = error.message || "删除失败";
+        historyList.appendChild(failed);
+      }
+    }
+
+    function openUploadHistory() {
+      historyOverlay.classList.add("show");
+      historyOverlay.setAttribute("aria-hidden", "false");
+      loadUploadHistory();
+    }
+
+    function closeUploadHistory() {
+      historyOverlay.classList.remove("show");
+      historyOverlay.setAttribute("aria-hidden", "true");
+    }
+
+    function setFormValues(form, values) {
+      Object.entries(values).forEach(([name, value]) => {
+        const field = form.elements.namedItem(name);
+        if (field) field.value = value == null ? "" : String(value);
+      });
+    }
+
+    function makeSettingsField(labelText, input) {
+      const label = document.createElement("label");
+      label.className = "settings-field";
+      label.append(document.createTextNode(labelText), input);
+      return label;
+    }
+
+    function makeInput(type, value) {
+      const input = document.createElement("input");
+      input.type = type;
+      input.value = value == null ? "" : String(value);
+      return input;
+    }
+
+    function renderProfileSettings(profile) {
+      const user = profile.user || {};
+      const prefs = profile.preferences || {};
+      setFormValues(profileForm, {
+        name: user.name,
+        phone: user.phone,
+        city: user.city,
+        age: user.age,
+        occupation: user.occupation,
+        monthly_income: user.monthly_income,
+        birthday: user.birthday,
+        notify_channel: prefs.notify_channel,
+      });
+      customerName.textContent = user.name || "演示客户";
+      customerSubtitle.textContent = `${user.city || "深圳"} · ${user.risk_profile || "平衡型投资者"}`;
+      carePeople = Array.isArray(prefs.care_people) ? prefs.care_people.map((item) => ({ ...item })) : [];
+      if (!carePeople.length && prefs.spouse_name) {
+        carePeople = [{
+          person_id: "CARE0001",
+          name: prefs.spouse_name,
+          relation: "配偶",
+          birthday: prefs.spouse_birthday || "",
+          anniversary: prefs.anniversary || "",
+          phone: "",
+          wechat: "",
+          alipay: "",
+          bank_card: "",
+          favorite_gift: prefs.favorite_gift || [],
+          avoid: prefs.avoid || [],
+        }];
+      }
+      renderCarePeople(carePeople);
+      renderCardEditors(profile.cards || []);
+    }
+
+    function collectCarePeople() {
+      return [...carePeopleList.querySelectorAll(".care-person")].map((row) => ({
+        person_id: row.dataset.personId || "",
+        name: row.querySelector('[data-field="name"]')?.value || "",
+        relation: row.querySelector('[data-field="relation"]')?.value || "",
+        birthday: row.querySelector('[data-field="birthday"]')?.value || "",
+        anniversary: row.querySelector('[data-field="anniversary"]')?.value || "",
+        phone: row.querySelector('[data-field="phone"]')?.value || "",
+        wechat: row.querySelector('[data-field="wechat"]')?.value || "",
+        alipay: row.querySelector('[data-field="alipay"]')?.value || "",
+        bank_card: row.querySelector('[data-field="bank_card"]')?.value || "",
+        favorite_gift: row.querySelector('[data-field="favorite_gift"]')?.value || "",
+        avoid: row.querySelector('[data-field="avoid"]')?.value || "",
+      }));
+    }
+
+    function renderCarePeople(people) {
+      carePeopleList.replaceChildren();
+      if (!people.length) {
+        const empty = document.createElement("div");
+        empty.className = "history-empty";
+        empty.textContent = "还没有添加关心的人。";
+        carePeopleList.appendChild(empty);
+        return;
+      }
+      people.forEach((person, index) => {
+        const row = document.createElement("div");
+        row.className = "card-editor care-person";
+        row.dataset.personId = person.person_id || "";
+        const head = document.createElement("div");
+        head.className = "card-editor-head";
+        const title = document.createElement("strong");
+        title.textContent = person.name || `关心的人 ${index + 1}`;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "history-delete";
+        remove.textContent = "删除";
+        remove.addEventListener("click", () => {
+          const current = collectCarePeople();
+          current.splice(index, 1);
+          carePeople = current;
+          renderCarePeople(carePeople);
+        });
+        head.append(title, remove);
+
+        const grid = document.createElement("div");
+        grid.className = "settings-grid";
+        const name = makeInput("text", person.name || "");
+        name.dataset.field = "name";
+        const relation = makeInput("text", person.relation || "");
+        relation.dataset.field = "relation";
+        relation.placeholder = "配偶/母亲/朋友";
+        const birthday = makeInput("date", person.birthday || "");
+        birthday.dataset.field = "birthday";
+        const anniversary = makeInput("date", person.anniversary || "");
+        anniversary.dataset.field = "anniversary";
+        const phone = makeInput("tel", person.phone || "");
+        phone.dataset.field = "phone";
+        phone.placeholder = "11 位手机号";
+        const wechat = makeInput("text", person.wechat || "");
+        wechat.dataset.field = "wechat";
+        wechat.placeholder = "微信号";
+        const alipay = makeInput("text", person.alipay || "");
+        alipay.dataset.field = "alipay";
+        alipay.placeholder = "手机号或邮箱";
+        const bankCard = makeInput("text", person.bank_card || "");
+        bankCard.dataset.field = "bank_card";
+        bankCard.inputMode = "numeric";
+        bankCard.placeholder = "银行卡号，仅展示尾号";
+        const gifts = makeInput("text", (person.favorite_gift || []).join(","));
+        gifts.dataset.field = "favorite_gift";
+        gifts.placeholder = "鲜花,蛋糕";
+        const avoid = makeInput("text", (person.avoid || []).join(","));
+        avoid.dataset.field = "avoid";
+        avoid.placeholder = "海鲜";
+        grid.append(
+          makeSettingsField("姓名", name),
+          makeSettingsField("关系", relation),
+          makeSettingsField("生日", birthday),
+          makeSettingsField("纪念日", anniversary),
+          makeSettingsField("手机号", phone),
+          makeSettingsField("微信号", wechat),
+          makeSettingsField("支付宝账号", alipay),
+          makeSettingsField("银行卡号", bankCard),
+          makeSettingsField("偏好礼物", gifts),
+          makeSettingsField("需要避开", avoid),
+        );
+        row.append(head, grid);
+        carePeopleList.appendChild(row);
+      });
+    }
+
+    function renderCardEditors(cards) {
+      profileCards.replaceChildren();
+      if (!cards.length) {
+        const empty = document.createElement("div");
+        empty.className = "history-empty";
+        empty.textContent = "当前没有银行卡。";
+        profileCards.appendChild(empty);
+        return;
+      }
+      cards.forEach((card) => {
+        const editor = document.createElement("div");
+        editor.className = "card-editor";
+        const head = document.createElement("div");
+        head.className = "card-editor-head";
+        const title = document.createElement("strong");
+        title.textContent = `${card.brand || "演示银行"} · 尾号${card.tail || "----"}`;
+        const source = document.createElement("span");
+        source.textContent = card.is_demo ? "预设演示" : "用户修改";
+        head.append(title, source);
+
+        const grid = document.createElement("div");
+        grid.className = "settings-grid";
+        const brand = makeInput("text", card.brand);
+        const tail = makeInput("text", card.tail);
+        tail.maxLength = 4;
+        const daily = makeInput("number", card.daily_limit);
+        const single = makeInput("number", card.single_limit);
+        const note = makeInput("text", card.note);
+        note.className = "wide";
+        const status = document.createElement("select");
+        [
+          ["active", "正常"], ["frozen", "已冻结"], ["lost", "已挂失"],
+          ["cancelled", "已销卡"], ["pending", "待激活"]
+        ].forEach(([value, label]) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          option.selected = card.status === value;
+          status.append(option);
+        });
+        grid.append(
+          makeSettingsField("发卡行", brand),
+          makeSettingsField("尾号", tail),
+          makeSettingsField("状态", status),
+          makeSettingsField("日限额", daily),
+          makeSettingsField("单笔限额", single),
+          makeSettingsField("备注", note),
+        );
+
+        const switches = document.createElement("div");
+        switches.className = "card-switches";
+        const switchInputs = {};
+        [
+          ["online_enabled", "线上"],
+          ["overseas_enabled", "境外"],
+          ["contactless_enabled", "免密/闪付"],
+        ].forEach(([name, label]) => {
+          const wrapper = document.createElement("label");
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = Boolean(card[name]);
+          switchInputs[name] = checkbox;
+          wrapper.append(checkbox, document.createTextNode(label));
+          switches.appendChild(wrapper);
+        });
+
+        const actions = document.createElement("div");
+        actions.className = "settings-actions";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "settings-save";
+        save.textContent = "保存这张卡";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "history-delete";
+        remove.textContent = "删除这张卡";
+        const localStatus = document.createElement("span");
+        localStatus.className = "settings-status";
+        actions.append(save, localStatus, remove);
+        save.addEventListener("click", async () => {
+          save.disabled = true;
+          localStatus.textContent = "保存中...";
+          try {
+            const response = await fetchWithAuth(`/v1/cards/${encodeURIComponent(card.card_id)}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                session_id: sessionId,
+                brand: brand.value,
+                tail: tail.value,
+                status: status.value,
+                daily_limit: Number(daily.value || 0),
+                single_limit: Number(single.value || 0),
+                note: note.value,
+                online_enabled: switchInputs.online_enabled.checked,
+                overseas_enabled: switchInputs.overseas_enabled.checked,
+                contactless_enabled: switchInputs.contactless_enabled.checked,
+              })
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.message || "保存失败");
+            cardStatus.textContent = "银行卡已保存。";
+            await loadProfileSettings();
+          } catch (error) {
+            localStatus.textContent = error.message || "保存失败";
+            save.disabled = false;
+          }
+        });
+        remove.addEventListener("click", async () => {
+          if (!window.confirm(`确认删除「${title.textContent}」吗？账户余额不会变化。`)) return;
+          remove.disabled = true;
+          localStatus.textContent = "删除中...";
+          try {
+            const response = await fetchWithAuth(
+              `/v1/cards/${encodeURIComponent(card.card_id)}?session_id=${encodeURIComponent(sessionId)}`,
+              { method: "DELETE" }
+            );
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.message || "删除失败");
+            cardStatus.textContent = "银行卡已删除。";
+            await loadProfileSettings();
+          } catch (error) {
+            localStatus.textContent = error.message || "删除失败";
+            remove.disabled = false;
+          }
+        });
+        editor.append(head, grid, switches, actions);
+        profileCards.appendChild(editor);
+      });
+    }
+
+    async function loadProfileSettings() {
+      profileStatus.textContent = "正在读取...";
+      try {
+        await ensureSession();
+        let response = await fetchWithAuth(`/v1/profile?session_id=${encodeURIComponent(sessionId)}`);
+        if (response.status === 404) {
+          localStorage.removeItem("finagent_session_id");
+          sessionId = "";
+          await createSession();
+          response = await fetchWithAuth(`/v1/profile?session_id=${encodeURIComponent(sessionId)}`);
+        }
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "读取资料失败");
+        renderProfileSettings(payload);
+        profileStatus.textContent = "当前为预设数据，可直接修改。";
+      } catch (error) {
+        profileStatus.textContent = error.message || "读取资料失败";
+      }
+    }
+
+    function openProfileSettings() {
+      profileOverlay.classList.add("show");
+      profileOverlay.setAttribute("aria-hidden", "false");
+      loadProfileSettings();
+    }
+
+    function closeProfileSettings() {
+      profileOverlay.classList.remove("show");
+      profileOverlay.setAttribute("aria-hidden", "true");
+    }
+
     uploadButton.addEventListener("click", () => fileInput.click());
     fileInput.addEventListener("change", () => handleFile(fileInput.files && fileInput.files[0]));
+    historyButton.addEventListener("click", openUploadHistory);
+    historyClose.addEventListener("click", closeUploadHistory);
+    historyOverlay.addEventListener("click", (event) => {
+      if (event.target === historyOverlay) closeUploadHistory();
+    });
+    profileButton.addEventListener("click", openProfileSettings);
+    profileClose.addEventListener("click", closeProfileSettings);
+    profileOverlay.addEventListener("click", (event) => {
+      if (event.target === profileOverlay) closeProfileSettings();
+    });
+
+    profileForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      profileStatus.textContent = "保存中...";
+      const values = Object.fromEntries(new FormData(profileForm).entries());
+      values.care_people = collectCarePeople();
+      try {
+        const response = await fetchWithAuth("/v1/profile", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, ...values })
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "保存失败");
+        renderProfileSettings(payload);
+        profileStatus.textContent = "个人资料与生日偏好已保存。";
+      } catch (error) {
+        profileStatus.textContent = error.message || "保存失败";
+      }
+    });
+
+    addCarePersonButton.addEventListener("click", () => {
+      carePeople = collectCarePeople();
+      carePeople.push({
+        person_id: "",
+        name: "",
+        relation: "关心的人",
+        birthday: "",
+        anniversary: "",
+        phone: "",
+        wechat: "",
+        alipay: "",
+        bank_card: "",
+        favorite_gift: [],
+        avoid: [],
+      });
+      renderCarePeople(carePeople);
+    });
+
+    newCardForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      cardStatus.textContent = "添加中...";
+      const values = Object.fromEntries(new FormData(newCardForm).entries());
+      try {
+        const response = await fetchWithAuth("/v1/cards", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, ...values })
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "添加失败");
+        newCardForm.reset();
+        await loadProfileSettings();
+        cardStatus.textContent = "银行卡已添加。";
+      } catch (error) {
+        cardStatus.textContent = error.message || "添加失败";
+      }
+    });
 
     let dragDepth = 0;
     function hasFiles(event) {

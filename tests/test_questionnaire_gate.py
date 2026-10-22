@@ -46,6 +46,38 @@ class TestRiskGate(unittest.TestCase):
         self.assertIn("第 1/7 题", reply.text)
         self.assertIn("没看懂", reply.text)
 
+    def test_new_command_pauses_and_then_resumes_questionnaire(self):
+        self.agent.handle("推荐几个基金")
+        self.agent.handle("b")
+
+        other = self.agent.handle("我还有多少钱")
+        self.assertEqual(other.intent, "account.balance")
+        self.assertIsNone(self.agent.session.pending)
+        self.assertIsNotNone(self.agent.paused_questionnaire)
+
+        prompt = self.agent.handle("推荐几个基金")
+        self.assertEqual(prompt.kind, "question")
+        self.assertEqual(self.agent.session.pending.kind, "questionnaire_resume")
+        self.assertIn("上次", prompt.text)
+        self.assertIn("已答 1/7", prompt.text)
+
+        resumed = self.agent.handle("1")
+        self.assertEqual(self.agent.session.pending.kind, "questionnaire")
+        self.assertIn("第 2/7 题", resumed.text)
+
+    def test_questionnaire_can_restart_after_pause(self):
+        self.agent.handle("推荐几个基金")
+        self.agent.handle("b")
+        self.agent.handle("我还有多少钱")
+        self.agent.handle("推荐几个基金")
+
+        restarted = self.agent.handle("重新开始")
+
+        self.assertIn("第 1/7 题", restarted.text)
+        self.assertEqual(self.agent.session.pending.kind, "questionnaire")
+        self.assertIsNone(self.agent.paused_questionnaire)
+        self.assertEqual(self.agent.session.pending.answers, {})
+
     def test_digit_and_text_answers_are_accepted(self):
         self.agent.handle("推荐几个基金")
         self.assertEqual(self.agent.handle("2").kind, "question")          # 第 2 题

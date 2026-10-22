@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import csv
 import json
 import os
 import shutil
@@ -20,16 +21,21 @@ from pathlib import Path
 from typing import List, Optional
 
 from finagent.nlu.llm_client import LLMClient
+from finagent.vision.excel_reader import ExcelReadError, read_csv, read_excel
+from finagent.vision.text_codec import decode_text_bytes
 from finagent.vision.receipt_parser import (
+    BillSummary,
     ParsedTransaction,
     guess_category,
     looks_like_summary_page,
     looks_like_pasted_bill,
+    parse_bill_summary,
     parse_receipt_text,
 )
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff", ".gif"}
 TEXT_SUFFIXES = {".txt", ".csv", ".md", ".log", ".tsv"}
+EXCEL_SUFFIXES = {".xlsx", ".xlsm"}
 CATEGORY_CHOICES = ["餐饮", "交通", "购物", "订阅服务", "旅行", "生活缴费", "医疗", "娱乐", "其他"]
 
 VISION_PROMPT = (
@@ -58,6 +64,7 @@ class ReceiptResult:
     message: str = ""
     image_path: str = ""
     errors: List[str] = field(default_factory=list)
+    summary: Optional[BillSummary] = None
 
     @property
     def total_expense(self) -> float:
@@ -96,6 +103,7 @@ class ReceiptReader:
             "vision_llm": self.vision_available,
             "windows_ocr": bool(self.powershell_path() and self._ocr_script().exists()),
             "text_file": True,
+            "excel_file": True,
         }
 
     def _ocr_script(self) -> Path:
@@ -114,14 +122,18 @@ class ReceiptReader:
             )
 
         suffix = target.suffix.lower()
+        if suffix == ".csv":
+            return self._from_csv(target, today)
         if suffix in TEXT_SUFFIXES:
             return self._from_text(target, today)
+        if suffix in EXCEL_SUFFIXES:
+            return self._from_excel(target, today)
 
         if suffix not in IMAGE_SUFFIXES:
             return ReceiptResult(
                 ok=False,
-                message=f"暂不支持的文件类型：{suffix or '无扩展名'}。支持图片（png/jpg/bmp/webp）"
-                        f"与文本账单（txt/csv/md）。",
+                message=f"暂不支持的文件类型：{suffix or '无扩展名'}。支持图片（png/jpg/bmp/webp）、"
+                        f"文本账单（txt/csv/md）和 Excel（xlsx/xlsm）。",
                 image_path=str(target),
             )
 
@@ -136,7 +148,7 @@ class ReceiptReader:
         result.errors.extend(errors)
         if "汇总页" in (result.message or ""):
             return result          # 汇总页要给出明确指引，不要再套通用失败文案
-        if result.ok and result.records:
+        if result.ok and (result.records or result.summary):
             if errors:
                 result.message += "\n（多模态通道不可用，已自动改用 Windows 离线 OCR）"
             return result
@@ -159,7 +171,21 @@ class ReceiptReader:
 
     # ------------------------------------------------------------------
     def _from_text(self, target: Path, today: Optional[date]) -> ReceiptResult:
-        raw = target.read_text(encoding="utf-8", errors="replace")
+        raw = decode_text_bytes(target.read_bytes())
+        summary = (
+            parse_bill_summary(raw, today)
+            if looks_like_summary_page(raw)
+            else None
+        )
+        if summary is not None:
+            return ReceiptResult(
+                ok=True,
+                backend="text_file",
+                backend_label="文本账单汇总分析",
+                raw_text=raw,
+                image_path=str(target),
+                summary=summary,
+            )
         records = parse_receipt_text(raw, today)
         return ReceiptResult(
             ok=bool(records),
@@ -168,7 +194,84 @@ class ReceiptReader:
             records=records,
             raw_text=raw,
             image_path=str(target),
-            message="" if records else "文本里没有解析出交易记录。",
+            message="" if records else "文本里没有解析出交易记录，也没有识别到可分析的汇总结构。",
+        )
+
+    def _from_excel(self, target: Path, today: Optional[date]) -> ReceiptResult:
+        try:
+            excel = read_excel(target, today)
+        except ExcelReadError as exc:
+            return ReceiptResult(
+                ok=False,
+                backend="excel_file",
+                backend_label="Excel 账单解析",
+                image_path=str(target),
+                message=str(exc),
+            )
+        if excel.summary is not None:
+            return ReceiptResult(
+                ok=True,
+                backend="excel_file",
+                backend_label="Excel 汇总分析",
+                raw_text=excel.raw_text,
+                image_path=str(target),
+                summary=excel.summary,
+            )
+        if excel.records:
+            return ReceiptResult(
+                ok=True,
+                backend="excel_file",
+                backend_label="Excel 交易明细解析",
+                records=excel.records,
+                raw_text=excel.raw_text,
+                image_path=str(target),
+            )
+        return ReceiptResult(
+            ok=False,
+            backend="excel_file",
+            backend_label="Excel 账单解析",
+            raw_text=excel.raw_text,
+            image_path=str(target),
+            message=("Excel 已读取，但没有找到可识别的交易列（日期/商户/金额）"
+                     "或汇总列（月份/类别/支出）。"),
+        )
+
+    def _from_csv(self, target: Path, today: Optional[date]) -> ReceiptResult:
+        try:
+            table = read_csv(target, today)
+        except (ExcelReadError, csv.Error) as exc:
+            return ReceiptResult(
+                ok=False,
+                backend="csv_file",
+                backend_label="CSV 账单解析",
+                image_path=str(target),
+                message=f"无法读取 CSV 文件：{exc}",
+            )
+        if table.summary is not None:
+            return ReceiptResult(
+                ok=True,
+                backend="csv_file",
+                backend_label="CSV 汇总分析",
+                raw_text=table.raw_text,
+                image_path=str(target),
+                summary=table.summary,
+            )
+        if table.records:
+            return ReceiptResult(
+                ok=True,
+                backend="csv_file",
+                backend_label="CSV 交易明细解析",
+                records=table.records,
+                raw_text=table.raw_text,
+                image_path=str(target),
+            )
+        return ReceiptResult(
+            ok=False,
+            backend="csv_file",
+            backend_label="CSV 账单解析",
+            raw_text=table.raw_text,
+            image_path=str(target),
+            message="CSV 已读取，但没有找到日期/商户/金额或月份/类别/支出列。",
         )
 
     def _from_vision(self, target: Path, today: Optional[date]) -> ReceiptResult:
@@ -250,15 +353,27 @@ class ReceiptReader:
                 return ReceiptResult(False, "windows_ocr", "Windows 内置 OCR",
                                      message=self.last_error, image_path=str(target))
             raw_text = out_file.read_text(encoding="utf-8", errors="replace")
+        summary = (
+            parse_bill_summary(raw_text, today)
+            if looks_like_summary_page(raw_text)
+            else None
+        )
+        if summary is not None:
+            return ReceiptResult(
+                ok=True,
+                backend="windows_ocr",
+                backend_label="Windows 内置 OCR（汇总分析）",
+                raw_text=raw_text,
+                image_path=str(target),
+                summary=summary,
+            )
         records = parse_receipt_text(raw_text, today)
         if looks_like_summary_page(raw_text):
             return ReceiptResult(
                 ok=False, backend="windows_ocr", backend_label="Windows 内置 OCR",
                 raw_text=raw_text, image_path=str(target),
-                message=("这张是账单「汇总页」（只有合计、分类和排行），没有逐笔明细，"
-                         "我不会拿它导入假流水。\n"
-                         "请在微信/支付宝里点进「账单明细 / 全部交易」，"
-                         "截出带日期、商户、金额的那一屏再上传。"),
+                message=("这张是账单「汇总页」，但没有提取到足够的支出构成或月度趋势。"
+                         "请截出包含分类金额、合计或每月支出的区域再上传。"),
             )
         if not records:
             return ReceiptResult(
@@ -278,6 +393,19 @@ class ReceiptReader:
     # ------------------------------------------------------------------
     def read_text(self, text: str, today: Optional[date] = None) -> ReceiptResult:
         """直接解析用户粘贴进来的账单文本（微信/支付宝账单导出常见格式）。"""
+        summary = (
+            parse_bill_summary(text or "", today)
+            if looks_like_summary_page(text or "")
+            else None
+        )
+        if summary is not None:
+            return ReceiptResult(
+                ok=True,
+                backend="pasted_text",
+                backend_label="粘贴文本汇总分析",
+                raw_text=text or "",
+                summary=summary,
+            )
         records = parse_receipt_text(text or "", today)
         if not records:
             return ReceiptResult(

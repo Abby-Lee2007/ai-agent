@@ -61,6 +61,7 @@ SIMPLE_PLANS: Dict[str, List[Tuple[str, Dict[str, str]]]] = {
                                                  "note": "note"})],
     "transfer.list_scheduled": [("transfer.list_scheduled", {})],
     "bill.analyze": [("bill.analyze", {"period": "period", "category": "category"})],
+    "bill.supported_formats": [("bill.supported_formats", {})],
     "bill.anomaly": [("bill.anomaly", {"period": "period"})],
     "bill.report": [("bill.report", {"period": "period", "mode": "mode"})],
     "bill.search": [("bill.search", {"keyword": "keyword", "period": "period"})],
@@ -283,6 +284,11 @@ class Planner:
                 ]
                 if target:
                     parts.append(f"收款账号：{target}")
+                elif payee is not None or channel != "phone":
+                    parts.append(
+                        f"未配置{CHANNEL_LABELS.get(channel, channel)}收款账号，"
+                        "请到「资料与卡片设置」补充"
+                    )
                 if payer:
                     parts.append(f"付款账户：{payer.name}（尾号 {payer.tail}）")
                 if args.get("note"):
@@ -306,6 +312,11 @@ class Planner:
                 ]
                 if target:
                     parts.append(f"收款账号：{target}")
+                elif payee is not None or channel != "phone":
+                    parts.append(
+                        f"未配置{CHANNEL_LABELS.get(channel, channel)}收款账号，"
+                        "请到「资料与卡片设置」补充"
+                    )
                 return "；".join(parts)
             if tool == "transfer.split_aa":
                 people = args.get("participants") or []

@@ -94,7 +94,8 @@ class TestIntentRecognition(unittest.TestCase):
     def test_real_path_still_detected(self):
         for text in ["识别这张账单截图 samples/bill_sample.png",
                      "帮我看一下 C:\\Users\\me\\bill.jpg",
-                     "识别 /tmp/receipt.png"]:
+                     "识别 /tmp/receipt.png",
+                     "识别这张账单截图 C:\\tmp\\runtime_uploads\\aa1234.txt"]:
             with self.subTest(text=text):
                 parsed = self.parser.parse(text)
                 self.assertEqual(parsed.name, "bill.scan_receipt")
@@ -111,6 +112,16 @@ class TestIntentRecognition(unittest.TestCase):
         for text, expected in cases.items():
             with self.subTest(text=text):
                 self.assertEqual(self.parser.parse(text).name, expected)
+
+    def test_upload_format_question_is_not_bill_analysis(self):
+        cases = [
+            "可以上传哪些格式的账单",
+            "Excel 支持什么格式",
+            "能识别哪些文件",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertEqual(self.parser.parse(text).name, "bill.supported_formats")
 
     def test_slot_extraction(self):
         intent = self.parser.parse("给老婆转2000块，备注生日礼物")

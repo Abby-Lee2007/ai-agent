@@ -16,6 +16,7 @@ from finagent.tools.bill_tools import (
     BillAnomalyTool,
     BillReportTool,
     BillSearchTool,
+    BillSupportedFormatsTool,
     ReceiptImportTool,
     ReceiptScanTool,
 )
@@ -70,6 +71,7 @@ __all__ = [
     "BillAnomalyTool",
     "BillReportTool",
     "BillSearchTool",
+    "BillSupportedFormatsTool",
     "ReceiptScanTool",
     "ReceiptImportTool",
     "RiskAssessTool",

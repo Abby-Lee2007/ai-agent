@@ -18,6 +18,7 @@ PROJECTION_TABLES = {
     "products": ("product_id", "products"),
     "holdings": ("holding_id", "holdings"),
     "merchant_offers": ("offer_id", "merchant_offers"),
+    "upload_batches": ("batch_id", "upload_batches"),
     "tasks": ("task_id", "tasks"),
     "goals": ("goal_id", "goals"),
     "aa_sheets": ("sheet_id", "aa_sheets"),

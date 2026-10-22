@@ -34,7 +34,7 @@ def channel_account(payee, channel: str) -> str:
     if channel == "phone":
         return payee.wallet_phone or payee.phone
     if channel == "bank":
-        return payee.tail
+        return f"**** **** **** {payee.tail}" if payee.tail else ""
     return ""
 
 

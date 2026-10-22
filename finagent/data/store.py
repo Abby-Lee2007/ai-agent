@@ -30,6 +30,7 @@ from finagent.data.models import (
     ScheduledTask,
     Subscription,
     Transaction,
+    UploadBatch,
     User,
     WealthProduct,
     build,
@@ -83,6 +84,7 @@ class DataStore:
         "products",
         "holdings",
         "merchant_offers",
+        "upload_batches",
         "tasks",
         "goals",
         "aa_sheets",
@@ -99,6 +101,7 @@ class DataStore:
         "products": WealthProduct,
         "holdings": Holding,
         "merchant_offers": MerchantOffer,
+        "upload_batches": UploadBatch,
         "tasks": ScheduledTask,
         "goals": Goal,
         "aa_sheets": AaSheet,
@@ -113,6 +116,7 @@ class DataStore:
         "subscriptions": "SUB",
         "holdings": "HLD",
         "merchant_offers": "OFFER",
+        "upload_batches": "UPL",
         "tasks": "TASK",
         "goals": "GOAL",
         "aa_sheets": "AA",
@@ -516,6 +520,109 @@ class DataStore:
         alert.updated_at = self.clock.iso()
         self.alerts[alert.alert_id] = alert
         return alert
+
+    # ------------------------------------------------------------------
+    # 用户上传批次
+    # ------------------------------------------------------------------
+    def upload_batches_of(self, user_id: str) -> List[UploadBatch]:
+        rows = [batch for batch in self.upload_batches.values() if batch.user_id == user_id]
+        return sorted(rows, key=lambda batch: batch.imported_at, reverse=True)
+
+    def add_upload_batch(
+        self,
+        user_id: str,
+        filename: str,
+        record_count: int,
+        total_expense: float,
+        backend: str,
+        transaction_ids: List[str],
+    ) -> UploadBatch:
+        batch = UploadBatch(
+            batch_id=self.next_id("upload_batches"),
+            user_id=user_id,
+            filename=filename,
+            imported_at=self.clock.iso(),
+            record_count=record_count,
+            total_expense=round(total_expense, 2),
+            backend=backend,
+            transaction_ids=list(transaction_ids),
+        )
+        self.upload_batches[batch.batch_id] = batch
+        return batch
+
+    def delete_upload_batch(self, user_id: str, batch_id: str) -> Dict[str, Any]:
+        batch = self.upload_batches.get(batch_id)
+        if batch is None or batch.user_id != user_id:
+            raise ValueError(f"上传批次不存在：{batch_id}")
+        transaction_ids = set(batch.transaction_ids)
+        deleted_transactions = 0
+        for txn_id in list(self.transactions):
+            txn = self.transactions[txn_id]
+            if txn.user_id == user_id and (
+                txn.import_batch_id == batch_id
+                or txn_id in transaction_ids
+            ):
+                self._reverse_import_effect(txn)
+                del self.transactions[txn_id]
+                deleted_transactions += 1
+        del self.upload_batches[batch_id]
+        return {
+            "batch_id": batch_id,
+            "deleted_transactions": deleted_transactions,
+            "remaining_batches": len(self.upload_batches_of(user_id)),
+        }
+
+    def delete_legacy_uploads(self, user_id: str) -> Dict[str, Any]:
+        targets = [
+            txn for txn in self.transactions_of(user_id)
+            if "receipt_import" in txn.tags and not txn.import_batch_id
+        ]
+        for txn in targets:
+            self._reverse_import_effect(txn)
+            del self.transactions[txn.txn_id]
+        return {
+            "batch_id": "legacy-imports",
+            "deleted_transactions": len(targets),
+            "remaining_batches": len(self.upload_batches_of(user_id)),
+        }
+
+    def migrate_upload_ledger(self, user_id: str, ledger: Account) -> int:
+        """Backfill old receipt imports into the virtual statement-balance account."""
+        imported = [
+            txn for txn in self.transactions_of(user_id)
+            if "receipt_import" in txn.tags
+        ]
+        if not imported:
+            return 0
+        expected_balance = round(sum(txn.amount for txn in imported), 2)
+        needs_update = any(
+            txn.account_id != ledger.account_id for txn in imported
+        ) or abs(ledger.balance - expected_balance) > 0.005
+        if not needs_update:
+            return 0
+        for txn in imported:
+            txn.account_id = ledger.account_id
+            txn.source = "upload:user"
+            txn.is_demo = False
+        ledger.balance = expected_balance
+        self.touch(ledger)
+        self.log(
+            "upload_ledger.backfilled",
+            user_id=user_id,
+            transaction_count=len(imported),
+            balance=expected_balance,
+        )
+        return len(imported)
+
+    def _reverse_import_effect(self, txn: Transaction) -> None:
+        account = self.accounts.get(txn.account_id)
+        if account is None:
+            return
+        if account.kind == "credit":
+            account.balance = round(account.balance + txn.amount, 2)
+        else:
+            account.balance = round(account.balance - txn.amount, 2)
+        self.touch(account)
 
     def alerts_of(self, user_id: str, level: Optional[str] = None) -> List[Alert]:
         rows = [a for a in self.alerts.values() if a.user_id == user_id]

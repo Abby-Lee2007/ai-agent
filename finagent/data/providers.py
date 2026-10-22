@@ -19,6 +19,7 @@ from finagent.data.models import (
     Payee,
     ScheduledTask,
     Subscription,
+    UploadBatch,
     WealthProduct,
 )
 from finagent.data.store import DataStore
@@ -63,11 +64,36 @@ class AccountProvider:
     def default_for_payment(self, user_id: str) -> Optional[Account]:
         """The only place where the demo's default payment account is chosen."""
         for kind in ("current", "wallet", "savings"):
-            found = self.of(user_id, kind)
+            found = [
+                account for account in self.of(user_id, kind)
+                if account.source != "agent:upload-ledger"
+            ]
             if found:
                 return found[0]
-        accounts = self.of(user_id)
+        accounts = [
+            account for account in self.of(user_id)
+            if account.source != "agent:upload-ledger"
+        ]
         return accounts[0] if accounts else None
+
+    def upload_balance(self, user_id: str) -> Account:
+        """Return the virtual ledger account used for unspecified bill payments."""
+        for account in self.of(user_id):
+            if account.name == "上传账单余额":
+                return account
+        account = Account(
+            account_id="ACC_UPLOAD_LEDGER",
+            user_id=user_id,
+            kind="wallet",
+            name="上传账单余额",
+            tail="BILL",
+            balance=0.0,
+            source="agent:upload-ledger",
+            is_demo=False,
+        )
+        account.updated_at = self.store.clock.iso()
+        self.store.accounts[account.account_id] = account
+        return account
 
 
 class TransactionProvider:
@@ -90,13 +116,77 @@ class PayeeProvider:
         self.store = store
 
     def of(self, user_id: str) -> List[Payee]:
+        self._sync_care_people(user_id)
         return self.store.payees_of(user_id)
 
     def find(self, user_id: str, keyword: str) -> Optional[Payee]:
+        self._sync_care_people(user_id)
         return self.store.find_payee(user_id, keyword)
 
     def remember(self, user_id: str, **kwargs: Any) -> Payee:
         return self.store.remember_payee(user_id, **kwargs)
+
+    def _sync_care_people(self, user_id: str) -> None:
+        """Project profile care people into transfer payees."""
+        user = self.store.get_user(user_id)
+        if user is None:
+            return
+        care_people = (user.preferences or {}).get("care_people") or []
+        if not isinstance(care_people, list):
+            return
+        for index, item in enumerate(care_people):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            person_id = str(item.get("person_id") or f"CARE{index + 1:04d}")
+            phone = "".join(ch for ch in str(item.get("phone") or "") if ch.isdigit())
+            bank_card = "".join(
+                ch for ch in str(item.get("bank_card") or "") if ch.isdigit()
+            )
+            wechat = str(item.get("wechat") or "").strip()[:100]
+            alipay = str(item.get("alipay") or "").strip()[:100]
+            payee = next(
+                (
+                    candidate for candidate in self.store.payees_of(user_id)
+                    if candidate.profile_person_id == person_id
+                ),
+                None,
+            )
+            if payee is None:
+                payee = next(
+                    (
+                        candidate for candidate in self.store.payees_of(user_id)
+                        if candidate.name == name
+                    ),
+                    None,
+                )
+            if payee is None:
+                payee = Payee(
+                    payee_id=self.store.next_id("payees"),
+                    user_id=user_id,
+                    name=name,
+                )
+                payee.updated_at = self.store.clock.iso()
+                self.store.payees[payee.payee_id] = payee
+
+            payee.name = name[:40]
+            payee.relation = str(item.get("relation") or payee.relation or "关心的人")[:20]
+            payee.profile_person_id = person_id
+            if phone:
+                payee.phone = phone
+                payee.wallet_phone = phone
+            if wechat:
+                payee.wechat = wechat
+            if alipay:
+                payee.alipay = alipay
+            if bank_card:
+                payee.tail = bank_card[-4:]
+            payee.source = "user:profile"
+            payee.is_demo = False
+            payee.updated_at = self.store.clock.iso()
+            self.store.touch(payee)
 
 
 class CardProvider:
@@ -233,6 +323,20 @@ class GoalProvider:
         return self.store.add_goal(**kwargs)
 
 
+class UploadBatchProvider:
+    def __init__(self, store: DataStore) -> None:
+        self.store = store
+
+    def of(self, user_id: str) -> List[UploadBatch]:
+        return self.store.upload_batches_of(user_id)
+
+    def add(self, **kwargs: Any) -> UploadBatch:
+        return self.store.add_upload_batch(**kwargs)
+
+    def delete(self, user_id: str, batch_id: str) -> Dict[str, Any]:
+        return self.store.delete_upload_batch(user_id, batch_id)
+
+
 @dataclass
 class DataProviderRegistry:
     bank: BankAdapter
@@ -245,6 +349,7 @@ class DataProviderRegistry:
     merchants: MerchantOfferProvider
     tasks: TaskProvider
     goals: GoalProvider
+    uploads: UploadBatchProvider
     market: Any = None
 
 
@@ -261,5 +366,6 @@ def build_data_providers(store: DataStore, market: Any = None) -> DataProviderRe
         merchants=MerchantOfferProvider(store),
         tasks=TaskProvider(store),
         goals=GoalProvider(store),
+        uploads=UploadBatchProvider(store),
         market=market,
     )

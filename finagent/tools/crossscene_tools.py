@@ -40,7 +40,29 @@ def lookup_person(ctx: ToolContext, name: str) -> Tuple[Optional[User], Optional
     resolved_name = prefs.get(key, keyword) if key else keyword
 
     birthday_raw = ""
-    if key == "spouse" and prefs.get("spouse_birthday"):
+    relation_groups = {
+        "spouse": {"老婆", "妻子", "爱人", "配偶", "丈夫", "老公"},
+        "mother": {"妈妈", "母亲", "妈"},
+        "father": {"爸爸", "父亲", "爸"},
+    }
+    wanted_relations = relation_groups.get(key or "", set())
+    for item in prefs.get("care_people") or []:
+        if not isinstance(item, dict):
+            continue
+        item_name = str(item.get("name") or "").strip()
+        relation = str(item.get("relation") or "").strip()
+        if (
+            item_name == keyword
+            or (item_name and item_name in keyword)
+            or (relation and relation in keyword)
+            or bool(wanted_relations & {relation})
+        ):
+            resolved_name = item_name or resolved_name
+            birthday_raw = str(item.get("birthday") or "")
+            key = "care"
+            break
+
+    if not birthday_raw and key == "spouse" and prefs.get("spouse_birthday"):
         birthday_raw = prefs["spouse_birthday"]
 
     person: Optional[User] = None
@@ -60,6 +82,18 @@ def lookup_person(ctx: ToolContext, name: str) -> Tuple[Optional[User], Optional
                 if candidate.name == resolved_name:
                     person = candidate
                     break
+    if person is None and resolved_name:
+        # The user can edit the spouse's display name without creating a full
+        # customer record. Keep the profile-provided name in the conversation.
+        person = User(
+            user_id=f"profile:{key or 'contact'}",
+            name=resolved_name,
+            phone="",
+            city=user.city,
+            birthday=birthday_raw,
+            source="user:profile",
+            is_demo=False,
+        )
 
     if not birthday_raw and person and person.birthday:
         birthday_raw = person.birthday

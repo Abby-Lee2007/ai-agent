@@ -9,7 +9,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Optional, Type
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from finagent.api.service import AgentSessionService, SessionNotFound
 
@@ -18,7 +18,11 @@ WEB_ROOT = ROOT / "web"
 UPLOAD_ROOT = ROOT / "runtime_uploads"
 MAX_BODY_BYTES = 12_000_000
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
-UPLOAD_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".txt", ".csv"}
+UPLOAD_SUFFIXES = {
+    ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif",
+    ".txt", ".csv", ".xlsx", ".xlsm",
+}
+UPLOAD_PARSER_VERSION = "3"
 
 
 class ApiHTTPServer(ThreadingHTTPServer):
@@ -35,7 +39,8 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
     _raw_body: bytes = b""
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/":
             self._serve_file(self.server.web_root / "index.html", "text/html; charset=utf-8")  # type: ignore[attr-defined]
             return
@@ -47,7 +52,94 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        if path == "/v1/uploads":
+            if not self._authorized():
+                self._send_json(401, {"error": "unauthorized", "message": "访问口令无效"})
+                return
+            session_id = parse_qs(parsed.query).get("session_id", [""])[0]
+            if not session_id:
+                self._send_json(400, {"error": "bad_request", "message": "session_id 不能为空"})
+                return
+            try:
+                self._send_json(200, self.service.list_uploads(session_id))
+            except SessionNotFound as exc:
+                self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
+            return
+        if path == "/v1/profile":
+            if not self._authorized():
+                self._send_json(401, {"error": "unauthorized", "message": "访问口令无效"})
+                return
+            session_id = parse_qs(parsed.query).get("session_id", [""])[0]
+            if not session_id:
+                self._send_json(400, {"error": "bad_request", "message": "session_id 不能为空"})
+                return
+            try:
+                self._send_json(200, self.service.get_profile_settings(session_id))
+            except SessionNotFound as exc:
+                self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
+            return
         self._send_json(404, {"error": "not_found", "message": f"未知资源：{path}"})
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if not self._authorized():
+            self._send_json(401, {"error": "unauthorized", "message": "访问口令无效"})
+            return
+        session_id = parse_qs(parsed.query).get("session_id", [""])[0]
+        try:
+            upload_prefix = "/v1/uploads/"
+            card_prefix = "/v1/cards/"
+            if parsed.path.startswith(upload_prefix):
+                item_id = unquote(parsed.path[len(upload_prefix):]).strip("/")
+                if not item_id or not session_id:
+                    raise ValueError("session_id 和 upload_id 不能为空")
+                self._send_json(200, self.service.delete_upload(session_id, item_id))
+                return
+            if parsed.path.startswith(card_prefix):
+                item_id = unquote(parsed.path[len(card_prefix):]).strip("/")
+                if not item_id or not session_id:
+                    raise ValueError("session_id 和 card_id 不能为空")
+                self._send_json(200, self.service.delete_card_settings(session_id, item_id))
+                return
+            self._send_json(404, {"error": "not_found", "message": f"未知接口：{parsed.path}"})
+        except SessionNotFound as exc:
+            self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
+        except ValueError as exc:
+            self._send_json(404, {"error": "resource_not_found", "message": str(exc)})
+
+    def do_PATCH(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if not self._authorized():
+            self._send_json(401, {"error": "unauthorized", "message": "访问口令无效"})
+            return
+        try:
+            payload = self._read_json()
+            session_id = str(payload.get("session_id") or "")
+            if not session_id:
+                raise ValueError("session_id 不能为空")
+            if parsed.path == "/v1/profile":
+                values = {key: value for key, value in payload.items() if key != "session_id"}
+                self._send_json(200, self.service.update_profile_settings(session_id, values))
+                return
+            card_prefix = "/v1/cards/"
+            if parsed.path.startswith(card_prefix):
+                card_id = unquote(parsed.path[len(card_prefix):]).strip("/")
+                if not card_id:
+                    raise ValueError("card_id 不能为空")
+                values = {key: value for key, value in payload.items() if key != "session_id"}
+                self._send_json(200, self.service.update_card_settings(
+                    session_id,
+                    card_id,
+                    values,
+                ))
+                return
+            self._send_json(404, {"error": "not_found", "message": f"未知接口：{parsed.path}"})
+        except SessionNotFound as exc:
+            self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
+        except ValueError as exc:
+            self._send_json(400, {"error": "bad_request", "message": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": "internal_error", "message": str(exc)})
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
@@ -93,6 +185,12 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                 return
             if path in {"/v1/uploads", "/api/upload"}:
                 self._upload(payload)
+                return
+            if path == "/v1/cards":
+                self._send_json(200, self.service.create_card_settings(
+                    str(payload.get("session_id") or ""),
+                    payload,
+                ))
                 return
             self._send_json(404, {"error": "not_found", "message": f"未知接口：{path}"})
         except SessionNotFound as exc:
@@ -148,7 +246,7 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         if suffix not in UPLOAD_SUFFIXES:
             self._send_json(400, {
                 "error": "unsupported_file",
-                "message": "只支持图片、TXT 或 CSV 账单",
+                "message": "只支持图片、TXT、CSV 或 Excel（xlsx/xlsm）账单",
             })
             return
         try:
@@ -170,13 +268,26 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
         target = UPLOAD_ROOT / f"{uuid.uuid4().hex}{suffix}"
         target.write_bytes(raw)
-        request_id = "upload-" + hashlib.sha256(raw).hexdigest()
+        request_id = f"upload-v{UPLOAD_PARSER_VERSION}-" + hashlib.sha256(raw).hexdigest()
         try:
-            body = self.service.send_message(
-                session_id=session_id,
-                message=f"识别这张账单截图 {target}",
-                request_id=request_id,
-            )
+            try:
+                body = self.service.send_message(
+                    session_id=session_id,
+                    message=f"识别这张账单截图 {target}",
+                    request_id=request_id,
+                )
+            except SessionNotFound:
+                # A browser can keep a session id across a server restart.
+                # Recreate it and retry once instead of failing the upload.
+                session_id = self.service.create_session(
+                    user_id="u_001",
+                    channel="h5",
+                )["session_id"]
+                body = self.service.send_message(
+                    session_id=session_id,
+                    message=f"识别这张账单截图 {target}",
+                    request_id=request_id,
+                )
         finally:
             target.unlink(missing_ok=True)
         self._send_json(200, body)
@@ -187,6 +298,8 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.close_connection = True
         self.end_headers()
         self.wfile.write(body)
 
@@ -199,6 +312,8 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.close_connection = True
         self.end_headers()
         self.wfile.write(body)
 

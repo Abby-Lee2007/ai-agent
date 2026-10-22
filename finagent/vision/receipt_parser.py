@@ -12,7 +12,7 @@ OCR 的输出永远是"脏"的，这个模块专门处理真实 OCR 的几类典
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Dict, List, Optional
 
@@ -74,6 +74,223 @@ class ParsedTransaction:
         }
 
 
+@dataclass
+class CategorySpend:
+    """一个汇总页里的消费类别。"""
+
+    category: str
+    amount: float
+    ratio: Optional[float] = None
+
+    def to_payload(self) -> Dict[str, object]:
+        return {
+            "category": self.category,
+            "amount": round(self.amount, 2),
+            "ratio": self.ratio,
+        }
+
+
+@dataclass
+class MonthlySpend:
+    """汇总页里的一个月度支出。"""
+
+    month: str
+    amount: float
+
+    def to_payload(self) -> Dict[str, object]:
+        return {"month": self.month, "amount": round(self.amount, 2)}
+
+
+@dataclass
+class BillSummary:
+    """账单汇总页的结构化结果。"""
+
+    period: str = ""
+    total_expense: float = 0.0
+    categories: List[CategorySpend] = field(default_factory=list)
+    months: List[MonthlySpend] = field(default_factory=list)
+    raw_text: str = ""
+
+    def to_payload(self) -> Dict[str, object]:
+        return {
+            "period": self.period,
+            "total_expense": round(self.total_expense, 2),
+            "categories": [item.to_payload() for item in self.categories],
+            "months": [item.to_payload() for item in self.months],
+        }
+
+
+SUMMARY_PERIOD_RE = re.compile(r"(20\d{2})\s*[年/-]\s*(\d{1,2})\s*月?")
+SUMMARY_TOTAL_RE = re.compile(
+    r"(?:本月支出|当月支出|总支出|支出合计|共支出|累计支出|支出总额)"
+    r"[^0-9¥￥]{0,12}[¥￥]?\s*(\d[\d,]*(?:\.\d{1,2})?)"
+)
+SUMMARY_CATEGORY_RE = re.compile(
+    r"^(?P<label>[\u4e00-\u9fa5A-Za-z·/ ]{2,20}?)\s*"
+    r"(?:[¥￥]\s*)?(?P<amount>\d[\d,]*(?:\.\d{1,2})?)?\s*元?\s*"
+    r"(?P<ratio>\d{1,3}(?:\.\d+)?%)?$"
+)
+SUMMARY_MONTH_RE = re.compile(
+    r"(?:(?P<year>20\d{2})\s*[年/-]\s*)?(?P<month>\d{1,2})\s*月"
+    r"(?:支出|消费)?\s*[:：]?\s*[¥￥]?\s*"
+    r"(?P<amount>\d[\d,]*(?:\.\d{1,2})?)\s*元?(?!\s*%)"
+)
+SUMMARY_BAD_LABELS = ("账单", "支出", "收入", "收入构成", "支出构成", "合计",
+                      "对比", "月份", "周期", "总计", "汇总", "构成", "排行")
+SUMMARY_CATEGORY_ALIASES = (
+    ("餐饮", ("餐饮", "美食", "吃饭", "外卖")),
+    ("交通", ("交通", "出行", "打车", "地铁")),
+    ("购物", ("购物", "服饰", "日用", "电商")),
+    ("生活缴费", ("生活缴费", "生活服务", "缴费", "水电", "话费")),
+    ("娱乐", ("娱乐", "休闲", "游戏", "电影")),
+    ("医疗", ("医疗", "健康", "药店")),
+    ("教育", ("教育", "学习", "培训")),
+    ("住房", ("住房", "房租", "居住")),
+    ("订阅服务", ("订阅服务", "会员服务", "会员")),
+    ("旅行", ("旅行", "旅游", "酒店", "机票")),
+    ("人情往来", ("人情往来", "红包", "礼金")),
+    ("其他", ("其他", "未分类")),
+)
+
+
+def _summary_category(label: str) -> Optional[str]:
+    cleaned = re.sub(r"\s+", "", label or "")
+    if not cleaned or any(word in cleaned for word in SUMMARY_BAD_LABELS):
+        return None
+    if re.search(r"\d|月|年", cleaned):
+        return None
+    for category, aliases in SUMMARY_CATEGORY_ALIASES:
+        if any(alias in cleaned for alias in aliases):
+            return category
+    category = guess_category(cleaned)
+    if category == "其他" and cleaned not in {"其他", "其他消费", "未分类"}:
+        return None
+    return category
+
+
+def _summary_lines(text: str) -> List[str]:
+    return [line for line in normalize_text(text).splitlines() if line.strip()]
+
+
+def _summary_period(lines: List[str]) -> str:
+    for line in lines:
+        match = SUMMARY_PERIOD_RE.search(line)
+        if match:
+            month = int(match.group(2))
+            if 1 <= month <= 12:
+                return f"{int(match.group(1)):04d}-{month:02d}"
+    return ""
+
+
+def _summary_total(lines: List[str]) -> float:
+    for line in lines:
+        match = SUMMARY_TOTAL_RE.search(line)
+        if match:
+            try:
+                return round(float(match.group(1).replace(",", "")), 2)
+            except ValueError:
+                continue
+    return 0.0
+
+
+def _summary_categories(
+    lines: List[str],
+    total: float,
+) -> List[CategorySpend]:
+    result: List[CategorySpend] = []
+    for line in lines:
+        if any(word in line for word in ("月支出", "月消费", "合计", "总额")):
+            continue
+        match = SUMMARY_CATEGORY_RE.match(line)
+        if not match:
+            continue
+        category = _summary_category(match.group("label") or "")
+        if category is None:
+            continue
+        amount_text = match.group("amount") or ""
+        ratio_text = match.group("ratio") or ""
+        amount = 0.0
+        if amount_text:
+            try:
+                amount = round(float(amount_text.replace(",", "")), 2)
+            except ValueError:
+                continue
+        ratio = None
+        if ratio_text:
+            try:
+                ratio = round(float(ratio_text.rstrip("%")), 1)
+            except ValueError:
+                ratio = None
+        if amount <= 0 and ratio is not None and total > 0:
+            amount = round(total * ratio / 100, 2)
+        if amount <= 0:
+            continue
+        result.append(CategorySpend(category, amount, ratio))
+    # A summary page may contain the same category twice due to OCR.
+    merged: Dict[str, CategorySpend] = {}
+    for item in result:
+        existing = merged.get(item.category)
+        if existing:
+            existing.amount += item.amount
+            if existing.ratio is not None and item.ratio is not None:
+                existing.ratio += item.ratio
+        else:
+            merged[item.category] = item
+    return sorted(merged.values(), key=lambda item: item.amount, reverse=True)
+
+
+def _summary_months(lines: List[str], period: str) -> List[MonthlySpend]:
+    period_year = int(period[:4]) if period else None
+    period_month = int(period[5:7]) if period else None
+    found: Dict[str, MonthlySpend] = {}
+    for line in lines:
+        match = SUMMARY_MONTH_RE.search(line)
+        if not match:
+            continue
+        month_number = int(match.group("month"))
+        if not 1 <= month_number <= 12:
+            continue
+        year_text = match.group("year")
+        year = int(year_text) if year_text else (period_year or date.today().year)
+        if not year_text and period_year and period_month and month_number > period_month:
+            year -= 1
+        try:
+            amount = round(float(match.group("amount").replace(",", "")), 2)
+        except ValueError:
+            continue
+        key = f"{year:04d}-{month_number:02d}"
+        found[key] = MonthlySpend(key, amount)
+    return sorted(found.values(), key=lambda item: item.month)
+
+
+def parse_bill_summary(text: str, today: Optional[date] = None) -> Optional[BillSummary]:
+    """解析账单汇总页，而不是把它误当成逐笔流水。
+
+    支持常见的“本月支出 + 支出构成 + 每月支出对比”版式；缺少某一项时，
+    仍然返回已经解析出的部分，方便 Agent 做有限分析。
+    """
+    lines = _summary_lines(text)
+    period = _summary_period(lines)
+    total = _summary_total(lines)
+    categories = _summary_categories(lines, total)
+    months = _summary_months(lines, period)
+    if not categories and not months and total <= 0:
+        return None
+    if total <= 0:
+        total = round(sum(item.amount for item in categories), 2)
+    if total <= 0 and months:
+        total = months[-1].amount
+    if not period and months:
+        period = months[-1].month
+    return BillSummary(
+        period=period,
+        total_expense=round(total, 2),
+        categories=categories,
+        months=months,
+        raw_text=text or "",
+    )
+
+
 def normalize_line(line: str) -> str:
     """单行规范化：全角转半角、修补被识别成汉字的连字符、去掉中文之间的空格。"""
     text = (line or "").strip().translate(FULLWIDTH_MAP)
@@ -83,8 +300,24 @@ def normalize_line(line: str) -> str:
     text = re.sub(r"(?<=\d)\s*:\s*(?=\d)", ":", text)
     # "2026 一 10 一 12" -> "2026-10-12"
     text = re.sub(r"(?<=\d)\s*[一-]\s*(?=\d)", "-", text)
+    # OCR 会把千分位逗号和小数点拆成 "7 , 283 34"
+    text = re.sub(r"(?<=\d)\s*,\s*(?=\d)", ",", text)
+    text = re.sub(r"(?<=\d)\s*\.\s*(?=\d)", ".", text)
+    text = re.sub(r"\s*%\s*", "%", text)
+    # 百分比也会被拆成 "16 5%" -> "16.5%"；必须先于金额小数处理，
+    # 避免把前面的 "00 16" 误当成小数。
+    text = re.sub(r"(\d{1,3})\s+(\d)(?=\s*%)", r"\1.\2", text)
+    text = re.sub(
+        r"(\d{1,3}(?:,\d{3})+)\s+(\d{2})(?=\s*(?:元|%|\d{1,3}(?:\.\d+)?%|$))",
+        r"\1.\2",
+        text,
+    )
     # 金额小数点被吞："2480 00" / "38 00" -> "2480.00" / "38.00"
-    text = re.sub(r"(?<!\d)(\d{1,5})\s+(\d{2})(?!\d)(?=\s*(?:元|$))", r"\1.\2", text)
+    text = re.sub(
+        r"(?<!\d)(\d{1,5})\s+(\d{2})(?!\d)(?=\s*(?:元|%|\d{1,3}(?:\.\d+)?%|$))",
+        r"\1.\2",
+        text,
+    )
     # 千分位被空格拆开："12 345" -> "12,345"
     text = re.sub(r"(?<!\d)(\d{1,3})\s+(\d{3})(?!\d)", r"\1,\2", text)
     text = re.sub(r"(?<=[\u4e00-\u9fa5])\s+(?=[\u4e00-\u9fa5])", "", text)
@@ -372,7 +605,19 @@ SUMMARY_PAGE_HINTS = ("月账单", "年账单", "共支出", "合计", "当月�
 def looks_like_summary_page(text: str) -> bool:
     """账单汇总页：只有合计/分类/排行，没有逐笔的日期+商户+金额。"""
     compact = re.sub(r"\s+", "", text or "")   # OCR 常在汉字之间插空格
-    return sum(1 for word in SUMMARY_PAGE_HINTS if word in compact) >= 2
+    hints = sum(1 for word in SUMMARY_PAGE_HINTS if word in compact)
+    if hints >= 2:
+        return True
+    lines = _summary_lines(text)
+    category_rows = 0
+    month_rows = 0
+    for line in lines:
+        category_match = SUMMARY_CATEGORY_RE.match(line)
+        if category_match and _summary_category(category_match.group("label") or ""):
+            category_rows += 1
+        if SUMMARY_MONTH_RE.search(line):
+            month_rows += 1
+    return category_rows >= 1 and month_rows >= 1
 
 
 def looks_like_pasted_bill(text: str) -> bool:

@@ -5,6 +5,8 @@ import base64
 import hashlib
 import hmac
 import json
+from pathlib import Path
+import tempfile
 import threading
 import unittest
 import urllib.error
@@ -13,6 +15,7 @@ import urllib.request
 from finagent.api.server import create_server
 from finagent.api.service import AgentSessionService
 from tests.support import make_store
+from tests.test_vision import make_xlsx
 
 
 class ApiServerTestCase(unittest.TestCase):
@@ -42,6 +45,32 @@ class ApiServerTestCase(unittest.TestCase):
             data=data,
             headers={"Content-Type": "application/json", **(headers or {})},
             method="POST",
+        )
+        return urllib.request.urlopen(request, timeout=5)
+
+    def get_json(self, path: str, headers: dict | None = None):
+        request = urllib.request.Request(
+            self.base_url + path,
+            headers=headers or {},
+            method="GET",
+        )
+        return urllib.request.urlopen(request, timeout=5)
+
+    def delete_json(self, path: str, headers: dict | None = None):
+        request = urllib.request.Request(
+            self.base_url + path,
+            headers=headers or {},
+            method="DELETE",
+        )
+        return urllib.request.urlopen(request, timeout=5)
+
+    def patch_json(self, path: str, payload: dict, headers: dict | None = None):
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=data,
+            headers={"Content-Type": "application/json", **(headers or {})},
+            method="PATCH",
         )
         return urllib.request.urlopen(request, timeout=5)
 
@@ -144,6 +173,159 @@ class ApiServerTestCase(unittest.TestCase):
         self.assertEqual(body["reply"]["intent"], "bill.scan_receipt")
         self.assertEqual(body["reply"]["kind"], "confirm")
         self.assertEqual(body["reply"]["data"]["count"], 2)
+
+    def test_upload_with_stale_session_recreates_session(self):
+        raw = (Path(__file__).resolve().parents[1] / "samples" / "bill_sample.txt").read_bytes()
+        payload = {
+            "session_id": "SESSION-stale-after-restart",
+            "filename": "bill_sample.txt",
+            "data": base64.b64encode(raw).decode("ascii"),
+        }
+
+        with self.post_json("/v1/uploads", payload) as response:
+            self.assertEqual(response.status, 200)
+            body = json.loads(response.read().decode("utf-8"))
+
+        self.assertTrue(body["session_id"].startswith("SESSION-"))
+        self.assertNotEqual(body["session_id"], "SESSION-stale-after-restart")
+        self.assertEqual(body["reply"]["intent"], "bill.scan_receipt")
+        self.assertEqual(body["reply"]["kind"], "confirm")
+
+    def test_upload_parser_version_does_not_replay_old_csv_cache(self):
+        with self.post_json("/v1/sessions", {"user_id": "u_001", "channel": "h5"}) as response:
+            session_id = json.loads(response.read().decode("utf-8"))["session_id"]
+        bill = "日期,商户,金额\n2026-10-20,星巴克咖啡,-38.00\n"
+        raw = bill.encode("gb18030")
+        old_request_id = "upload-" + hashlib.sha256(raw).hexdigest()
+        self.service._idempotency[(session_id, old_request_id)] = {
+            "session_id": session_id,
+            "request_id": old_request_id,
+            "reply": {
+                "ok": True,
+                "kind": "confirm",
+                "text": "旧缓存：错误金额 920,261,007",
+                "data": {"count": 55},
+            },
+            "replayed": False,
+        }
+
+        payload = {
+            "session_id": session_id,
+            "filename": "alipay.csv",
+            "data": base64.b64encode(raw).decode("ascii"),
+        }
+        with self.post_json("/v1/uploads", payload) as response:
+            self.assertEqual(response.status, 200)
+            body = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(body["reply"]["data"]["count"], 1)
+        self.assertNotIn("旧缓存", body["reply"]["text"])
+
+    def test_upload_excel_file_scans_transactions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "bill.xlsx"
+            make_xlsx(path, [
+                ["日期", "商户", "金额", "类别"],
+                ["2026-10-12", "星巴克咖啡", -38.0, "餐饮"],
+                ["2026-10-13", "滴滴出行", -42.5, "交通"],
+            ])
+            raw = path.read_bytes()
+
+        with self.post_json("/v1/sessions", {"user_id": "u_001", "channel": "h5"}) as response:
+            session_id = json.loads(response.read().decode("utf-8"))["session_id"]
+        payload = {
+            "session_id": session_id,
+            "filename": "bill.xlsx",
+            "data": base64.b64encode(raw).decode("ascii"),
+        }
+        with self.post_json("/v1/uploads", payload) as response:
+            self.assertEqual(response.status, 200)
+            body = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(body["reply"]["intent"], "bill.scan_receipt")
+        self.assertEqual(body["reply"]["kind"], "confirm")
+        self.assertEqual(body["reply"]["data"]["count"], 2)
+
+    def test_upload_history_can_be_listed_and_deleted(self):
+        with self.post_json("/v1/sessions", {"user_id": "u_001", "channel": "h5"}) as response:
+            session_id = json.loads(response.read().decode("utf-8"))["session_id"]
+        raw = (Path(__file__).resolve().parents[1] / "samples" / "bill_sample.txt").read_bytes()
+        upload = {
+            "session_id": session_id,
+            "filename": "bill_sample.txt",
+            "data": base64.b64encode(raw).decode("ascii"),
+        }
+        with self.post_json("/v1/uploads", upload) as response:
+            self.assertEqual(response.status, 200)
+        with self.post_json(
+            "/v1/messages",
+            {"session_id": session_id, "message": "确认", "request_id": "history-confirm"},
+        ) as response:
+            imported = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(imported["reply"]["data"]["imported"], 6)
+
+        with self.get_json(f"/v1/uploads?session_id={session_id}") as response:
+            history = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(len(history["uploads"]), 1)
+        batch_id = history["uploads"][0]["batch_id"]
+
+        with self.delete_json(f"/v1/uploads/{batch_id}?session_id={session_id}") as response:
+            deleted = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(deleted["deleted_transactions"], 6)
+
+        with self.get_json(f"/v1/uploads?session_id={session_id}") as response:
+            history = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(history["uploads"], [])
+
+    def test_profile_and_cards_can_be_viewed_and_edited(self):
+        with self.post_json("/v1/sessions", {"user_id": "u_001", "channel": "h5"}) as response:
+            session_id = json.loads(response.read().decode("utf-8"))["session_id"]
+        with self.get_json(f"/v1/profile?session_id={session_id}") as response:
+            profile = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(profile["user"]["name"], "陈晓明")
+        card_id = profile["cards"][0]["card_id"]
+
+        with self.patch_json("/v1/profile", {
+            "session_id": session_id,
+            "name": "新名字",
+            "spouse_name": "新爱人",
+            "spouse_birthday": "1995-12-01",
+        }) as response:
+            updated = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(updated["user"]["name"], "新名字")
+        self.assertEqual(updated["preferences"]["spouse_name"], "新爱人")
+
+        with self.patch_json(f"/v1/cards/{card_id}", {
+            "session_id": session_id,
+            "daily_limit": 12345,
+            "online_enabled": False,
+        }) as response:
+            card = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(card["daily_limit"], 12345)
+        self.assertFalse(card["online_enabled"])
+
+        with self.post_json("/v1/cards", {
+            "session_id": session_id,
+            "kind": "virtual",
+            "brand": "测试银行",
+            "tail": "9999",
+            "daily_limit": 3000,
+        }) as response:
+            created = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(created["tail"], "9999")
+
+        with self.delete_json(
+            f"/v1/cards/{created['card_id']}?session_id={session_id}"
+        ) as response:
+            deleted = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(deleted["deleted_card_id"], created["card_id"])
+
+        with self.get_json(f"/v1/profile?session_id={session_id}") as response:
+            after_delete = json.loads(response.read().decode("utf-8"))
+        self.assertFalse(any(
+            card["card_id"] == created["card_id"]
+            for card in after_delete["cards"]
+        ))
 
     def test_access_password_protects_api_but_not_health(self):
         service = AgentSessionService(make_store(), llm_mode="off")

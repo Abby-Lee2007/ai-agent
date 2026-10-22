@@ -1,9 +1,12 @@
 """API 会话服务测试。"""
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from finagent.api.service import AgentSessionService
+from finagent.data.sqlite import SQLiteRepository
 from tests.support import make_store
 
 
@@ -91,6 +94,38 @@ class TestAgentSessionService(unittest.TestCase):
             first_store.primary_account("u_001").balance,
             second_store.primary_account("u_001").balance,
         )
+
+    def test_failed_idempotency_record_is_not_replayed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repository = SQLiteRepository(Path(temp_dir) / "agent.db")
+            service = AgentSessionService(
+                make_store(),
+                llm_mode="off",
+                repository=repository,
+            )
+            session_id = service.create_session(user_id="u_001", channel="h5")["session_id"]
+            repository.save_idempotency(
+                session_id,
+                "upload-old-file-hash",
+                {
+                    "session_id": session_id,
+                    "request_id": "upload-old-file-hash",
+                    "reply": {
+                        "ok": False,
+                        "kind": "executed",
+                        "text": "Excel 已读取，但没有找到可识别的交易列",
+                    },
+                },
+                "2026-10-22T00:00:00",
+            )
+            result = service.send_message(
+                session_id,
+                "我还有多少钱",
+                request_id="upload-old-file-hash",
+            )
+
+        self.assertFalse(result["replayed"])
+        self.assertIn("总资产", result["reply"]["text"])
 
 
 if __name__ == "__main__":

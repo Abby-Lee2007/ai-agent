@@ -175,10 +175,168 @@ try {
   assert(desktop.scrollWidth <= desktop.viewport[0], "桌面页面出现横向滚动");
   assert(desktop.composerOverlap === false, "输入框与发送按钮重叠");
   await sendPrompt(cdp, "我还有多少钱", "总资产");
+  await evaluate(cdp, `document.querySelector("#profile-settings-button").click()`);
+  await waitFor(cdp, `document.querySelector("#profile-settings-overlay")?.classList.contains("show")`);
+  await waitFor(cdp, `document.querySelector('[name="name"]')?.value === "陈晓明"`);
+  const profilePanel = await evaluate(cdp, `(() => ({
+    name: document.querySelector('[name="name"]')?.value,
+    carePeople: document.querySelectorAll(".care-person").length,
+    firstCareName: document.querySelector('.care-person [data-field="name"]')?.value,
+    careContactFields: ["phone", "wechat", "alipay", "bank_card"].every(
+      (field) => Boolean(document.querySelector(\`.care-person [data-field="\${field}"]\`))
+    ),
+    careContactLabels: [...document.querySelectorAll(".care-person .settings-field")]
+      .map((label) => label.textContent)
+      .filter((text) => ["手机号", "微信号", "支付宝账号", "银行卡号"].some((name) => text.includes(name)))
+      .length,
+    cardEditors: document.querySelectorAll(".card-editor:not(.care-person)").length,
+    cardDeletes: document.querySelectorAll(".card-editor:not(.care-person) .history-delete").length,
+    cardDeleteText: document.querySelector(".card-editor:not(.care-person) .history-delete")?.textContent,
+    deleteAtRight: (() => {
+      const actions = document.querySelector(".card-editor:not(.care-person) .settings-actions");
+      const button = actions?.querySelector(".history-delete");
+      if (!actions || !button) return false;
+      return Math.abs(actions.getBoundingClientRect().right - button.getBoundingClientRect().right) <= 1;
+    })(),
+    profileCardsGap: (() => {
+      const save = document.querySelector(".profile-save-row");
+      const cards = document.querySelector(".cards-settings-section");
+      if (!save || !cards) return 0;
+      return cards.getBoundingClientRect().top - save.getBoundingClientRect().bottom;
+    })()
+  }))()`);
+  assert(profilePanel.name === "陈晓明", "个人资料没有加载姓名");
+  assert(profilePanel.carePeople >= 1, "关心的人没有从预设资料生成");
+  assert(profilePanel.firstCareName, "关心的人姓名没有加载");
+  assert(profilePanel.careContactFields, "关心的人缺少转账联系方式输入框");
+  assert(profilePanel.careContactLabels === 4, "关心的人转账联系方式字段名不完整");
+  assert(profilePanel.cardEditors >= 3, "银行卡设置没有加载预设卡片");
+  assert(profilePanel.cardDeletes >= 3, "银行卡设置没有删除按钮");
+  assert(profilePanel.cardDeleteText === "删除这张卡", "银行卡删除文案不正确");
+  assert(profilePanel.deleteAtRight, "删除这张卡没有位于操作行最右侧");
+  assert(profilePanel.profileCardsGap >= 20, "保存偏好与银行卡栏之间的间距不足");
+  await evaluate(cdp, `(() => {
+    const person = document.querySelector(".care-person");
+    const values = {
+      phone: "13800138000",
+      wechat: "ui_smoke_wechat",
+      alipay: "ui_smoke@example.com",
+      bank_card: "6222020000000007",
+    };
+    Object.entries(values).forEach(([field, value]) => {
+      const input = person?.querySelector(\`[data-field="\${field}"]\`);
+      if (input) input.value = value;
+    });
+    document.querySelector("#profile-settings-form").requestSubmit();
+    return true;
+  })()`);
+  await waitFor(
+    cdp,
+    `document.querySelector("#profile-settings-status")?.textContent.includes("已保存")`,
+  );
+  const savedContacts = await evaluate(cdp, `(async () => {
+    const response = await fetchWithAuth(
+      \`/v1/profile?session_id=\${encodeURIComponent(sessionId)}\`
+    );
+    const payload = await response.json();
+    return payload.preferences?.care_people?.[0] || {};
+  })()`);
+  assert(savedContacts.phone === "13800138000", "联系人手机号没有保存");
+  assert(savedContacts.wechat === "ui_smoke_wechat", "联系人微信号没有保存");
+  assert(savedContacts.alipay === "ui_smoke@example.com", "联系人支付宝没有保存");
+  assert(savedContacts.bank_card_masked === "**** **** **** 0007", "联系人银行卡号没有保存");
+  await evaluate(cdp, `document.querySelector("#profile-settings-close").click()`);
+  await sendPrompt(cdp, "分析我这个月的账单", "消费分类排行");
+  const tableLayout = await evaluate(cdp, `(() => {
+    const bubbles = [...document.querySelectorAll(".message.agent .bubble")];
+    const bubble = bubbles.at(-1);
+    const content = bubble?.querySelector(".formatted-response");
+    const rect = bubble?.getBoundingClientRect();
+    return {
+      formatted: Boolean(content),
+      wide: bubble?.classList.contains("wide"),
+      scrollWidth: content?.scrollWidth || 0,
+      clientWidth: content?.clientWidth || 0,
+      insideViewport: rect ? rect.left >= 0 && rect.right <= innerWidth + 1 : false
+    };
+  })()`);
+  assert(tableLayout.formatted, "账单分析没有使用表格排版");
+  assert(tableLayout.wide, "账单分析没有使用宽消息气泡");
+  assert(tableLayout.scrollWidth >= tableLayout.clientWidth, "账单表格滚动宽度异常");
+  assert(tableLayout.insideViewport, "账单分析气泡超出视口");
+  await sendPrompt(cdp, "帮我看看有没有异常交易", "高危");
+  const anomalyLayout = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const items = [...(bubble?.querySelectorAll(".anomaly-item") || [])];
+    const content = bubble?.querySelector(".bubble-content");
+    const rect = bubble?.getBoundingClientRect();
+    return {
+      count: items.length,
+      text: content?.textContent || "",
+      hasRiskSummary: Boolean(bubble?.querySelector(".anomaly-summary")),
+      hasActionHeading: Boolean(bubble?.querySelector(".anomaly-action-heading")),
+      hasSuggestion: items.some((item) => item.querySelector(".anomaly-suggestion")?.textContent.includes("建议")),
+      allItemsComplete: items.every((item) => {
+        const reason = item.querySelector(".anomaly-reason");
+        const suggestion = item.querySelector(".anomaly-suggestion");
+        return Boolean(reason?.textContent.trim())
+          && Boolean(suggestion?.textContent.trim())
+          && reason.scrollHeight <= reason.clientHeight + 1
+          && suggestion.scrollHeight <= suggestion.clientHeight + 1;
+      }),
+      horizontalScroll: bubble ? bubble.scrollWidth > bubble.clientWidth + 1 : true,
+      insideViewport: rect ? rect.left >= 0 && rect.right <= innerWidth + 1 : false
+    };
+  })()`);
+  assert(anomalyLayout.count > 0, "异常交易没有生成结构化列表");
+  assert(/共发现 \d+ 笔值得注意的交易/.test(anomalyLayout.text), "异常交易缺少完整结果摘要");
+  assert(anomalyLayout.hasRiskSummary, "异常交易缺少风险总览");
+  assert(anomalyLayout.hasActionHeading, "异常交易缺少处理建议区标题");
+  assert(anomalyLayout.hasSuggestion, "异常交易列表缺少处理建议");
+  assert(anomalyLayout.allItemsComplete, "异常交易原因或建议被裁切");
+  assert(!anomalyLayout.horizontalScroll, "异常交易列表仍然依赖横向滚动");
+  assert(anomalyLayout.insideViewport, "异常交易列表超出视口");
   await screenshot(cdp, "desktop.png");
 
   await openChat(cdp, 390, 844, true);
   await sendPrompt(cdp, "我有哪些卡", "信用卡");
+  await sendPrompt(cdp, "帮我看看有没有异常交易", "高危");
+  const mobileAnomaly = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const items = [...(bubble?.querySelectorAll(".anomaly-item") || [])];
+    const content = bubble?.querySelector(".bubble-content");
+    return {
+      count: items.length,
+      allInsideBubble: items.every((item) => {
+        const itemRect = item.getBoundingClientRect();
+        const contentRect = content?.getBoundingClientRect();
+        return contentRect
+          && itemRect.left >= contentRect.left - 1
+          && itemRect.right <= contentRect.right + 1
+          && item.scrollWidth <= item.clientWidth + 1;
+      }),
+      allReasonsVisible: items.every((item) => {
+        const reason = item.querySelector(".anomaly-reason");
+        return reason && reason.scrollHeight <= reason.clientHeight + 1;
+      })
+    };
+  })()`);
+  assert(mobileAnomaly.count > 0, "移动端异常交易没有生成结构化列表");
+  assert(mobileAnomaly.allInsideBubble, "移动端异常交易卡片超出消息气泡");
+  assert(mobileAnomaly.allReasonsVisible, "移动端异常交易原因被裁切");
+  await sendPrompt(cdp, "分析我这个月的账单", "消费分类排行");
+  const mobileBill = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const content = bubble?.querySelector(".formatted-response");
+    const rect = bubble?.getBoundingClientRect();
+    return {
+      formatted: Boolean(content),
+      insideViewport: rect ? rect.left >= 0 && rect.right <= innerWidth + 1 : false,
+      canScroll: content ? content.scrollWidth >= content.clientWidth : false
+    };
+  })()`);
+  assert(mobileBill.formatted, "移动端账单分析没有使用表格排版");
+  assert(mobileBill.insideViewport, "移动端账单分析气泡超出视口");
   const mobile = await evaluate(cdp, `(() => {
     const bubbles = [...document.querySelectorAll(".bubble")].map((node) => node.getBoundingClientRect());
     const composer = document.querySelector(".composer-area").getBoundingClientRect();
@@ -226,6 +384,12 @@ try {
     ok: true,
     desktop,
     mobile,
+    mobileBill,
+    profileSettings: profilePanel,
+    savedContacts,
+    billTable: tableLayout,
+    anomalyTable: anomalyLayout,
+    mobileAnomaly,
     staleSessionRetry: true,
     fileUpload: true,
     accessPasswordTested: Boolean(accessPassword),

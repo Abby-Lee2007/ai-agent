@@ -178,10 +178,14 @@ def _add_accounts(store) -> None:
         Account("ACC000002", "u_001", "savings", "定期存款", "6688", 150000.00),
         Account("ACC000003", "u_001", "credit", "微众信用卡", "8877", 12340.00, credit_limit=50000.0),
         Account("ACC000004", "u_001", "wallet", "WeBank 电子钱包", "0000", 1200.00),
+        Account("ACC000005", "u_001", "wallet", "上传账单余额", "BILL", 0.00),
     ]
     for acc in accounts:
         store.accounts[acc.account_id] = _mark_demo(acc, store)
-    store.counters["accounts"] = 4
+    upload_ledger = store.accounts["ACC000005"]
+    upload_ledger.source = "agent:upload-ledger"
+    upload_ledger.is_demo = False
+    store.counters["accounts"] = 5
 
 
 def _add_cards(store) -> None:

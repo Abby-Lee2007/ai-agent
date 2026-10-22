@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import asdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -39,6 +40,7 @@ from finagent.risk.engine import RiskDecision, RiskEngine
 from finagent.risk.questionnaire import (
     BASIC_MAP,
     BASIC_QUESTIONS,
+    Inference,
     evaluate_basic,
     infer_basic_answers_detailed,
 )
@@ -69,10 +71,24 @@ class AgentReply:
     needs_input: bool = False
 
 
+@dataclass
+class ReplyMemory:
+    """A business reply and the user request that produced it."""
+
+    user_text: str
+    reply: AgentReply
+
+
 class BankingAgent:
     """银行智能代理。"""
 
     MAX_VERIFY_ATTEMPTS = 3
+    MAX_REPLY_HISTORY = 20
+    REVISABLE_AMOUNT_SLOTS = {
+        "transfer.send": "amount",
+        "transfer.schedule": "amount",
+        "transfer.split_aa": "total",
+    }
 
     def __init__(
         self,
@@ -90,6 +106,8 @@ class BankingAgent:
         self.planner = Planner(self.registry)
         self.market = MarketDataProvider()
         self.providers = build_data_providers(store, self.market)
+        upload_ledger = self.providers.accounts.upload_balance(user_id)
+        store.migrate_upload_ledger(user_id, upload_ledger)
         self.risk = RiskEngine(store, self.clock, providers=self.providers)
         self.scheduler = Scheduler(
             store,
@@ -114,6 +132,9 @@ class BankingAgent:
         self.risk_inference_confirmed_at = ""
         self.verify_attempts = 0
         self.last_intent_name = ""
+        self.paused_questionnaire: Optional[Pending] = None
+        self.last_reply: Optional[AgentReply] = None
+        self.reply_history: List[ReplyMemory] = []
 
     # ==================================================================
     # 对外入口
@@ -126,6 +147,67 @@ class BankingAgent:
         self.risk_assessed_at = ""
         self.risk_inference_confirmed_at = ""
         self.verify_attempts = 0
+        self.paused_questionnaire = None
+        self.last_reply = None
+        self.reply_history.clear()
+
+    def export_reply_history(self) -> List[Dict[str, Any]]:
+        return [
+            {"user_text": item.user_text, "reply": asdict(item.reply)}
+            for item in self.reply_history
+        ]
+
+    def restore_reply_history(self, data: Optional[List[Dict[str, Any]]]) -> None:
+        self.reply_history.clear()
+        for item in data or []:
+            if not isinstance(item, dict) or not isinstance(item.get("reply"), dict):
+                continue
+            try:
+                reply = AgentReply(**item["reply"])
+            except (TypeError, ValueError):
+                continue
+            self.reply_history.append(ReplyMemory(
+                user_text=str(item.get("user_text") or ""),
+                reply=reply,
+            ))
+        self._trim_reply_history()
+
+    def remember_reply(self, user_text: str, reply: AgentReply) -> None:
+        self.reply_history.append(ReplyMemory(user_text=user_text, reply=reply))
+        self._trim_reply_history()
+
+    def _trim_reply_history(self) -> None:
+        if len(self.reply_history) > self.MAX_REPLY_HISTORY:
+            self.reply_history = self.reply_history[-self.MAX_REPLY_HISTORY:]
+
+    def export_paused_questionnaire(self) -> Optional[Dict[str, Any]]:
+        if self.paused_questionnaire is None:
+            return None
+        return asdict(self.paused_questionnaire)
+
+    def restore_paused_questionnaire(self, data: Optional[Dict[str, Any]]) -> None:
+        if not data:
+            self.paused_questionnaire = None
+            return
+        origin_data = data.get("origin")
+        origin = Intent(**origin_data) if isinstance(origin_data, dict) else None
+        inferences = {
+            qid: Inference(**value) if isinstance(value, dict) else value
+            for qid, value in (data.get("inferences") or {}).items()
+        }
+        self.paused_questionnaire = Pending(
+            kind=str(data.get("kind") or "questionnaire"),
+            intent=str(data.get("intent") or ""),
+            slots=dict(data.get("slots") or {}),
+            missing=list(data.get("missing") or []),
+            plan=None,
+            question=str(data.get("question") or ""),
+            answers=dict(data.get("answers") or {}),
+            queue=list(data.get("queue") or []),
+            origin=origin,
+            inferences=inferences,
+            inference_confirmed_at=str(data.get("inference_confirmed_at") or ""),
+        )
 
     def context(self) -> ToolContext:
         ctx = ToolContext(store=self.store, clock=self.clock, risk=self.risk, user_id=self.user_id)
@@ -165,13 +247,25 @@ class BankingAgent:
             {"turn": self.session.turn, "user": raw, "agent": reply.text,
              "intent": reply.intent, "tools": [t.get("tool") for t in reply.trace]}
         )
+        self.last_reply = reply
+        if not self._is_why_question(raw):
+            self.remember_reply(raw, reply)
         return reply
 
     # ==================================================================
     # 主路由
     # ==================================================================
     def _route(self, text: str) -> AgentReply:
+        question_answer = self._answer_informational_question(text)
+        if question_answer is not None:
+            return question_answer
+        if self._is_why_question(text):
+            return self._explain_last_reply(text)
+
         pending = self.session.pending
+
+        if pending is not None and pending.kind == "blocked_draft":
+            return self._resume_blocked_draft(pending, text)
 
         if pending is not None and pending.kind == "risk_cooling":
             return self._handle_risk_cooling(pending, text)
@@ -203,13 +297,22 @@ class BankingAgent:
             if control == "confirm":
                 return self._finish_questionnaire(pending)
             if control == "deny":
+                self.paused_questionnaire = None
                 self.session.clear_pending()
                 return AgentReply("好的，系统推断结果未采用，本次不做任何理财推荐。")
+            intent = self.parser.parse(text, history=self.session.history[:-1])
+            if not intent.is_unknown():
+                self.paused_questionnaire = pending
+                self.session.clear_pending()
+                return self._continue_with_intent(intent)
             return AgentReply(
                 "请回复「确认」采用这组系统推断答案，或回复「取消」放弃。",
                 kind="question",
                 needs_input=True,
             )
+
+        if pending is not None and pending.kind == "questionnaire_resume":
+            return self._handle_questionnaire_resume(pending, text)
 
         if pending is not None and pending.kind == "questionnaire":
             return self._handle_questionnaire(pending, text)
@@ -231,7 +334,10 @@ class BankingAgent:
         self.last_intent_name = intent.name
         if intent.is_unknown():
             return AgentReply(self._unknown_reply(text), kind="question", needs_input=True)
+        return self._continue_with_intent(intent)
 
+    def _continue_with_intent(self, intent: Intent) -> AgentReply:
+        """Route a recognized new business intent after any prior state is handled."""
         # 理财相关操作必须先完成风险问卷（投资者适当性管理的准入要求）
         if self._needs_risk_profile(intent.name) and self.risk_level is None:
             return self._start_questionnaire(intent)
@@ -251,6 +357,437 @@ class BankingAgent:
                               intent=intent.name, kind="question", needs_input=True)
         return self._gate_and_execute(plan)
 
+    def _interrupt_intent(self, text: str) -> Optional[Intent]:
+        """Return a valid new business intent that should break a pending prompt."""
+        if classify_control(text):
+            return None
+        intent = self.parser.parse(text, history=self.session.history[:-1])
+        return None if intent.is_unknown() else intent
+
+    @staticmethod
+    def _is_why_question(text: str) -> bool:
+        cleaned = re.sub(r"\s+", "", text or "")
+        return bool(re.search(
+            r"^(为什么|为啥|为何|凭什么|依据是什么|怎么判断|为什么这样|为什么给我|"
+            r"这是什么意思|怎么得出|为什么这么判|为什么建议)",
+            cleaned,
+        ))
+
+    @staticmethod
+    def _is_upload_balance_question(text: str) -> bool:
+        """Treat balance reconciliation wording as a question, not bill analysis."""
+        cleaned = re.sub(r"\s+", "", text or "")
+        ledger_terms = ("上传账单", "导入账单", "上传流水", "导入流水")
+        question_terms = (
+            "对不上", "不一致", "不一样", "不符", "差多少", "差很多",
+            "为什么", "怎么", "怎么回事", "是不是", "感觉", "核对",
+        )
+        return (
+            "余额" in cleaned
+            and any(term in cleaned for term in ledger_terms)
+            and any(term in cleaned for term in question_terms)
+        )
+
+    @staticmethod
+    def _is_upload_balance_scope_question(text: str) -> bool:
+        """Detect questions about which account uploaded spending belongs to."""
+        cleaned = re.sub(r"\s+", "", text or "")
+        ledger_terms = (
+            "上传账单余额", "导入账单余额", "上传余额",
+            "上传账单", "导入账单", "上传流水", "导入流水",
+        )
+        scope_terms = (
+            "只计入", "只记入", "只扣", "只影响", "只算", "只归",
+            "计入", "记入", "算在", "扣在", "归到", "归属",
+        )
+        question_terms = ("吗", "是不是", "是否", "会不会", "哪个", "哪里", "怎么", "为什么")
+        context_terms = ("消费", "消耗", "支出", "花费", "前面", "虚拟", "账户", "银行卡")
+        return (
+            any(term in cleaned for term in ledger_terms)
+            and any(term in cleaned for term in scope_terms)
+            and any(term in cleaned for term in question_terms)
+            and any(term in cleaned for term in context_terms)
+        )
+
+    def _answer_informational_question(self, text: str) -> Optional[AgentReply]:
+        """Answer recognizable data questions before business keyword routing."""
+        if self._is_upload_balance_scope_question(text):
+            return self._explain_upload_balance_scope()
+        if self._is_upload_balance_question(text):
+            return self._explain_upload_balance()
+        return None
+
+    def _explain_upload_balance_scope(self) -> AgentReply:
+        """Explain whether uploaded spending affects demo accounts or the ledger."""
+        ledger = self.providers.accounts.upload_balance(self.user_id)
+        imports = [
+            txn for txn in self.providers.transactions.of(self.user_id)
+            if "receipt_import" in txn.tags or txn.source.startswith("upload:")
+        ]
+        income = round(sum(txn.amount for txn in imports if txn.amount > 0), 2)
+        expense = round(abs(sum(txn.amount for txn in imports if txn.amount < 0)), 2)
+        net = round(sum(txn.amount for txn in imports), 2)
+        lines = [
+            "是的。上传账单导入的消费只记入「上传账单余额」这个虚拟账户，"
+            "不会自动修改前面演示账户里的活期、定期、信用卡或电子钱包余额。",
+            (
+                f"该虚拟账户当前为 {ledger.balance:,.2f} 元：已导入 {len(imports)} 笔，"
+                f"收入 {income:,.2f} 元、支出 {expense:,.2f} 元、净额 {net:,.2f} 元。"
+            ),
+        ]
+        if imports:
+            lines.append(
+                "只要存在已导入流水，后续账单分析会优先只使用你上传的流水，"
+                "不会把演示消费混进来。"
+            )
+        else:
+            lines.append(
+                "目前还没有成功导入的逐笔流水；完成账单确认导入后，消费才会记入这里，"
+                "后续账单分析也会优先只使用上传流水。"
+            )
+        lines.extend([
+            "总资产页面仍会把演示账户和这个虚拟上传账户一起展示，所以看起来会混在一起，"
+            "但两者的余额归属和扣减是分开的。",
+            "主动转账、申购等操作仍按你指定的付款账户扣款，不会默认使用上传账单余额。",
+        ])
+        return AgentReply(
+            "\n".join(lines),
+            intent="account.upload_balance_scope",
+            kind="reply",
+            data={
+                "balance": ledger.balance,
+                "imported_count": len(imports),
+                "income": income,
+                "expense": expense,
+                "net": net,
+            },
+        )
+
+    def _explain_upload_balance(self) -> AgentReply:
+        """Explain the virtual upload ledger using the current session's imports."""
+        ledger = self.providers.accounts.upload_balance(self.user_id)
+        imports = [
+            txn for txn in self.providers.transactions.of(self.user_id)
+            if "receipt_import" in txn.tags or txn.source.startswith("upload:")
+        ]
+        batches = self.store.upload_batches_of(self.user_id)
+        income = round(sum(txn.amount for txn in imports if txn.amount > 0), 2)
+        expense = round(abs(sum(txn.amount for txn in imports if txn.amount < 0)), 2)
+        net = round(sum(txn.amount for txn in imports), 2)
+        lines = [
+            "「上传账单余额」不是银行卡里的真实余额，而是一个虚拟补录账户；"
+            "它从 0 元开始，只记录已经确认导入的账单流水。",
+            (
+                f"当前显示 {ledger.balance:,.2f} 元，由 {len(imports)} 笔已导入流水汇总："
+                f"收入 {income:,.2f} 元、支出 {expense:,.2f} 元、净额 {net:,.2f} 元；"
+                f"当前共 {len(batches)} 个批次。"
+            ),
+        ]
+        if not imports:
+            lines.append("目前还没有成功导入的逐笔流水，所以这个账户显示 0.00 元。")
+        if abs(ledger.balance - net) > 0.005:
+            lines.append(
+                f"注意：账户余额与已导入流水净额相差 {ledger.balance - net:,.2f} 元，"
+                "可能是旧数据迁移或批次冲回造成的，需要进一步核对。"
+            )
+        lines.extend([
+            "和实际余额对不上，通常有这些原因：",
+            "1. 真实银行卡包含未上传的工资、转账、理财、手续费等交易，虚拟账户看不到。",
+            "2. 账单汇总页只做统计、不逐笔入账；只有确认导入的明细才会改变这个余额。",
+            "3. 重复流水会被跳过，删除上传批次时对应金额也会冲回。",
+            "4. 多张卡或多个账户的真实余额，不能用一份上传账单完整还原。",
+            "因此这个数字适合核对“已上传流水的净影响”，不能直接当作银行卡实际余额。"
+            "如果你提供实际余额和对应日期，我可以继续帮你计算差额并核对相关批次。",
+        ])
+        return AgentReply(
+            "\n".join(lines),
+            intent="account.upload_balance_explain",
+            kind="reply",
+            data={
+                "balance": ledger.balance,
+                "imported_count": len(imports),
+                "income": income,
+                "expense": expense,
+                "net": net,
+                "batch_count": len(batches),
+            },
+        )
+
+    def _previous_user_text(self) -> str:
+        for item in reversed(self.session.history[:-1]):
+            if item.get("role") == "user":
+                return str(item.get("content") or "")
+        return ""
+
+    @staticmethod
+    def _why_subject(text: str) -> tuple[tuple[str, ...], str]:
+        """Return the business topics explicitly named in a why-question."""
+        cleaned = re.sub(r"\s+", "", text or "")
+        # "为什么建议我..." refers to the recommendation in the latest result,
+        # even when the suggested action mentions a card or a transfer.
+        if re.search(r"(这个|这条|该|刚才的|上面的)?建议|为什么建议", cleaned):
+            return (), ""
+        groups = [
+            (
+                ("异常", "盗刷", "可疑交易", "高风险交易", "重复扣款", "乱扣"),
+                ("bill.anomaly",),
+                "异常交易",
+            ),
+            (
+                ("风险测评", "风险评级", "风险等级", "投资者适当性", "c1", "c2", "c3", "c4", "c5"),
+                ("wealth.risk_assess",),
+                "风险测评",
+            ),
+            (
+                ("理财推荐", "产品推荐", "推荐产品", "推荐基金", "理财产品", "申购"),
+                ("wealth.recommend",),
+                "理财产品推荐",
+            ),
+            (
+                ("账单分析", "分析账单", "消费分类", "消费构成", "收支分析", "月度账单", "年度账单"),
+                ("bill.analyze", "bill.report", "bill.search"),
+                "账单分析",
+            ),
+            (
+                ("银行卡", "卡片", "额度", "挂失", "冻结", "解锁"),
+                (
+                    "card.list", "card.apply", "card.bind", "card.limit_adjust",
+                    "card.control", "card.freeze", "card.unlock", "card.report_lost",
+                ),
+                "银行卡操作",
+            ),
+            (
+                ("转账", "到账", "收款", "aa"),
+                ("transfer.send", "transfer.schedule", "transfer.split_aa", "transfer.list_scheduled"),
+                "转账",
+            ),
+            (
+                ("订阅", "自动续费", "续费"),
+                ("subscription.detect", "subscription.list", "subscription.cancel", "subscription.remind"),
+                "订阅管理",
+            ),
+            (("余额",), ("account.balance",), "余额查询"),
+            (("生日", "惊喜"), ("crossscene.birthday_plan",), "生日惊喜"),
+            (("账单", "消费", "支出"), ("bill.analyze", "bill.report", "bill.search"), "账单分析"),
+        ]
+        lowered = cleaned.lower()
+        for keywords, intents, label in groups:
+            if any(keyword in lowered for keyword in keywords):
+                return intents, label
+        return (), ""
+
+    def _latest_reply_memory(self, intents: tuple[str, ...] = ()) -> Optional[ReplyMemory]:
+        for memory in reversed(self.reply_history):
+            if memory.reply.intent == "explain.why":
+                continue
+            if not intents or memory.reply.intent in intents:
+                return memory
+        if self.last_reply is not None and self.last_reply.intent != "explain.why":
+            if not intents or self.last_reply.intent in intents:
+                return ReplyMemory(
+                    user_text=self._previous_user_text(),
+                    reply=self.last_reply,
+                )
+        return None
+
+    def _explain_last_reply(self, text: str) -> AgentReply:
+        intents, label = self._why_subject(text)
+        memory = self._latest_reply_memory(intents)
+        if memory is None and intents:
+            return AgentReply(
+                f"当前会话里没有找到与「{label}」匹配的结果。"
+                f"请先执行一次{label}，我再解释具体依据。",
+                intent="explain.why",
+                kind="reply",
+            )
+        if memory is None:
+            return AgentReply(
+                "目前还没有可以解释的业务结果。您可以先发起一个查询或业务操作。",
+                intent="explain.why",
+                kind="reply",
+            )
+        last = memory.reply
+        previous = memory.user_text or self._previous_user_text()
+        if last.intent == "bill.anomaly":
+            body = self._explain_anomaly(last, previous, text)
+        elif last.intent in {"bill.analyze", "bill.report", "bill.search"}:
+            body = self._explain_bill_analysis(last, previous)
+        elif last.intent == "wealth.recommend":
+            body = self._explain_wealth_recommendation(last, previous)
+        elif last.intent == "wealth.risk_assess":
+            body = self._explain_risk_assessment(last, previous)
+        else:
+            body = self._explain_generic(last, previous)
+        return AgentReply(body, intent="explain.why", kind="reply")
+
+    @staticmethod
+    def _matching_anomaly_items(items: List[Dict[str, Any]], question: str) -> List[Dict[str, Any]]:
+        cleaned = re.sub(r"\s+", "", question or "")
+        kind_aliases = {
+            "深夜": "night_large",
+            "重复": "duplicate_charge",
+            "金额离群": "amount_outlier",
+            "偏离": "amount_outlier",
+            "订阅涨价": "subscription_hike",
+            "涨价": "subscription_hike",
+            "境外": "overseas",
+            "小额": "micro_burst",
+            "试探": "micro_burst",
+            "陌生商户": "new_merchant_large",
+            "首次": "new_merchant_large",
+        }
+        requested_kinds = {
+            kind for keyword, kind in kind_aliases.items() if keyword in cleaned
+        }
+        merchant_matches = [
+            item for item in items
+            if str(item.get("merchant") or "")
+            and str(item.get("merchant") or "") in cleaned
+        ]
+        kind_matches = [
+            item for item in items
+            if str(item.get("kind") or "") in requested_kinds
+        ]
+        if merchant_matches and requested_kinds:
+            narrowed = [
+                item for item in merchant_matches
+                if str(item.get("kind") or "") in requested_kinds
+            ]
+            if narrowed:
+                return narrowed
+        if merchant_matches:
+            return merchant_matches
+        if kind_matches:
+            return kind_matches
+        return items
+
+    def _explain_anomaly(self, last: AgentReply, previous: str, question: str = "") -> str:
+        items = list(last.data.get("items") or [])
+        scope = last.data.get("data_scope", "")
+        labels = {
+            "night_large": "深夜大额",
+            "duplicate_charge": "重复扣款",
+            "amount_outlier": "金额离群",
+            "subscription_hike": "订阅涨价",
+            "overseas": "境外消费",
+            "micro_burst": "小额试探",
+            "new_merchant_large": "陌生商户大额",
+        }
+        rules = {
+            "night_large": "在 00:00-05:00 发生且金额不低于 1,000 元",
+            "duplicate_charge": "同一商户、同一金额在 10 分钟内重复扣款",
+            "amount_outlier": "同类消费金额超过均值加 3 倍标准差，且达到 500 元",
+            "subscription_hike": "订阅续费金额较历史价格明显上涨",
+            "overseas": "商户或备注出现境外消费特征",
+            "micro_burst": "1 小时内出现 4 笔以上 20 元以下小额扣款",
+            "new_merchant_large": "当前分析范围内首次出现该商户且金额不低于 5,000 元",
+        }
+        selected = self._matching_anomaly_items(items, question)
+        lines = ["异常交易的判定由规则命中和数据偏离共同得出。"]
+        if selected:
+            if len(selected) < len(items):
+                lines.append(f"这里只解释问题中明确指定的 {len(selected)} 笔命中记录。")
+            else:
+                lines.append(f"本次共有 {len(items)} 笔记录命中异常规则。")
+            lines.append("")
+            for item in selected[:8]:
+                kind = str(item.get("kind") or "")
+                label = labels.get(kind, kind or "风险规则")
+                rule = rules.get(kind, "命中当前风控规则")
+                reason = str(item.get("reason") or "命中异常交易规则")
+                suggestion = str(item.get("suggestion") or "")
+                metrics = item.get("metrics") or {}
+                amount = abs(float(item.get("amount") or 0))
+                lines.append(
+                    f"- {item.get('date', '日期未知')} {item.get('merchant', '未知商户')}，"
+                    f"支出 {amount:,.2f} 元"
+                )
+                lines.append(f"  命中规则：{label}。{rule}。")
+                lines.append(f"  具体依据：{reason}")
+                if metrics:
+                    metric_labels = {
+                        "category_mean": "同类均值",
+                        "category_stdev": "标准差",
+                        "threshold": "告警阈值",
+                        "zscore": "偏离倍数",
+                        "hour": "发生时段",
+                        "window_minutes": "时间窗口",
+                        "count": "命中笔数",
+                        "unit_amount": "单笔金额",
+                        "total": "合计金额",
+                        "previous_amount": "调整前金额",
+                        "current_amount": "当前金额",
+                        "increase_pct": "涨幅",
+                        "amount": "涉及金额",
+                        "first_seen": "首次出现",
+                    }
+                    metric_text = "，".join(
+                        f"{metric_labels.get(key, key)} {value}"
+                        for key, value in list(metrics.items())[:4]
+                    )
+                    lines.append(f"  量化指标：{metric_text}")
+                if suggestion:
+                    lines.append(f"  处理建议：{suggestion}")
+                lines.append("")
+        else:
+            lines.append("这次没有交易同时命中异常规则，所以没有给出异常处理建议。")
+        if scope == "uploaded":
+            lines.append("数据范围：仅使用你上传的真实流水，未混入模拟数据。")
+        elif scope == "demo":
+            lines.append("数据范围：当前使用演示种子数据。")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _explain_bill_analysis(last: AgentReply, previous: str) -> str:
+        data = last.data or {}
+        stats = data.get("stats") or {}
+        scope = data.get("data_scope", "")
+        lines = [
+            "账单分析的统计口径是：先按期间筛选交易，再汇总收入、支出和净结余，"
+            "并按消费类别和商户排序。账单分析本身不等于异常交易检查。",
+        ]
+        if stats:
+            lines.append(
+                f"本次数据包含 {stats.get('count', 0)} 笔交易，"
+                f"收入 {stats.get('income', 0):,.2f} 元，支出 {stats.get('expense', 0):,.2f} 元，"
+                f"结余 {stats.get('net', 0):,.2f} 元。"
+            )
+        if scope:
+            lines.append(f"数据范围：{'仅用户上传流水' if scope == 'uploaded' else '演示种子数据'}。")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _explain_wealth_recommendation(last: AgentReply, previous: str) -> str:
+        data = last.data or {}
+        return "\n".join([
+            "推荐依据包括：您的风险承受等级、产品 R 风险等级、计划金额、投资期限、"
+            "资金用途，以及产品是否来自公开行情或演示数据。",
+            f"本次最高风险上限为 R{data.get('max_risk', '未记录')}，"
+            f"筛出 {len(data.get('products') or [])} 个候选产品。"
+            "演示产品的收益率不是实时收益，公开行情也只作为辅助参考。",
+        ])
+
+    @staticmethod
+    def _explain_risk_assessment(last: AgentReply, previous: str) -> str:
+        data = last.data or {}
+        return "\n".join([
+            "评分依据是问卷答案、账户资产、收入、应急金、投资经验和风险态度等维度，"
+            "按规则加权后映射到客户等级。",
+            f"本次得分 {data.get('total', '未记录')}，等级 {data.get('c_level', data.get('label', '未记录'))}。",
+        ])
+
+    @staticmethod
+    def _explain_generic(last: AgentReply, previous: str) -> str:
+        lines = ["这项结果依据刚才工具返回的当前会话数据。"]
+        first_line = last.text.strip().splitlines()[0] if last.text.strip() else ""
+        if first_line:
+            lines.append(f"结果摘要：{first_line}")
+        if last.trace:
+            lines.append("我依据工具执行结果、账户数据和风控规则生成了这个结果。")
+        else:
+            lines.append("刚才的回复主要是在等待您补充信息或确认，因此没有执行资金动作。")
+        return "\n".join(lines)
+
     def _handle_pasted_bill(self, text: str) -> AgentReply:
         """把粘贴进来的账单文本交给 bill.scan_receipt 整体解析。"""
         self.session.clear_pending()
@@ -264,12 +801,26 @@ class BankingAgent:
     RISK_GATED_INTENTS = {"wealth.recommend", "wealth.subscribe", "wealth.risk_assess"}
     SKIP_WORDS = {"跳过", "跳过问卷", "默认", "用我的资料", "按我的资料", "skip"}
     ABORT_WORDS = {"取消", "算了", "不做了", "先不做了", "退出问卷"}
+    RESUME_WORDS = {"1", "继续", "继续上次", "上次", "恢复", "恢复上次"}
+    RESTART_WORDS = {"2", "重新开始", "重来", "重新", "从头开始"}
 
     @classmethod
     def _needs_risk_profile(cls, intent_name: str) -> bool:
         return intent_name in cls.RISK_GATED_INTENTS
 
     def _start_questionnaire(self, intent: Intent) -> AgentReply:
+        if self.paused_questionnaire is not None:
+            self.session.pending = Pending(
+                kind="questionnaire_resume",
+                intent=intent.name,
+                origin=intent,
+            )
+            return AgentReply(
+                self._questionnaire_resume_text(self.paused_questionnaire),
+                intent=intent.name,
+                kind="question",
+                needs_input=True,
+            )
         pending = Pending(
             kind="questionnaire",
             intent=intent.name,
@@ -286,6 +837,75 @@ class BankingAgent:
         )
         return AgentReply(head + "\n" + self._question_text(pending),
                           intent=intent.name, kind="question", needs_input=True)
+
+    def _questionnaire_resume_text(self, paused: Pending) -> str:
+        lines = [
+            "检测到上次未完成的理财风险问卷。",
+            f"上次进度：已答 {len(paused.answers)}/{len(BASIC_QUESTIONS)} 题。",
+        ]
+        if paused.answers:
+            lines.append("上次已选：")
+            for index, question in enumerate(BASIC_QUESTIONS, start=1):
+                key = paused.answers.get(question.qid, "")
+                if not key:
+                    continue
+                option = question.option(key)
+                label = option.label if option else key.upper()
+                lines.append(f"  {index}. {question.text} -> {key.upper()}. {label}")
+        lines.extend([
+            "",
+            "请选择：",
+            "  1. 继续上次记录",
+            "  2. 重新开始",
+            "  3. 取消本次理财流程",
+        ])
+        return "\n".join(lines)
+
+    def _handle_questionnaire_resume(self, pending: Pending, text: str) -> AgentReply:
+        cleaned = (text or "").strip().lower()
+        if cleaned in self.ABORT_WORDS or cleaned in {"3", "取消本次"}:
+            self.paused_questionnaire = None
+            self.session.clear_pending()
+            return AgentReply("好的，本次理财流程已取消，未记录任何问卷结果。")
+        if cleaned in self.RESTART_WORDS:
+            self.paused_questionnaire = None
+            self.session.clear_pending()
+            origin = pending.origin or Intent(pending.intent or "wealth.recommend", {})
+            return self._start_questionnaire(origin)
+        if cleaned in self.RESUME_WORDS:
+            paused = self.paused_questionnaire
+            if paused is None:
+                self.session.clear_pending()
+                return AgentReply("上次问卷状态已失效，请重新开始理财流程。", ok=False, kind="error")
+            paused.intent = pending.intent or paused.intent
+            paused.origin = pending.origin or paused.origin
+            self.session.pending = paused
+            if paused.kind == "questionnaire_confirm":
+                return AgentReply(
+                    self._questionnaire_review_text(paused),
+                    intent=paused.intent,
+                    kind="confirm",
+                    needs_input=True,
+                )
+            if paused.queue:
+                return AgentReply(
+                    self._question_text(paused),
+                    intent=paused.intent,
+                    kind="question",
+                    needs_input=True,
+                )
+            return self._finish_questionnaire(paused)
+        intent = self.parser.parse(text, history=self.session.history[:-1])
+        if not intent.is_unknown():
+            self.paused_questionnaire = None
+            self.session.clear_pending()
+            return self._continue_with_intent(intent)
+        return AgentReply(
+            "请回复 1 继续上次记录、2 重新开始，或 3 取消。",
+            intent=pending.intent,
+            kind="question",
+            needs_input=True,
+        )
 
     def _question_text(self, pending: Pending) -> str:
         qid = pending.queue[0]
@@ -320,6 +940,7 @@ class BankingAgent:
     def _handle_questionnaire(self, pending: Pending, text: str) -> AgentReply:
         cleaned = (text or "").strip()
         if cleaned in self.ABORT_WORDS:
+            self.paused_questionnaire = None
             self.session.clear_pending()
             return AgentReply("好的，风险评估已取消，本次不做任何理财推荐。")
         if cleaned in self.SKIP_WORDS:
@@ -343,6 +964,11 @@ class BankingAgent:
             qid = pending.queue[0]
             key = self._parse_option(qid, cleaned)
             if key is None:
+                intent = self.parser.parse(text, history=self.session.history[:-1])
+                if not intent.is_unknown():
+                    self.paused_questionnaire = pending
+                    self.session.clear_pending()
+                    return self._continue_with_intent(intent)
                 return AgentReply(
                     "这个回答我没看懂。\n" + self._question_text(pending),
                     kind="question", needs_input=True,
@@ -375,6 +1001,7 @@ class BankingAgent:
         user = self.store.get_user(self.user_id)
         result = evaluate_basic(pending.answers, user, self.store, self.clock.today())
         self.risk_answers = dict(pending.answers)
+        self.paused_questionnaire = None
         self.risk_level = result.level
         self.risk_assessed_at = self.clock.iso()
         if pending.inferences:
@@ -472,7 +1099,79 @@ class BankingAgent:
     # ==================================================================
     # 槽位追问（多轮对话）
     # ==================================================================
+    @classmethod
+    def _revisable_amount_slot(cls, intent: str) -> str:
+        return cls.REVISABLE_AMOUNT_SLOTS.get(intent, "")
+
+    @staticmethod
+    def _looks_like_amount_revision(text: str) -> bool:
+        cleaned = re.sub(r"\s+", "", text or "")
+        if re.fullmatch(r"[¥￥]?\d[\d,]*(?:\.\d{1,2})?(?:元|块)?", cleaned):
+            return True
+        return any(
+            term in cleaned
+            for term in (
+                "改成", "改为", "调到", "调整为", "降到", "减到", "换成",
+                "少转", "只转", "金额改", "金额调", "改小",
+            )
+        )
+
+    def _resume_blocked_draft(self, pending: Pending, text: str) -> AgentReply:
+        """Revise or replace a transfer draft rejected by the risk gate."""
+        control = classify_control(text)
+        if control == "deny":
+            self.session.clear_pending()
+            return AgentReply("好的，这笔未通过的转账草稿已取消，没有执行任何资金变动。")
+
+        amount_slot = self._revisable_amount_slot(pending.intent)
+        amount = parse_amount(text)
+        if (
+            amount_slot
+            and amount is not None
+            and float(amount) > 0
+            and self._looks_like_amount_revision(text)
+        ):
+            slots = dict(pending.slots)
+            slots[amount_slot] = float(amount)
+            self.session.clear_pending()
+            return self._continue_with_intent(
+                Intent(pending.intent, slots, 1.0, "system")
+            )
+
+        if control == "confirm":
+            current = pending.slots.get(amount_slot)
+            return AgentReply(
+                f"当前金额 {float(current or 0):,.2f} 元仍未通过风控，不能直接确认执行。"
+                "请回复「改成3000」这样的指令调整金额，或回复「取消」放弃。",
+                intent=pending.intent,
+                kind="question",
+                needs_input=True,
+            )
+
+        interrupt = self._interrupt_intent(text)
+        if interrupt is not None:
+            self.session.clear_pending()
+            return self._continue_with_intent(interrupt)
+
+        current = pending.slots.get(amount_slot)
+        return AgentReply(
+            f"刚才的转账草稿仍保留，当前金额为 {float(current or 0):,.2f} 元。"
+            "可以直接回复「改成3000」或只回复一个新金额，我会沿用原来的收款人、"
+            "渠道和付款账户重新校验；回复「取消」可放弃。",
+            intent=pending.intent,
+            kind="question",
+            needs_input=True,
+        )
+
     def _resume_from_slots(self, pending: Pending, text: str) -> AgentReply:
+        control = classify_control(text)
+        if control == "deny":
+            self.session.clear_pending()
+            return AgentReply("好的，本次操作已取消，没有执行任何业务动作。")
+        interrupt = self._interrupt_intent(text)
+        if interrupt is not None:
+            self.session.clear_pending()
+            return self._continue_with_intent(interrupt)
         ctx = self.context()
         self._fill_missing(pending, text, ctx)
         if pending.missing:
@@ -607,8 +1306,25 @@ class BankingAgent:
             if decision.blocked:
                 blockers.append(f"{self._tool_label(step.tool)}：{decision.summary()}")
         if blockers:
+            amount_slot = self._revisable_amount_slot(plan.intent)
+            revision_hint = ""
+            if amount_slot:
+                self.session.pending = Pending(
+                    kind="blocked_draft",
+                    intent=plan.intent,
+                    slots=dict(plan.slots),
+                    plan=plan,
+                )
+                current = plan.slots.get(amount_slot)
+                revision_hint = (
+                    f"\n\n转账草稿已保留，当前金额 {float(current or 0):,.2f} 元。"
+                    "可直接回复「改成3000」修改金额，或只回复一个新金额重新校验；"
+                    "回复「取消」可放弃。"
+                )
             return AgentReply(
-                "风控校验未通过，本次操作没有执行：\n" + "\n".join("  · " + b for b in blockers),
+                "风控校验未通过，本次操作没有执行：\n"
+                + "\n".join("  · " + b for b in blockers)
+                + revision_hint,
                 intent=plan.intent, ok=False, kind="error",
             )
 
@@ -706,6 +1422,11 @@ class BankingAgent:
         if control == "deny":
             self.session.clear_pending()
             return AgentReply("好的，风险不匹配申购已取消，本次不会扣款。")
+        if control is None:
+            interrupt = self._interrupt_intent(text)
+            if interrupt is not None:
+                self.session.clear_pending()
+                return self._continue_with_intent(interrupt)
         if control != "confirm":
             return AgentReply(
                 "请回复「确认」检查冷静期状态，或回复「取消」放弃本次申购。",
@@ -807,6 +1528,10 @@ class BankingAgent:
         if classify_control(text) == "deny":
             self.session.clear_pending()
             return AgentReply("好的，已验证操作已取消，资金没有变动。")
+        interrupt = self._interrupt_intent(text)
+        if interrupt is not None:
+            self.session.clear_pending()
+            return self._continue_with_intent(interrupt)
         code = "".join(ch for ch in text if ch.isdigit())
         valid = code == RiskPolicy.DEMO_SMS_CODE
         if not valid:

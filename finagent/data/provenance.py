@@ -30,6 +30,8 @@ def is_stale(
 
 
 def source_badge(source: str, is_live: bool, is_demo: bool, stale: bool = False) -> str:
+    if source.startswith("upload:"):
+        return f"用户上传 · {source}"
     if is_live and not stale:
         return f"实时 · {source or '外部数据源'}"
     if is_demo:

@@ -15,18 +15,51 @@ from typing import Any, Dict, List, Tuple
 
 from finagent.data.models import Transaction
 from finagent.data.provenance import source_badge
+from finagent.data.providers import build_data_providers
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, format_money, render_table
 from finagent.tools.transfer_tools import resolve_account
 from finagent.utils import parse_period, period_bounds
 from finagent.vision.receipt_reader import ReceiptReader
 
 LEVEL_ICON = {"danger": "高危", "warning": "关注", "info": "提示"}
+UPLOAD_SOURCE = "upload:user"
 
 
 def _transactions(ctx: ToolContext, start: str = "", end: str = ""):
     if getattr(ctx, "providers", None) is not None:
         return ctx.providers.transactions.of(ctx.user_id, start, end)
     return ctx.store.transactions_of(ctx.user_id, start or None, end or None)
+
+
+def _is_user_uploaded(txn: Transaction) -> bool:
+    return "receipt_import" in txn.tags or txn.source.startswith("upload:")
+
+
+def _scope_transactions(
+    ctx: ToolContext,
+    start: str = "",
+    end: str = "",
+) -> Tuple[List[Transaction], str]:
+    """Prefer real uploaded statements over seeded demo transactions."""
+    all_rows = _transactions(ctx)
+    uploaded = [txn for txn in all_rows if _is_user_uploaded(txn)]
+    for txn in uploaded:
+        # Migrate records imported before provenance was added.
+        txn.source = UPLOAD_SOURCE
+        txn.is_demo = False
+        txn.is_live = False
+        if "receipt_import" not in txn.tags:
+            txn.tags.append("receipt_import")
+    if uploaded:
+        rows = _transactions(ctx, start, end)
+        return [txn for txn in rows if _is_user_uploaded(txn)], "uploaded"
+    return _transactions(ctx, start, end), "demo"
+
+
+def _scope_label(scope: str) -> str:
+    if scope == "uploaded":
+        return "仅用户上传流水（不混入模拟数据）"
+    return "演示种子数据"
 
 
 def _source_summary(txns: List[Transaction]) -> str:
@@ -119,6 +152,41 @@ def _top_merchants(txns: List[Transaction], top: int = 5) -> List[List[str]]:
     return [[m, f"{v:,.2f}", str(counts[m])] for m, v in ordered]
 
 
+class BillSupportedFormatsTool(Tool):
+    """回答账单上传支持哪些格式，不触发账单分析。"""
+
+    name = "bill.supported_formats"
+    category = "账单分析"
+    description = "查看账单图片、文本和 Excel 支持的上传格式"
+    risk_level = "low"
+    params = []
+    examples = ["可以上传哪些格式的账单", "Excel 支持什么格式"]
+
+    def run(self, ctx: ToolContext) -> ToolResult:  # type: ignore[override]
+        message = "\n".join([
+            "目前支持以下账单格式（单文件不超过 8MB）：",
+            "  · 图片：PNG、JPG/JPEG、WEBP、BMP、GIF",
+            "  · 文本：TXT、CSV（UTF-8 编码）",
+            "  · Excel：XLSX、XLSM",
+            "  · 旧式二进制 XLS 请先另存为 XLSX",
+            "",
+            "Excel 可以包含逐笔交易表（日期/商户/金额/类别），",
+            "也可以包含汇总表（月份/支出、类别/金额/占比）。",
+            "图片是逐笔明细时进入导入确认；是账单汇总页时直接做消费构成和月度趋势分析。",
+        ])
+        return ToolResult(
+            True,
+            message,
+            data={
+                "image": ["png", "jpg", "jpeg", "webp", "bmp", "gif"],
+                "text": ["txt", "csv"],
+                "excel": ["xlsx", "xlsm"],
+                "max_mb": 8,
+            },
+            summary="账单支持图片、TXT/CSV 和 XLSX/XLSM",
+        )
+
+
 class BillAnalyzeTool(Tool):
     """消费分类统计。"""
 
@@ -137,7 +205,7 @@ class BillAnalyzeTool(Tool):
         today = ctx.clock.today()
         period_key = parse_period(str(period), today)
         start, end, label = period_bounds(period_key, today)
-        txns = _transactions(ctx, start, end)
+        txns, data_scope = _scope_transactions(ctx, start, end)
         if category:
             txns = [t for t in txns if category in t.category or category in t.merchant]
         if not txns:
@@ -146,7 +214,8 @@ class BillAnalyzeTool(Tool):
         stats = _summarize(txns)
         rows, _totals = _category_table(txns)
         prev_start, prev_end, _ = _previous_bounds(period_key, today)
-        prev_stats = _summarize(_transactions(ctx, prev_start, prev_end))
+        prev_txns, _ = _scope_transactions(ctx, prev_start, prev_end)
+        prev_stats = _summarize(prev_txns)
         delta = (
             (stats["expense"] - prev_stats["expense"]) / prev_stats["expense"] * 100
             if prev_stats["expense"]
@@ -156,6 +225,7 @@ class BillAnalyzeTool(Tool):
 
         lines = [
             f"{label}账单概览（{start} ~ {end}，共 {stats['count']} 笔）",
+            f"  数据范围：{_scope_label(data_scope)}",
             f"  数据来源：{_source_summary(txns)}",
             f"  收入 {stats['income']:,.2f} 元 | 支出 {stats['expense']:,.2f} 元 | 结余 {stats['net']:,.2f} 元",
             f"  单笔平均支出 {stats['avg']:,.2f} 元 | 环比上月支出{trend} {abs(delta):.1f}%",
@@ -169,7 +239,14 @@ class BillAnalyzeTool(Tool):
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"period": period_key, "label": label, "stats": stats, "start": start, "end": end},
+            data={
+                "period": period_key,
+                "label": label,
+                "stats": stats,
+                "start": start,
+                "end": end,
+                "data_scope": data_scope,
+            },
             summary=f"{label}支出 {stats['expense']:,.2f} 元，结余 {stats['net']:,.2f} 元",
         )
 
@@ -190,8 +267,12 @@ class BillAnomalyTool(Tool):
         today = ctx.clock.today()
         period_key = parse_period(str(period), today)
         start, end, label = period_bounds(period_key, today)
-        txns = _transactions(ctx, start, end)
-        anomalies = ctx.risk.detect_anomalies(ctx.user_id, txns)
+        txns, data_scope = _scope_transactions(ctx, start, end)
+        anomalies = ctx.risk.detect_anomalies(
+            ctx.user_id,
+            txns,
+            include_subscriptions=(data_scope == "demo"),
+        )
         if not anomalies:
             return ToolResult(
                 True,
@@ -221,7 +302,11 @@ class BillAnomalyTool(Tool):
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"count": len(anomalies), "items": [a.__dict__ for a in anomalies]},
+            data={
+                "count": len(anomalies),
+                "items": [a.__dict__ for a in anomalies],
+                "data_scope": data_scope,
+            },
             summary=f"{label}发现 {len(anomalies)} 笔异常交易",
         )
 
@@ -250,13 +335,17 @@ class BillReportTool(Tool):
         if mode == "annual" and period_key in {"this_month", "last_month"}:
             period_key = "this_year"
         start, end, label = period_bounds(period_key, today)
-        txns = _transactions(ctx, start, end)
+        txns, data_scope = _scope_transactions(ctx, start, end)
         if not txns:
             return ToolResult(True, f"{label}没有交易记录，无法生成报告。", summary=f"{label}无数据")
 
         stats = _summarize(txns)
         rows, totals = _category_table(txns, top=10)
-        anomalies = ctx.risk.detect_anomalies(ctx.user_id, txns)
+        anomalies = ctx.risk.detect_anomalies(
+            ctx.user_id,
+            txns,
+            include_subscriptions=(data_scope == "demo"),
+        )
         top_category = max(totals.items(), key=lambda kv: kv[1])[0] if totals else "-"
         income = stats["income"] or 1.0
         saving_rate = stats["net"] / income * 100
@@ -265,6 +354,7 @@ class BillReportTool(Tool):
             f"【{label}账单报告】{start} ~ {end}",
             "=" * 46,
             "一、收支总览",
+            f"  数据范围：{_scope_label(data_scope)}",
             f"  数据来源：{_source_summary(txns)}",
             f"  收入 {stats['income']:,.2f} 元",
             f"  支出 {stats['expense']:,.2f} 元",
@@ -314,6 +404,7 @@ class BillReportTool(Tool):
                 "stats": stats,
                 "top_category": top_category,
                 "anomaly_count": len(anomalies),
+                "data_scope": data_scope,
             },
             summary=f"{label}支出 {stats['expense']:,.2f} 元，结余 {stats['net']:,.2f} 元",
         )
@@ -341,8 +432,9 @@ class BillSearchTool(Tool):
         today = ctx.clock.today()
         period_key = parse_period(str(period), today)
         start, end, label = period_bounds(period_key, today)
+        scoped, data_scope = _scope_transactions(ctx, start, end)
         txns = [
-            t for t in _transactions(ctx, start, end)
+            t for t in scoped
             if keyword in t.merchant or keyword in t.category or keyword in t.note
         ]
         if not txns:
@@ -358,7 +450,7 @@ class BillSearchTool(Tool):
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"count": len(txns), "total": round(total, 2)},
+            data={"count": len(txns), "total": round(total, 2), "data_scope": data_scope},
             summary=f"「{keyword}」共消费 {total:,.2f} 元（{len(txns)} 笔）",
         )
 
@@ -371,7 +463,7 @@ class ReceiptScanTool(Tool):
 
     name = "bill.scan_receipt"
     category = "账单分析"
-    description = "识别账单/小票截图、账单文件，或直接解析粘贴的账单文本"
+    description = "识别账单/小票截图、账单文件或粘贴文本；汇总页会做消费构成和月度趋势分析"
     risk_level = "low"
     params = [
         ToolParam("image", "string", False, "账单图片或账单文件的路径"),
@@ -380,6 +472,7 @@ class ReceiptScanTool(Tool):
     required_any = ["image", "text"]
     examples = ["识别这张账单截图 samples/bill_sample.png",
                 "帮我看一下这张小票 C:/Users/me/Desktop/bill.jpg",
+                "识别这张汇总页 samples/bill_summary_sample.png",
                 "帮我分析一下我粘贴的账单"]
 
     def missing_params(self, args: Dict[str, Any]) -> List[str]:
@@ -394,6 +487,8 @@ class ReceiptScanTool(Tool):
             result = reader.read_text(text, ctx.clock.today())
         else:
             result = reader.read(image, ctx.clock.today())
+        if result.summary is not None:
+            return self._summary_result(result)
         if not result.ok or not result.records:
             return ToolResult(False, result.message or "没有识别到交易明细。")
 
@@ -440,6 +535,80 @@ class ReceiptScanTool(Tool):
             summary=f"识别到 {len(result.records)} 笔交易，合计支出 {result.total_expense:,.2f} 元",
         )
 
+    @staticmethod
+    def _summary_result(result) -> ToolResult:
+        summary = result.summary
+        period = summary.period or "期间未知"
+        lines = [
+            f"已识别账单汇总页（{period}，识别方式：{result.backend_label or result.backend}）",
+            f"  本月支出 {summary.total_expense:,.2f} 元",
+        ]
+        if summary.categories:
+            category_rows = [
+                [item.category, f"{item.amount:,.2f}",
+                 f"{item.ratio:.1f}%" if item.ratio is not None else "-"]
+                for item in summary.categories
+            ]
+            lines.extend([
+                "",
+                "消费构成：",
+                render_table(["类别", "金额", "占比"], category_rows),
+            ])
+        if summary.months:
+            month_rows = []
+            previous = None
+            for item in summary.months:
+                change = "-"
+                if previous is not None and previous.amount:
+                    change = f"{(item.amount - previous.amount) / previous.amount * 100:+.1f}%"
+                month_rows.append([item.month, f"{item.amount:,.2f}", change])
+                previous = item
+            lines.extend([
+                "",
+                "过去月份对比：",
+                render_table(["月份", "支出", "环比"], month_rows),
+            ])
+        lines.extend(["", "分析："])
+        if summary.categories:
+            top = summary.categories[0]
+            lines.append(
+                f"  · 本月最大消费类别是「{top.category}」，"
+                f"支出 {top.amount:,.2f} 元，占本月支出 "
+                f"{(top.amount / summary.total_expense * 100) if summary.total_expense else 0:.1f}%。"
+            )
+        if len(summary.months) >= 2:
+            current, previous = summary.months[-1], summary.months[-2]
+            if previous.amount:
+                change = (current.amount - previous.amount) / previous.amount * 100
+                direction = "上升" if change > 0 else ("下降" if change < 0 else "持平")
+                change_word = "增加" if change > 0 else ("减少" if change < 0 else "变化")
+                lines.append(
+                    f"  · {current.month} 支出较 {previous.month} {direction} {abs(change):.1f}%，"
+                    f"较上月{change_word}约 {abs(current.amount - previous.amount):,.2f} 元。"
+                )
+        if len(summary.months) >= 3:
+            amounts = [item.amount for item in summary.months]
+            average = sum(amounts) / len(amounts)
+            lines.append(
+                f"  · 最近 {len(amounts)} 个月平均支出 {average:,.2f} 元；"
+                f"最高月份是 {max(summary.months, key=lambda item: item.amount).month}。"
+            )
+        if not summary.categories and not summary.months:
+            lines.append("  · 汇总页只识别到总支出，建议补充分类或月度区域后重新上传。")
+        lines.append("  · 这是汇总页分析，不会把分类金额当作逐笔流水导入。")
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            data={
+                "mode": "summary",
+                "backend": result.backend,
+                "summary": summary.to_payload(),
+                "category_count": len(summary.categories),
+                "month_count": len(summary.months),
+            },
+            summary=f"已分析账单汇总：本月支出 {summary.total_expense:,.2f} 元",
+        )
+
 
 class ReceiptImportTool(Tool):
     """把识别结果写入流水（由 bill.scan_receipt 的后续确认触发）。"""
@@ -459,8 +628,11 @@ class ReceiptImportTool(Tool):
         existing = {
             (t.timestamp[:16], t.merchant, round(t.amount, 2))
             for t in _transactions(ctx)
+            if _is_user_uploaded(t)
         }
-        account = resolve_account(ctx)
+        provider = ctx.providers or build_data_providers(ctx.store)
+        account = provider.accounts.upload_balance(ctx.user_id)
+        source_name = Path(cache["source"]).name if cache.get("source") else "粘贴的账单文本"
         imported: List[Transaction] = []
         skipped = 0
         for record in cache["records"]:
@@ -469,7 +641,6 @@ class ReceiptImportTool(Tool):
             if key in existing:
                 skipped += 1
                 continue
-            source = Path(cache["source"]).name if cache.get("source") else "粘贴的账单文本"
             add_transaction = (
                 ctx.providers.transactions.add
                 if getattr(ctx, "providers", None) is not None
@@ -482,14 +653,43 @@ class ReceiptImportTool(Tool):
                 merchant=record["merchant"],
                 category=record.get("category") or "其他",
                 channel="账单导入",
-                note=f"来源：{source}",
+                note=f"来源：{source_name}",
                 timestamp=f"{record['date']}T{record.get('time') or '12:00'}:00",
                 tags=["receipt_import", cache.get("backend", "")],
+                source=UPLOAD_SOURCE,
+                updated_at=ctx.clock.iso(),
+                is_live=False,
+                is_demo=False,
             )
+            account.balance = round(account.balance + txn.amount, 2)
             imported.append(txn)
             existing.add(key)
 
         ctx.session.pop(RECEIPT_CACHE_KEY, None)
+        batch = None
+        if imported:
+            batch = (
+                ctx.providers.uploads.add(
+                    user_id=ctx.user_id,
+                    filename=source_name,
+                    record_count=len(imported),
+                    total_expense=sum(abs(txn.amount) for txn in imported if txn.amount < 0),
+                    backend=cache.get("backend", ""),
+                    transaction_ids=[txn.txn_id for txn in imported],
+                )
+                if getattr(ctx, "providers", None) is not None
+                else ctx.store.add_upload_batch(
+                    user_id=ctx.user_id,
+                    filename=source_name,
+                    record_count=len(imported),
+                    total_expense=sum(abs(txn.amount) for txn in imported if txn.amount < 0),
+                    backend=cache.get("backend", ""),
+                    transaction_ids=[txn.txn_id for txn in imported],
+                )
+            )
+            for txn in imported:
+                txn.import_batch_id = batch.batch_id
+            ctx.store.touch(account)
         anomalies = (
             ctx.risk.detect_anomalies(ctx.user_id, imported, include_subscriptions=False)
             if imported else []
@@ -499,7 +699,10 @@ class ReceiptImportTool(Tool):
             + (f"，跳过 {skipped} 笔重复记录" if skipped else "")
             + f"（识别来源：{cache.get('backend_label', cache.get('backend', ''))}）。",
             "  说明：导入的是账单明细补录，不会重复扣减账户余额。",
+            "  数据范围：已切换为仅使用你上传的真实流水，后续账单分析不会混入模拟数据。",
         ]
+        if batch is not None:
+            lines.append(f"  上传批次：{batch.batch_id}（可在「上传记录」中查看或删除）")
         if anomalies:
             rows = [[a.date, a.merchant, format_money(a.amount), a.reason[:32]] for a in anomalies]
             lines.append("")
@@ -513,7 +716,8 @@ class ReceiptImportTool(Tool):
             "\n".join(lines),
             data={"imported": len(imported), "skipped": skipped,
                   "anomalies": len(anomalies),
-                  "txn_ids": [t.txn_id for t in imported]},
+                  "txn_ids": [t.txn_id for t in imported],
+                  "batch_id": batch.batch_id if batch is not None else ""},
             summary=f"已导入 {len(imported)} 笔账单流水，发现 {len(anomalies)} 笔异常",
         )
 

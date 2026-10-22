@@ -71,6 +71,7 @@ INTENT_KEYWORDS = {
     "bill.report": ["账单报告", "月报", "年报", "年度账单"],
     "bill.search": ["花了多少", "消费了多少", "花在"],
     "bill.scan_receipt": ["截图", "小票", "收据", "识别账"],
+    "bill.supported_formats": ["上传哪些格式", "支持哪些格式", "账单格式", "文件格式", "能识别哪些文件"],
     "wealth.risk_assess": ["风险测评", "风险承受", "测评"],
     "wealth.recommend": ["推荐", "理财产品", "配置", "买什么"],
     "wealth.subscribe": ["申购", "买入", "认购"],
@@ -107,17 +108,19 @@ class RuleIntentParser:
     """
 
     RULES: List[str] = [
+        "bill.supported_formats",
         "help",
         "agent.about",
         "crossscene.daily_brief",
+        "bill.scan_receipt",
         "transfer.split_aa",
         "transfer.list_scheduled",
         "transfer.schedule",
         "transfer.send",
         "bill.anomaly",
         "bill.report",
-        "bill.scan_receipt",
         "bill.search",
+        "account.balance",
         "bill.analyze",
         "wealth.risk_assess",
         "wealth.redeem",
@@ -139,7 +142,6 @@ class RuleIntentParser:
         "crossscene.birthday_plan",
         "goal.list",
         "goal.create",
-        "account.balance",
         "profile.show",
     ]
 
@@ -178,7 +180,17 @@ class RuleIntentParser:
         return any(w in text for w in words)
 
     def _match_help(self, t: str) -> bool:
+        if self._match_bill_supported_formats(t):
+            return False
         return self._has(t, "你能做什么", "你能干嘛", "有什么功能", "帮助", "help", "怎么用", "支持哪些")
+
+    def _match_bill_supported_formats(self, t: str) -> bool:
+        return self._has(
+            t,
+            "上传哪些格式", "支持哪些格式", "可以上传什么格式", "可以上传哪些文件",
+            "账单格式", "文件格式", "上传格式", "支持什么格式", "能识别哪些文件", "支持什么文件",
+            "excel支持什么", "xlsx支持",
+        )
 
     def _match_agent_about(self, t: str) -> bool:
         """关于 Agent 自身的问题（用什么模型、怎么实现的）。"""
@@ -193,7 +205,11 @@ class RuleIntentParser:
         return self._has(t, "简报", "今天有什么要注意", "最近要注意什么", "有什么要提醒我", "今天有什么要")
 
     def _match_transfer_split_aa(self, t: str) -> bool:
-        return self._has(t, "AA", "aa", "分摊", "平摊", "均摊", "各付", "拆分", "每人", "一起付")
+        # Keep "aa" as a standalone token so random UUID/path fragments do not
+        # hijack a bill-image upload.
+        if re.search(r"(?<![a-z0-9])aa(?![a-z0-9])", t.lower()):
+            return True
+        return self._has(t, "分摊", "平摊", "均摊", "各付", "拆分", "每人", "一起付")
 
     def _match_transfer_list_scheduled(self, t: str) -> bool:
         return self._has(t, "定时转账", "预约任务", "待执行任务", "有哪些定时", "我的计划")
@@ -588,9 +604,14 @@ class RuleIntentParser:
 
     def _account(self, text: str) -> str:
         match = re.search(
-            r"(?:从|用)([^，,。；;\s]{1,16}?(?:卡|账户|活期|零钱|钱包))",
+            r"从([^，,。；;\s]{1,16}?(?:卡|账户|活期|零钱|钱包))",
             text,
         )
+        if match is None:
+            match = re.search(
+                r"用(活期账户|活期|储蓄卡|信用卡|借记卡|零钱|钱包)",
+                text,
+            )
         return match.group(1) if match else ""
 
     @staticmethod

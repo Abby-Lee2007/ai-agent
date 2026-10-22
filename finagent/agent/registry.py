@@ -14,6 +14,7 @@ from finagent.tools import (
     BillAnomalyTool,
     BillReportTool,
     BillSearchTool,
+    BillSupportedFormatsTool,
     CardApplyTool,
     CardBindTool,
     CardControlTool,
@@ -97,6 +98,7 @@ def build_default_registry() -> ToolRegistry:
             SplitBillTool(),
             ListScheduledTransferTool(),
             # 账单分析
+            BillSupportedFormatsTool(),
             BillAnalyzeTool(),
             BillAnomalyTool(),
             BillReportTool(),

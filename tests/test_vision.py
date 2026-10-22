@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+import zipfile
+from html import escape
 from pathlib import Path
 
 from tests.support import make_agent
@@ -9,6 +12,7 @@ from finagent.vision.receipt_parser import (
     guess_category,
     looks_like_summary_page,
     normalize_line,
+    parse_bill_summary,
     parse_receipt_text,
 )
 from finagent.vision.receipt_reader import ReceiptReader
@@ -34,6 +38,104 @@ COLUMN_OCR_TEXT = """
 携程旅行网 2480.00
 星巴克咖啡 38.00
 """
+
+SUMMARY_OCR_TEXT = """
+微信支付月账单
+2026年10月
+本月支出 ¥7,283.34
+支出构成
+餐饮美食 1,200.00 16.5%
+交通出行 800.00 11.0%
+购物消费 2,400.00 33.0%
+生活缴费 1,200.00 16.5%
+娱乐 1,683.34 23.0%
+每月支出对比
+2026年7月 5,800.00
+2026年8月 6,200.00
+2026年9月 6,800.00
+2026年10月 7,283.34
+"""
+
+NOISY_SUMMARY_OCR_TEXT = """
+微 信 支 付 月 账 单
+2026 年 10 月
+本 月 支 出 ¥ 7 ， 283 34
+支 出 构 成
+餐 饮 美 食 1 ， 200 00 16 5 ％
+交 通 出 行 800 00 11 0 ％
+购 物 消 费 2 ， 400 00 33 0 ％
+生 活 缴 费 1 ， 200 00 16 5 ％
+娱 乐 1 ， 683 34 23 0 ％
+每 月 支 出 对 比
+2026 年 7 月 5 ， 800 00
+2026 年 8 月 6 ， 200 00
+2026 年 9 月 6 ， 800 00
+2026 年 10 月 7 ， 283 34
+"""
+
+
+def _xlsx_cell(ref: str, value: object) -> str:
+    if value is None or value == "":
+        return ""
+    if isinstance(value, (int, float)):
+        return f'<c r="{ref}"><v>{value}</v></c>'
+    return (
+        f'<c r="{ref}" t="inlineStr"><is><t>{escape(str(value))}</t></is></c>'
+    )
+
+
+def make_xlsx(path: Path, rows: list[list[object]]) -> None:
+    """Create a tiny XLSX using only Python's standard library."""
+    sheet_rows = []
+    for row_number, row in enumerate(rows, start=1):
+        cells = "".join(
+            _xlsx_cell(f"{chr(65 + column_index)}{row_number}", value)
+            for column_index, value in enumerate(row)
+        )
+        sheet_rows.append(f'<row r="{row_number}">{cells}</row>')
+    sheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<sheetData>{"".join(sheet_rows)}</sheetData></worksheet>'
+    )
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    )
+    workbook_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        'Target="worksheets/sheet1.xml"/>'
+        '</Relationships>'
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '</Types>'
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr(
+            "_rels/.rels",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+            'Target="xl/workbook.xml"/></Relationships>',
+        )
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
 
 
 class TestReceiptTextCleanup(unittest.TestCase):
@@ -103,6 +205,88 @@ class TestReceiptParsing(unittest.TestCase):
         self.assertEqual(guess_category("iCloud+ 云存储"), "订阅服务")
         self.assertEqual(guess_category("不认识的店"), "其他")
 
+    def test_parse_summary_breakdown_and_monthly_trend(self):
+        summary = parse_bill_summary(SUMMARY_OCR_TEXT)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.period, "2026-10")
+        self.assertAlmostEqual(summary.total_expense, 7283.34, places=2)
+        self.assertEqual(len(summary.categories), 5)
+        categories = {item.category: item.amount for item in summary.categories}
+        self.assertAlmostEqual(categories["餐饮"], 1200.0, places=2)
+        self.assertAlmostEqual(categories["购物"], 2400.0, places=2)
+        self.assertAlmostEqual(categories["娱乐"], 1683.34, places=2)
+        self.assertEqual(len(summary.months), 4)
+        self.assertEqual(summary.months[-1].month, "2026-10")
+
+    def test_parse_noisy_summary_amounts_and_percentages(self):
+        summary = parse_bill_summary(NOISY_SUMMARY_OCR_TEXT)
+
+        self.assertIsNotNone(summary)
+        self.assertAlmostEqual(summary.total_expense, 7283.34, places=2)
+        categories = {item.category: item.amount for item in summary.categories}
+        self.assertAlmostEqual(categories["餐饮"], 1200.0, places=2)
+        self.assertAlmostEqual(categories["交通"], 800.0, places=2)
+        self.assertAlmostEqual(summary.months[-1].amount, 7283.34, places=2)
+
+    def test_read_excel_transaction_sheet(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "bill.xlsx"
+            make_xlsx(path, [
+                ["日期", "商户", "金额", "类别"],
+                ["2026-10-12", "星巴克咖啡", -38.0, "餐饮"],
+                ["2026-10-13", "滴滴出行", -42.5, "交通"],
+            ])
+            result = ReceiptReader().read(str(path))
+
+        self.assertTrue(result.ok, msg=result.message)
+        self.assertEqual(result.backend, "excel_file")
+        self.assertEqual(len(result.records), 2)
+        self.assertEqual(result.records[0].merchant, "星巴克咖啡")
+        self.assertAlmostEqual(result.total_expense, 80.5, places=2)
+
+    def test_read_excel_summary_sheet(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "summary.xlsx"
+            make_xlsx(path, [
+                ["月份", "支出"],
+                ["2026-07", 5800],
+                ["2026-08", 6200],
+                ["2026-09", 6800],
+                ["2026-10", 7283.34],
+                ["类别", "金额", "占比"],
+                ["餐饮", 1200, "16.5%"],
+                ["购物", 2400, "33.0%"],
+            ])
+            result = ReceiptReader().read(str(path))
+
+        self.assertTrue(result.ok, msg=result.message)
+        self.assertEqual(result.backend, "excel_file")
+        self.assertIsNotNone(result.summary)
+        self.assertAlmostEqual(result.summary.total_expense, 7283.34, places=2)
+        self.assertEqual(len(result.summary.months), 4)
+
+    def test_read_wechat_export_with_header_after_notes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "wechat.xlsx"
+            rows = [[f"微信支付账单说明 {index}"] for index in range(15)]
+            rows.extend([
+                ["交易时间", "交易类型", "交易对方", "商品", "收/支", "金额(元)", "支付方式", "当前状态"],
+                [46317.58802083333, "商户消费", "深圳鸿济生态农业科技有限公司", "先购后付",
+                 "支出", "5.5", "零钱", "支付成功"],
+                [46317.48384259259, "商户消费", "深圳大学", "听山二楼烤盘饭",
+                 "收入", "18.49", "零钱", "支付成功"],
+            ])
+            make_xlsx(path, rows)
+            result = ReceiptReader().read(str(path))
+
+        self.assertTrue(result.ok, msg=result.message)
+        self.assertEqual(result.backend, "excel_file")
+        self.assertEqual(len(result.records), 2)
+        self.assertEqual(result.records[0].date, "2026-10-22")
+        self.assertAlmostEqual(result.records[0].amount, -5.5, places=2)
+        self.assertAlmostEqual(result.records[1].amount, 18.49, places=2)
+
 
 class TestReceiptReader(unittest.TestCase):
     def setUp(self):
@@ -118,6 +302,59 @@ class TestReceiptReader(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.backend, "text_file")
         self.assertEqual(len(result.records), 6)
+
+    def test_read_gbk_csv_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "bill_gbk.csv"
+            path.write_bytes(
+                (
+                    "日期,商户,金额,类别\n"
+                    "2026-10-12,星巴克咖啡,-38.00,餐饮\n"
+                    "2026-10-13,滴滴出行,-42.50,交通\n"
+                ).encode("gb18030")
+            )
+            result = self.reader.read(str(path))
+
+        self.assertTrue(result.ok, msg=result.message)
+        self.assertEqual(result.backend, "csv_file")
+        self.assertEqual(len(result.records), 2)
+        self.assertEqual(result.records[0].merchant, "星巴克咖啡")
+        self.assertAlmostEqual(result.records[0].amount, -38.0, places=2)
+
+    def test_read_wechat_csv_with_trailing_order_numbers(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "wechat.csv"
+            rows = [
+                "微信支付账单明细",
+                *[f"说明 {index}" for index in range(15)],
+                "交易时间,交易类型,交易对方,商品,收/支,金额(元),支付方式,当前状态,交易单号,商户单号",
+                "2026-10-20 19:52,商户消费,深圳市及时雨农副产品贸易有限公司,先购后付,支出,5.50,零钱,支付成功,4200003221202610227203860857,d8RgepBe3",
+                "2026-10-19 18:18,商户消费,星巴克咖啡,咖啡,支出,38.00,零钱,支付成功,4200003142202610202886175202,069b733156d93c8f",
+            ]
+            path.write_bytes(("\n".join(rows) + "\n").encode("gb18030"))
+            result = ReceiptReader().read(str(path))
+
+        self.assertTrue(result.ok, msg=result.message)
+        self.assertEqual(result.backend, "csv_file")
+        self.assertEqual(len(result.records), 2)
+        self.assertEqual(result.records[0].merchant, "深圳市及时雨农副产品贸易有限公司")
+        self.assertEqual(result.records[0].time, "19:52")
+        self.assertAlmostEqual(result.records[0].amount, -5.50, places=2)
+
+    def test_question_mark_merchant_uses_description_or_transfer_label(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "alipay.csv"
+            path.write_text(
+                "交易时间,交易类型,交易对方,商品说明,收/支,金额\n"
+                "2026-10-20 19:52,转账,？？,给王强转账,支出,100.00\n"
+                "2026-10-19 18:18,商户消费,？？,星巴克咖啡,支出,38.00\n",
+                encoding="utf-8",
+            )
+            result = ReceiptReader().read(str(path))
+
+        self.assertTrue(result.ok, msg=result.message)
+        self.assertEqual(result.records[0].merchant, "转账")
+        self.assertEqual(result.records[1].merchant, "星巴克咖啡")
 
     @unittest.skipUnless(SAMPLE_IMAGE.exists(), "缺少示例账单图片")
     def test_read_image_with_windows_ocr(self):
@@ -149,6 +386,16 @@ class TestReceiptToolFlow(unittest.TestCase):
         self.assertEqual(reply.kind, "question")
         self.assertEqual(self.agent.session.pending.missing, ["image"])
 
+    def test_format_question_returns_capabilities_not_analysis(self):
+        reply = self.agent.handle("可以上传哪些格式的账单")
+
+        self.assertEqual(reply.intent, "bill.supported_formats")
+        self.assertEqual(reply.kind, "executed")
+        self.assertIn("PNG", reply.text)
+        self.assertIn("XLSX", reply.text)
+        self.assertIn("TXT", reply.text)
+        self.assertNotIn("本月账单概览", reply.text)
+
     def test_scan_preview_then_import(self):
         reply = self.agent.handle(f"识别这张账单截图 {SAMPLE_TEXT}")
         self.assertEqual(reply.intent, "bill.scan_receipt")
@@ -176,6 +423,24 @@ class TestReceiptToolFlow(unittest.TestCase):
         self.agent.handle("确认")
         self.assertEqual(account.balance, before)
 
+    def test_uploaded_bill_switches_analysis_to_uploaded_data_only(self):
+        self.agent.handle(f"识别这张账单截图 {SAMPLE_TEXT}")
+        imported = self.agent.handle("确认")
+        self.assertEqual(imported.data["imported"], 6)
+
+        reply = self.agent.handle("分析我这个月的账单")
+
+        self.assertEqual(reply.intent, "bill.analyze")
+        self.assertEqual(reply.data["data_scope"], "uploaded")
+        self.assertEqual(reply.data["stats"]["count"], 6)
+        self.assertIn("仅用户上传流水", reply.text)
+        uploaded = [
+            txn for txn in self.agent.store.transactions_of("u_001")
+            if "receipt_import" in txn.tags
+        ]
+        self.assertTrue(uploaded)
+        self.assertTrue(all(not txn.is_demo for txn in uploaded))
+
     def test_reimport_is_deduplicated(self):
         self.agent.handle(f"识别这张账单截图 {SAMPLE_TEXT}")
         self.agent.handle("确认")
@@ -190,6 +455,51 @@ class TestReceiptToolFlow(unittest.TestCase):
         reply = self.agent.handle("取消")
         self.assertIn("取消", reply.text)
         self.assertEqual(len(self.agent.store.transactions_of("u_001")), before)
+
+    def test_summary_upload_is_analyzed_without_import_confirmation(self):
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".txt",
+            encoding="utf-8",
+            delete=False,
+        ) as handle:
+            handle.write(SUMMARY_OCR_TEXT)
+            path = handle.name
+        try:
+            reply = self.agent.handle(f"识别这张账单截图 {path}")
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+        self.assertEqual(reply.intent, "bill.scan_receipt")
+        self.assertEqual(reply.kind, "executed")
+        self.assertEqual(reply.data["mode"], "summary")
+        self.assertIn("消费构成", reply.text)
+        self.assertIn("过去月份对比", reply.text)
+        self.assertIn("本月支出", reply.text)
+        self.assertNotIn("导入流水", reply.text)
+        self.assertIsNone(self.agent.session.pending)
+
+    def test_excel_summary_upload_is_analyzed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "summary.xlsx"
+            make_xlsx(path, [
+                ["月份", "支出"],
+                ["2026-07", 5800],
+                ["2026-08", 6200],
+                ["2026-09", 6800],
+                ["2026-10", 7283.34],
+                ["类别", "金额", "占比"],
+                ["餐饮", 1200, "16.5%"],
+                ["购物", 2400, "33.0%"],
+            ])
+            reply = self.agent.handle(f"识别这张账单截图 {path}")
+
+        self.assertEqual(reply.intent, "bill.scan_receipt")
+        self.assertEqual(reply.kind, "executed")
+        self.assertEqual(reply.data["mode"], "summary")
+        self.assertIn("消费构成", reply.text)
+        self.assertIn("过去月份对比", reply.text)
+        self.assertIsNone(self.agent.session.pending)
 
     def test_import_without_scan(self):
         from finagent.agent.planner import Plan, PlanStep

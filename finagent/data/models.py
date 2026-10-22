@@ -101,6 +101,7 @@ class Payee:
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     is_live: bool = False
     is_demo: bool = True
+    profile_person_id: str = ""
 
 
 @dataclass
@@ -122,6 +123,7 @@ class Transaction:
     is_subscription: bool = False
     subscription_id: str = ""
     tags: List[str] = field(default_factory=list)
+    import_batch_id: str = ""
     source: str = "agent:simulation"
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     is_live: bool = False
@@ -257,6 +259,24 @@ class MerchantOffer:
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     is_live: bool = False
     is_demo: bool = True
+
+
+@dataclass
+class UploadBatch:
+    """A user-uploaded bill import batch."""
+
+    batch_id: str
+    user_id: str
+    filename: str
+    imported_at: str
+    record_count: int
+    total_expense: float
+    backend: str = ""
+    transaction_ids: List[str] = field(default_factory=list)
+    source: str = "upload:user"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = False
 
 
 # --------------------------------------------------------------------------

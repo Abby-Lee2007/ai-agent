@@ -92,6 +92,11 @@ INTENTS: Dict[str, IntentSpec] = {
         [], ["我有哪些定时转账", "看看我的预约任务"],
     ),
     # ---------------- 账单分析 ----------------
+    "bill.supported_formats": IntentSpec(
+        "bill.supported_formats", "账单分析",
+        "查看账单图片、文本和 Excel 支持的上传格式及分析能力",
+        [], ["可以上传哪些格式的账单", "Excel 支持什么格式", "能识别哪些文件"],
+    ),
     "bill.analyze": IntentSpec(
         "bill.analyze", "账单分析", "消费分类统计与收支概览",
         [L("period", "统计期间，如 本月/上月/今年/最近7天"), L("category", "只看某个类别")],

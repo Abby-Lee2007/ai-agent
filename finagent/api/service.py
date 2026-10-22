@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 
-from finagent.agent.core import BankingAgent
+from finagent.agent.core import AgentReply, BankingAgent
+from finagent.data.models import Card
 from finagent.data.store import DataStore
 
 
@@ -83,11 +84,13 @@ class AgentSessionService:
             cache_key = (session_id, request_id) if request_id else None
             if cache_key and cache_key in self._idempotency:
                 cached = dict(self._idempotency[cache_key])
-                cached["replayed"] = True
-                return cached
+                if self._is_replayable(cached):
+                    cached["replayed"] = True
+                    return cached
+                self._idempotency.pop(cache_key, None)
             if cache_key and self.repository is not None:
                 cached = self.repository.load_idempotency(session_id, request_id)
-                if cached is not None:
+                if cached is not None and self._is_replayable(cached):
                     cached = dict(cached)
                     cached["replayed"] = True
                     self._idempotency[cache_key] = cached
@@ -113,6 +116,12 @@ class AgentSessionService:
                         record.created_at,
                     )
             return payload
+
+    @staticmethod
+    def _is_replayable(payload: Dict[str, Any]) -> bool:
+        """Only successful responses are safe to replay forever."""
+        reply = payload.get("reply") or {}
+        return bool(reply.get("ok", True)) and reply.get("kind") != "error"
 
     def handle_channel_message(
         self,
@@ -143,6 +152,354 @@ class AgentSessionService:
             payload["channel"] = channel
             return payload
 
+    def list_uploads(self, session_id: str) -> Dict[str, Any]:
+        """List imported bill batches for the active browser session."""
+        with self._lock:
+            record = self._get_or_load(session_id)
+            store = record.agent.store
+            batches = [asdict(batch) for batch in store.upload_batches_of(record.user_id)]
+            legacy = [
+                txn for txn in store.transactions_of(record.user_id)
+                if "receipt_import" in txn.tags and not txn.import_batch_id
+            ]
+            if legacy:
+                batches.append({
+                    "batch_id": "legacy-imports",
+                    "user_id": record.user_id,
+                    "filename": "历史上的上传流水",
+                    "imported_at": min(txn.timestamp for txn in legacy),
+                    "record_count": len(legacy),
+                    "total_expense": round(
+                        sum(abs(txn.amount) for txn in legacy if txn.amount < 0), 2
+                    ),
+                    "backend": "",
+                    "transaction_ids": [txn.txn_id for txn in legacy],
+                    "source": "upload:user",
+                    "is_demo": False,
+                    "legacy": True,
+                })
+            return {"session_id": session_id, "uploads": batches}
+
+    def delete_upload(self, session_id: str, batch_id: str) -> Dict[str, Any]:
+        """Delete one uploaded batch and persist the resulting session snapshot."""
+        with self._lock:
+            record = self._get_or_load(session_id)
+            store = record.agent.store
+            if batch_id == "legacy-imports":
+                result = store.delete_legacy_uploads(record.user_id)
+            else:
+                result = store.delete_upload_batch(record.user_id, batch_id)
+            self._persist_session(record)
+            return result
+
+    def get_profile_settings(self, session_id: str) -> Dict[str, Any]:
+        """Return editable demo profile, surprise preferences, and cards."""
+        with self._lock:
+            record = self._get_or_load(session_id)
+            store = record.agent.store
+            user = store.get_user(record.user_id)
+            if user is None:
+                raise ValueError(f"用户不存在：{record.user_id}")
+            prefs = user.preferences or {}
+            return {
+                "session_id": session_id,
+                "user": {
+                    "user_id": user.user_id,
+                    "name": user.name,
+                    "phone": user.phone,
+                    "city": user.city,
+                    "age": user.age,
+                    "occupation": user.occupation,
+                    "monthly_income": user.monthly_income,
+                    "birthday": user.birthday,
+                    "risk_profile": user.risk_profile,
+                    "verified": user.verified,
+                    "source": user.source,
+                    "updated_at": user.updated_at,
+                    "is_demo": user.is_demo,
+                },
+                "preferences": {
+                    "spouse_name": prefs.get("spouse", ""),
+                    "spouse_birthday": prefs.get("spouse_birthday", ""),
+                    "anniversary": prefs.get("anniversary", ""),
+                    "care_people": self._care_people_payload(
+                        prefs.get("care_people") or []
+                    ),
+                    "favorite_gift": list(prefs.get("favorite_gift") or []),
+                    "avoid": list(prefs.get("avoid") or []),
+                    "notify_channel": prefs.get("notify_channel", "APP"),
+                },
+                "cards": [asdict(card) for card in store.cards_of(record.user_id)],
+            }
+
+    def update_profile_settings(self, session_id: str, values: Dict[str, Any]) -> Dict[str, Any]:
+        """Update profile and birthday surprise fields for the current session."""
+        with self._lock:
+            record = self._get_or_load(session_id)
+            store = record.agent.store
+            user = store.get_user(record.user_id)
+            if user is None:
+                raise ValueError(f"用户不存在：{record.user_id}")
+            if values.get("name") is not None:
+                name = str(values["name"]).strip()
+                if not name:
+                    raise ValueError("姓名不能为空")
+                user.name = name[:40]
+            if values.get("phone") is not None:
+                phone = "".join(ch for ch in str(values["phone"]) if ch.isdigit())
+                if len(phone) < 7:
+                    raise ValueError("手机号格式不正确")
+                user.phone = phone[:20]
+            if values.get("city") is not None:
+                user.city = str(values["city"]).strip()[:30]
+            if values.get("occupation") is not None:
+                user.occupation = str(values["occupation"]).strip()[:60]
+            if values.get("age") is not None:
+                try:
+                    age = int(values["age"])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("年龄必须是整数") from exc
+                if not 18 <= age <= 100:
+                    raise ValueError("年龄必须在 18-100 之间")
+                user.age = age
+            if values.get("monthly_income") is not None:
+                try:
+                    income = float(values["monthly_income"])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("月收入必须是数字") from exc
+                if income < 0:
+                    raise ValueError("月收入不能为负数")
+                user.monthly_income = round(income, 2)
+            if values.get("birthday") is not None:
+                birthday = self._validate_date(values["birthday"], "生日")
+                user.birthday = birthday
+
+            prefs = dict(user.preferences or {})
+            if values.get("spouse_name") is not None:
+                prefs["spouse"] = str(values["spouse_name"]).strip()[:40]
+            if values.get("spouse_birthday") is not None:
+                prefs["spouse_birthday"] = self._validate_date(
+                    values["spouse_birthday"], "爱人生日"
+                )
+            if values.get("anniversary") is not None:
+                prefs["anniversary"] = self._validate_date(
+                    values["anniversary"], "纪念日"
+                )
+            if values.get("care_people") is not None:
+                prefs["care_people"] = self._normalize_care_people(values["care_people"])
+            if values.get("favorite_gift") is not None:
+                prefs["favorite_gift"] = self._list_values(values["favorite_gift"])
+            if values.get("avoid") is not None:
+                prefs["avoid"] = self._list_values(values["avoid"])
+            if values.get("notify_channel") is not None:
+                prefs["notify_channel"] = str(values["notify_channel"]).strip()[:20]
+            if "care_people" not in values and (
+                values.get("spouse_name") is not None
+                or values.get("spouse_birthday") is not None
+            ):
+                people = list(prefs.get("care_people") or [])
+                spouse = next(
+                    (item for item in people if item.get("relation") in {"配偶", "老婆", "妻子", "爱人"}),
+                    None,
+                )
+                if spouse is None:
+                    spouse = {
+                        "person_id": f"CARE{len(people) + 1:04d}",
+                        "name": prefs.get("spouse", "爱人"),
+                        "relation": "配偶",
+                        "birthday": prefs.get("spouse_birthday", ""),
+                        "phone": "",
+                        "wechat": "",
+                        "alipay": "",
+                        "bank_card": "",
+                        "bank_card_masked": "",
+                        "favorite_gift": [],
+                        "avoid": [],
+                    }
+                    people.append(spouse)
+                else:
+                    spouse["name"] = prefs.get("spouse", spouse.get("name", "爱人"))
+                    spouse["birthday"] = prefs.get("spouse_birthday", spouse.get("birthday", ""))
+                prefs["care_people"] = people
+            user.preferences = prefs
+            user.source = "user:profile"
+            user.updated_at = store.clock.iso()
+            store.log("profile.updated", user_id=user.user_id)
+            self._persist_session(record)
+            return self.get_profile_settings(session_id)
+
+    def create_card_settings(self, session_id: str, values: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            record = self._get_or_load(session_id)
+            store = record.agent.store
+            card = Card(
+                card_id=store.next_id("cards"),
+                user_id=record.user_id,
+                kind=str(values.get("kind") or "virtual"),
+                brand=str(values.get("brand") or "演示银行"),
+                tail=self._card_tail(values.get("tail")),
+                status=str(values.get("status") or "active"),
+                credit_limit=self._positive_number(values.get("credit_limit"), 0.0),
+                used=self._positive_number(values.get("used"), 0.0),
+                daily_limit=self._positive_number(values.get("daily_limit"), 20000.0),
+                single_limit=self._positive_number(values.get("single_limit"), 5000.0),
+                online_enabled=bool(values.get("online_enabled", True)),
+                overseas_enabled=bool(values.get("overseas_enabled", False)),
+                contactless_enabled=bool(values.get("contactless_enabled", True)),
+                note=str(values.get("note") or "用户添加卡片")[:100],
+                source="user:profile",
+                is_demo=False,
+            )
+            store.cards[card.card_id] = card
+            store.touch(card)
+            store.log("card.profile_created", card_id=card.card_id)
+            self._persist_session(record)
+            return asdict(card)
+
+    def update_card_settings(
+        self,
+        session_id: str,
+        card_id: str,
+        values: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        with self._lock:
+            record = self._get_or_load(session_id)
+            store = record.agent.store
+            card = store.cards.get(card_id)
+            if card is None or card.user_id != record.user_id:
+                raise ValueError(f"卡片不存在：{card_id}")
+            for field in ("kind", "brand", "status", "note"):
+                if values.get(field) is not None:
+                    setattr(card, field, str(values[field]).strip()[:100])
+            if values.get("tail") is not None:
+                card.tail = self._card_tail(values["tail"])
+            for field, default in (
+                ("credit_limit", card.credit_limit),
+                ("used", card.used),
+                ("daily_limit", card.daily_limit),
+                ("single_limit", card.single_limit),
+            ):
+                if values.get(field) is not None:
+                    setattr(card, field, self._positive_number(values[field], default))
+            for field in ("online_enabled", "overseas_enabled", "contactless_enabled"):
+                if values.get(field) is not None:
+                    setattr(card, field, bool(values[field]))
+            card.source = "user:profile"
+            card.is_demo = False
+            store.touch(card)
+            store.log("card.profile_updated", card_id=card.card_id)
+            self._persist_session(record)
+            return asdict(card)
+
+    def delete_card_settings(self, session_id: str, card_id: str) -> Dict[str, Any]:
+        """Delete a demo card without changing account balances."""
+        with self._lock:
+            record = self._get_or_load(session_id)
+            store = record.agent.store
+            card = store.cards.get(card_id)
+            if card is None or card.user_id != record.user_id:
+                raise ValueError(f"卡片不存在：{card_id}")
+            del store.cards[card_id]
+            store.log("card.profile_deleted", card_id=card_id)
+            self._persist_session(record)
+            return {
+                "deleted_card_id": card_id,
+                "remaining_cards": len(store.cards_of(record.user_id)),
+            }
+
+    @staticmethod
+    def _validate_date(value: Any, label: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        try:
+            return datetime.fromisoformat(text[:10]).date().isoformat()
+        except ValueError as exc:
+            raise ValueError(f"{label}格式应为 YYYY-MM-DD") from exc
+
+    @staticmethod
+    def _list_values(value: Any) -> list[str]:
+        if isinstance(value, list):
+            parts = value
+        else:
+            text = str(value or "").replace("，", ",").replace("、", ",")
+            parts = text.split(",")
+        return [str(item).strip()[:40] for item in parts if str(item).strip()]
+
+    @staticmethod
+    def _care_people_payload(value: Any) -> list[dict[str, Any]]:
+        people = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            person = dict(item)
+            for field in ("phone", "wechat", "alipay", "bank_card"):
+                person.setdefault(field, "")
+            bank_card = "".join(ch for ch in str(person.get("bank_card") or "") if ch.isdigit())
+            person["bank_card_masked"] = (
+                f"**** **** **** {bank_card[-4:]}" if bank_card else ""
+            )
+            people.append(person)
+        return people
+
+    def _normalize_care_people(self, value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            raise ValueError("关心的人必须是列表")
+        from finagent.tools.card_tools import luhn_ok
+
+        people = []
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            phone = "".join(ch for ch in str(item.get("phone") or "") if ch.isdigit())
+            if phone and (len(phone) != 11 or not phone.startswith("1")):
+                raise ValueError(f"{name}的手机号格式不正确")
+            bank_card = "".join(ch for ch in str(item.get("bank_card") or "") if ch.isdigit())
+            if bank_card and (
+                not 12 <= len(bank_card) <= 19
+                or not luhn_ok(bank_card)
+            ):
+                raise ValueError(f"{name}的银行卡号格式不正确")
+            people.append({
+                "person_id": str(item.get("person_id") or f"CARE{index + 1:04d}")[:40],
+                "name": name[:40],
+                "relation": str(item.get("relation") or "关心的人").strip()[:20],
+                "birthday": self._validate_date(item.get("birthday"), f"{name}的生日"),
+                "anniversary": self._validate_date(item.get("anniversary"), f"{name}的纪念日"),
+                "phone": phone,
+                "wechat": str(item.get("wechat") or "").strip()[:100],
+                "alipay": str(item.get("alipay") or "").strip()[:100],
+                "bank_card": bank_card,
+                "bank_card_masked": (
+                    f"**** **** **** {bank_card[-4:]}" if bank_card else ""
+                ),
+                "favorite_gift": self._list_values(item.get("favorite_gift")),
+                "avoid": self._list_values(item.get("avoid")),
+            })
+        return people
+
+    @staticmethod
+    def _positive_number(value: Any, default: float) -> float:
+        if value in (None, ""):
+            return round(float(default), 2)
+        try:
+            number = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("额度必须是数字") from exc
+        if number < 0:
+            raise ValueError("额度不能为负数")
+        return round(number, 2)
+
+    @staticmethod
+    def _card_tail(value: Any) -> str:
+        tail = str(value or "****").strip()[-4:]
+        if tail != "****" and not tail.isdigit():
+            raise ValueError("卡号后四位必须是数字")
+        return tail
+
     def _get_or_load(self, session_id: str) -> SessionRecord:
         record = self._sessions.get(session_id)
         if record is not None:
@@ -160,10 +517,26 @@ class AgentSessionService:
         agent.risk_inference_confirmed_at = str(
             data.get("risk_inference_confirmed_at") or ""
         )
+        agent.restore_paused_questionnaire(data.get("paused_questionnaire"))
         agent.session.history = list(data.get("history") or [])
         agent.session.transcript = list(data.get("transcript") or [])
         agent.session.turn = int(data.get("turn") or 0)
         agent.last_intent_name = str(data.get("last_intent_name") or "")
+        last_reply = data.get("last_reply")
+        if isinstance(last_reply, dict):
+            agent.last_reply = AgentReply(**last_reply)
+        agent.restore_reply_history(data.get("reply_history"))
+        if (
+            not agent.reply_history
+            and agent.last_reply is not None
+            and agent.last_reply.intent != "explain.why"
+        ):
+            previous = ""
+            for item in reversed(agent.session.transcript):
+                previous = str(item.get("user") or "")
+                if previous:
+                    break
+            agent.remember_reply(previous, agent.last_reply)
         record = SessionRecord(
             session_id=session_id,
             user_id=str(data["user_id"]),
@@ -198,10 +571,13 @@ class AgentSessionService:
                 "risk_level": agent.risk_level,
                 "risk_assessed_at": agent.risk_assessed_at,
                 "risk_inference_confirmed_at": agent.risk_inference_confirmed_at,
+                "paused_questionnaire": agent.export_paused_questionnaire(),
                 "history": list(agent.session.history),
                 "transcript": list(agent.session.transcript),
                 "turn": agent.session.turn,
                 "last_intent_name": agent.last_intent_name,
+                "last_reply": asdict(agent.last_reply) if agent.last_reply is not None else None,
+                "reply_history": agent.export_reply_history(),
             },
         )
 

@@ -32,12 +32,12 @@ class BalanceTool(Tool):
         for acc in accounts:
             source = source_badge(acc.source, acc.is_live, acc.is_demo)
             if acc.kind == "credit":
-                rows.append([KIND_LABEL.get(acc.kind, acc.kind), f"尾号{acc.tail}",
+                rows.append([acc.name or KIND_LABEL.get(acc.kind, acc.kind), f"尾号{acc.tail}",
                              f"已用 {acc.balance:,.2f}", f"可用 {acc.available:,.2f}", source])
             else:
                 total += acc.balance
                 locked = f"（锁定 {acc.locked:,.2f}）" if acc.locked else ""
-                rows.append([KIND_LABEL.get(acc.kind, acc.kind), f"尾号{acc.tail}",
+                rows.append([acc.name or KIND_LABEL.get(acc.kind, acc.kind), f"尾号{acc.tail}",
                              f"{acc.balance:,.2f}{locked}", f"可用 {acc.available:,.2f}", source])
         lines = [
             f"总资产 {total:,.2f} 元：",
