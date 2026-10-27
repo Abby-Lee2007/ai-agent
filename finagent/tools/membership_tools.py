@@ -51,6 +51,7 @@ class MembershipPurchaseTool(Tool):
         ToolParam("items", "array", True, "会员购买项目列表"),
     ]
     examples = [
+        "充一个QQ音乐绿钻的年度会员",
         "帮我充腾讯视频3个月60元、Keep12个月199元",
         "给米游社充6个月98元，自动续费，续费价88元",
         "开通B站大会员12个月148元，不自动续费",

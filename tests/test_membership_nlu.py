@@ -5,6 +5,7 @@ import unittest
 
 from finagent.nlu.membership_parser import (
     apply_membership_options,
+    apply_membership_purchase_prices,
     apply_membership_renewal_prices,
     parse_membership_items,
     validate_membership_items,
@@ -29,6 +30,13 @@ class TestMembershipParser(unittest.TestCase):
             [(item.platform, item.term_months) for item in items],
             [("腾讯视频", 3), ("Keep", 12)],
         )
+
+    def test_parse_textual_annual_term_without_price(self):
+        items = parse_membership_items("充一个QQ音乐绿钻的年度会员")
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].platform, "QQ音乐绿钻")
+        self.assertEqual(items[0].term_months, 12)
+        self.assertEqual(items[0].purchase_price, 0.0)
 
     def test_parse_six_month_custom_platform_with_renewal_price(self):
         items = parse_membership_items(
@@ -98,6 +106,18 @@ class TestMembershipParser(unittest.TestCase):
         updated = apply_membership_renewal_prices(items, "1续费价25元，2续费价199元")
         self.assertEqual(updated[0]["renewal_price"], 25.0)
         self.assertEqual(updated[1]["renewal_price"], 199.0)
+
+    def test_apply_single_purchase_price(self):
+        items = [
+            {
+                "platform": "QQ音乐绿钻",
+                "term_months": 12,
+                "purchase_price": 0.0,
+                "auto_renew": None,
+            },
+        ]
+        updated = apply_membership_purchase_prices(items, "148元")
+        self.assertEqual(updated[0]["purchase_price"], 148.0)
 
     def test_validate_rejects_duplicate_platforms(self):
         errors = validate_membership_items([

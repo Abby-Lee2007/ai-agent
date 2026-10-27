@@ -7,10 +7,26 @@ from typing import Any, Dict, List, Optional
 
 
 TERM_RE = re.compile(r"(\d+)\s*(个月|月|年)")
+TERM_ALIAS_RE = re.compile(
+    r"(年度会员|年会员|年会|年卡|半年会员|半年卡|季度会员|季卡|月度会员|月会员|月卡)"
+)
 PRICE_RE = re.compile(r"(\d+(?:\.\d{1,2})?)\s*元")
 RENEWAL_RE = re.compile(
     r"续费价(?:格)?\s*(?:每次|每月|每年|每期)?\s*(\d+(?:\.\d{1,2})?)\s*元"
 )
+TERM_ALIAS_MONTHS = {
+    "月度会员": 1,
+    "月会员": 1,
+    "月卡": 1,
+    "季度会员": 3,
+    "季卡": 3,
+    "半年会员": 6,
+    "半年卡": 6,
+    "年度会员": 12,
+    "年会员": 12,
+    "年会": 12,
+    "年卡": 12,
+}
 
 
 @dataclass
@@ -36,9 +52,28 @@ def _clean_platform(segment: str, term_start: int) -> str:
     value = re.sub(r"^(?:帮我|给我|请|麻烦)?\s*", "", value)
     value = re.sub(r"^(?:充|购买|开通|充值|办理|办|买)\s*", "", value)
     value = re.sub(r"^(?:给|为)\s*", "", value)
+    value = re.sub(r"^(?:一个|一张|一份|一款)\s*", "", value)
     value = re.sub(r"\s*(?:充|购买|开通|充值|办理|办|买)$", "", value)
+    value = re.sub(r"的$", "", value)
     value = value.strip(" ，,。:：")
     return value
+
+
+def _find_term(segment: str) -> tuple[int, int, int] | None:
+    term_match = TERM_RE.search(segment)
+    if term_match is not None:
+        term = int(term_match.group(1))
+        if term_match.group(2) == "年":
+            term *= 12
+        return term, term_match.start(), term_match.end()
+    alias_match = TERM_ALIAS_RE.search(segment)
+    if alias_match is not None:
+        return (
+            TERM_ALIAS_MONTHS[alias_match.group(1)],
+            alias_match.start(),
+            alias_match.end(),
+        )
+    return None
 
 
 def parse_membership_items(text: str) -> List[MembershipDraftItem]:
@@ -52,13 +87,11 @@ def parse_membership_items(text: str) -> List[MembershipDraftItem]:
     segments = [part.strip() for part in boundary.split(text or "") if part.strip()]
     items: List[MembershipDraftItem] = []
     for segment in segments:
-        term_match = TERM_RE.search(segment)
-        if term_match is None:
+        term_info = _find_term(segment)
+        if term_info is None:
             continue
-        term = int(term_match.group(1))
-        if term_match.group(2) == "年":
-            term *= 12
-        platform = _clean_platform(segment, term_match.start())
+        term, term_start, term_end = term_info
+        platform = _clean_platform(segment, term_start)
         if not platform:
             continue
 
@@ -68,7 +101,7 @@ def parse_membership_items(text: str) -> List[MembershipDraftItem]:
         if renewal_match:
             price_spans.update(range(*renewal_match.span(1)))
         purchase_price = 0.0
-        for match in PRICE_RE.finditer(segment, term_match.end()):
+        for match in PRICE_RE.finditer(segment, term_end):
             if any(index in price_spans for index in range(*match.span(1))):
                 continue
             purchase_price = float(match.group(1))
@@ -139,6 +172,19 @@ def apply_membership_options(
             elif same_price:
                 item["renewal_price"] = float(item.get("purchase_price") or 0)
 
+    if len(updated) == 1 and not re.search(r"(?:^|\s)\d+\s*(?:自动|不自动)", text):
+        if "不自动续费" in text or "不续费" in text:
+            updated[0]["auto_renew"] = False
+            updated[0]["renewal_price"] = 0.0
+        elif "自动续费" in text:
+            updated[0]["auto_renew"] = True
+            if order_renewal:
+                updated[0]["renewal_price"] = float(order_renewal.group(1))
+            elif same_price:
+                updated[0]["renewal_price"] = float(
+                    updated[0].get("purchase_price") or 0
+                )
+
     pattern = re.compile(
         r"(?:^|[；;，,\s])(\d+)\s*"
         r"(自动续费|不自动续费|不续费|自动|不自动)"
@@ -160,6 +206,34 @@ def apply_membership_options(
             updated[index]["renewal_price"] = float(
                 updated[index].get("purchase_price") or 0
             )
+    return updated
+
+
+def apply_membership_purchase_prices(
+    items: List[Any],
+    text: str,
+) -> List[Dict[str, Any]]:
+    """Apply a single or numbered current-purchase price to draft items."""
+    updated = _copy_items(items)
+    numbered = re.findall(
+        r"(?:^|[；;，,\s])(\d+)\s*"
+        r"(?:[.、:：)]\s*|(?:本次价格|价格)\s*)"
+        r"(\d+(?:\.\d{1,2})?)\s*元",
+        text,
+    )
+    if numbered:
+        for number, price in numbered:
+            index = int(number) - 1
+            if 0 <= index < len(updated):
+                updated[index]["purchase_price"] = float(price)
+        return updated
+
+    prices = [
+        float(value)
+        for value in re.findall(r"(\d+(?:\.\d{1,2})?)\s*元", text)
+    ]
+    if len(updated) == 1 and prices:
+        updated[0]["purchase_price"] = prices[0]
     return updated
 
 

@@ -38,6 +38,7 @@ from finagent.nlu.intent_parser import normalize_synonyms
 from finagent.nlu.intent_schema import Intent
 from finagent.nlu.membership_parser import (
     apply_membership_options,
+    apply_membership_purchase_prices,
     apply_membership_renewal_prices,
     validate_membership_items,
 )
@@ -323,6 +324,12 @@ class BankingAgent:
                 return AgentReply("好的，本次会员充值已取消，没有扣款。")
             return self._handle_membership_options(pending, text)
 
+        if pending is not None and pending.kind == "membership_purchase_prices":
+            if classify_control(text) == "deny":
+                self.session.clear_pending()
+                return AgentReply("好的，本次会员充值已取消，没有扣款。")
+            return self._handle_membership_purchase_prices(pending, text)
+
         if pending is not None and pending.kind == "membership_renewal_prices":
             if classify_control(text) == "deny":
                 self.session.clear_pending()
@@ -418,7 +425,11 @@ class BankingAgent:
         return "\n".join(
             f"  {index}. {item.get('platform')} "
             f"{int(item.get('term_months') or 0)} 个月，"
-            f"本次 {float(item.get('purchase_price') or 0):,.2f} 元"
+            + (
+                f"本次 {float(item.get('purchase_price') or 0):,.2f} 元"
+                if float(item.get("purchase_price") or 0) > 0
+                else "本次价格待补充"
+            )
             for index, item in enumerate(items, start=1)
         )
 
@@ -438,11 +449,30 @@ class BankingAgent:
         invalid_core = [item for item in normalized if (
             not str(item.get("platform") or "").strip()
             or not 1 <= int(item.get("term_months") or 0) <= 36
-            or float(item.get("purchase_price") or 0) <= 0
         )]
         if invalid_core:
             return AgentReply(
-                "部分项目缺少平台、1–36 个月周期或本次价格，请重新发送完整订单。",
+                "部分项目缺少平台或 1–36 个月周期，请重新发送完整订单。",
+                intent="membership.purchase",
+                kind="question",
+                needs_input=True,
+            )
+
+        missing_prices = [
+            item for item in normalized
+            if float(item.get("purchase_price") or 0) <= 0
+        ]
+        if missing_prices:
+            self.session.pending = Pending(
+                kind="membership_purchase_prices",
+                intent="membership.purchase",
+                slots={"items": normalized},
+            )
+            return AgentReply(
+                "已识别以下会员项目，请补充本次购买价格：\n"
+                f"{self._membership_item_lines(normalized)}\n\n"
+                "可直接回复「148元」；多个项目可回复"
+                "「1本次价格148元，2本次价格299元」。",
                 intent="membership.purchase",
                 kind="question",
                 needs_input=True,
@@ -512,6 +542,18 @@ class BankingAgent:
 
     def _handle_membership_options(self, pending: Pending, text: str) -> AgentReply:
         items = apply_membership_options(
+            list(pending.slots.get("items") or []),
+            text,
+        )
+        pending.slots["items"] = items
+        return self._advance_membership_order(items)
+
+    def _handle_membership_purchase_prices(
+        self,
+        pending: Pending,
+        text: str,
+    ) -> AgentReply:
+        items = apply_membership_purchase_prices(
             list(pending.slots.get("items") or []),
             text,
         )

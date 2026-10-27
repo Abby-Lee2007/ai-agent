@@ -129,6 +129,24 @@ class TestActionDataConfirmation(unittest.TestCase):
         self.assertEqual(len(agent.store.transactions_of("u_001")), before + 1)
         self.assertEqual(len(agent.store.membership_orders_of("u_001")), 1)
 
+    def test_annual_membership_without_price_asks_for_price(self):
+        agent = make_agent()
+
+        reply = agent.handle("充一个QQ音乐绿钻的年度会员")
+        self.assertEqual(reply.intent, "membership.purchase")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("QQ音乐绿钻", reply.text)
+        self.assertIn("12 个月", reply.text)
+        self.assertIn("价格", reply.text)
+
+        reply = agent.handle("148元")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("自动续费", reply.text)
+
+        reply = agent.handle("不自动续费")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("148.00", reply.text)
+
     def test_change_cycle_review_makes_clear_it_starts_next_period(self):
         agent = make_agent()
 
