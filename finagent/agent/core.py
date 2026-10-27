@@ -59,7 +59,12 @@ from finagent.tools.card_tools import (
     validate_phone_number,
 )
 from finagent.tools.card_tools import verify_card_password
-from finagent.tools.transfer_tools import resolve_account, resolve_payment_card
+from finagent.tools.transfer_tools import (
+    channel_account,
+    resolve_account,
+    resolve_owned_card,
+    resolve_payment_card,
+)
 from finagent.utils import parse_amount, parse_date
 from finagent.vision.receipt_parser import looks_like_pasted_bill
 
@@ -104,6 +109,10 @@ class BankingAgent:
         "transfer.internal",
         "card.repay",
         "wealth.subscribe",
+    }
+    NON_INTERRUPTIBLE_CONFIRM_INTENTS = {
+        "card.freeze",
+        "card.report_lost",
     }
     REVISABLE_AMOUNT_SLOTS = {
         "transfer.send": "amount",
@@ -317,6 +326,9 @@ class BankingAgent:
             return self._explain_last_reply(text)
 
         pending = self.session.pending
+        confirmation_guard = self._confirmation_interruption_guard(pending, text)
+        if confirmation_guard is not None:
+            return confirmation_guard
         if pending is not None:
             interrupted = self._interrupt_with_capability_shortcut(text)
             if interrupted is not None:
@@ -424,6 +436,30 @@ class BankingAgent:
         if intent.is_unknown():
             return AgentReply(self._unknown_reply(text), kind="question", needs_input=True)
         return self._continue_with_intent(intent)
+
+    def _confirmation_interruption_guard(
+        self,
+        pending: Optional[Pending],
+        text: str,
+    ) -> Optional[AgentReply]:
+        """Prevent a high-risk confirmation from being silently discarded."""
+        if (
+            pending is None
+            or pending.kind not in {"confirm", "data_confirm"}
+            or pending.intent not in self.NON_INTERRUPTIBLE_CONFIRM_INTENTS
+            or classify_control(text) is not None
+        ):
+            return None
+        action = "冻结" if pending.intent == "card.freeze" else "挂失"
+        return AgentReply(
+            f"当前「{action}卡片」操作尚未执行。"
+            "为防止误操作，请先回复「确认」执行或回复「取消」放弃，"
+            "完成后再办理转账等其他业务。",
+            intent=pending.intent,
+            kind="confirm",
+            needs_input=True,
+            plan=pending.plan.tools() if pending.plan is not None else [],
+        )
 
     def _interrupt_with_capability_shortcut(self, text: str) -> Optional[AgentReply]:
         """Let a complete shortcut label replace any unfinished conversation state."""
@@ -1578,8 +1614,28 @@ class BankingAgent:
         else:
             interrupt = candidate_interrupt
         if interrupt is not None:
-            self.session.clear_pending()
-            return self._continue_with_intent(interrupt)
+            if interrupt.name == pending.intent:
+                for slot, value in interrupt.slots.items():
+                    if pending.slots.get(slot) in (None, ""):
+                        pending.slots[slot] = value
+            else:
+                self.session.clear_pending()
+                return self._continue_with_intent(interrupt)
+
+        # A slot answer can contain several fields at once, such as
+        # "微众银行尾号3011调整到10000". Capture all of them before filling
+        # the single field that was most recently requested. Card applications
+        # and gifts have sequential, type-specific forms and keep their own
+        # stricter fill logic below.
+        if pending.intent not in {
+            "card.apply",
+            "crossscene.birthday_plan",
+            "crossscene.gift_plan",
+        }:
+            announced = self.parser.rule._slots(pending.intent, text)
+            for slot, value in announced.items():
+                if pending.slots.get(slot) in (None, "") and self._is_valid_slot_value(slot, value):
+                    pending.slots[slot] = value
         self._fill_missing(pending, text, ctx)
         if pending.intent == "wealth.subscribe":
             preflight = self._preflight_wealth_subscribe(
@@ -1627,6 +1683,34 @@ class BankingAgent:
 
     def _validate_pending_slots(self, pending: Pending) -> Optional[AgentReply]:
         """Run deterministic checks before asking for more sensitive card data."""
+        if pending.intent in {"transfer.send", "transfer.schedule"}:
+            account = str(pending.slots.get("payee_account") or "").strip()
+            if account:
+                channel = str(pending.slots.get("channel") or "phone")
+                if channel == "phone":
+                    phone_check = validate_phone_number(account)
+                    if not phone_check["ok"]:
+                        pending.slots.pop("payee_account", None)
+                        pending.missing = ["payee_account"]
+                        return AgentReply(
+                            phone_check["message"] + "\n请重新输入 11 位数字人民币收款手机号。",
+                            intent=pending.intent,
+                            kind="question",
+                            needs_input=True,
+                        )
+                    pending.slots["payee_account"] = phone_check["phone"]
+                elif channel == "bank":
+                    digits = "".join(ch for ch in account if ch.isdigit())
+                    if not (12 <= len(digits) <= 19):
+                        pending.slots.pop("payee_account", None)
+                        pending.missing = ["payee_account"]
+                        return AgentReply(
+                            "银行卡收款账号格式不符，应为 12-19 位数字。请重新输入。",
+                            intent=pending.intent,
+                            kind="question",
+                            needs_input=True,
+                        )
+                    pending.slots["payee_account"] = digits
         if pending.intent not in {"card.bind", "card.apply"}:
             return None
         if pending.intent == "card.apply":
@@ -1789,7 +1873,7 @@ class BankingAgent:
 
     TEXT_SLOTS = {
         "payee", "person", "merchant", "card", "product", "name", "keyword",
-        "from_card", "to_card", "account", "preferences", "avoid",
+        "from_card", "to_card", "account", "payee_account", "preferences", "avoid",
     }
 
     @classmethod
@@ -1803,7 +1887,12 @@ class BankingAgent:
                 return False
             if slot in cls.TEXT_SLOTS:
                 if len(text) > 20:
-                    return False
+                    if slot != "payee_account":
+                        return False
+                if slot == "payee_account":
+                    return True
+                if slot == "card" and re.fullmatch(r"\d{4}", text):
+                    return True
                 if NOISE_VALUE_RE.search(text):
                     return False
                 if slot in {"payee", "person"} and text in GENERIC_PERSON_VALUES:
@@ -1815,6 +1904,20 @@ class BankingAgent:
             parts = [p.strip() for p in text.replace("，", "、").replace(",", "、").replace("和", "、").split("、")]
             names = [p for p in parts if p]
             return names if len(names) >= 2 else None
+        if slot == "payee_account":
+            phone = re.search(r"(?<!\d)(1[3-9]\d{9})(?!\d)", text)
+            if phone:
+                return phone.group(1)
+            cleaned = re.sub(
+                r"^(?:收款账号|收款手机号|手机号|微信号|支付宝账号|银行卡号|卡号)"
+                r"(?:是|为|[:：])?\s*",
+                "",
+                text.strip(),
+            ).strip(" ，,。；;")
+            digits = "".join(ch for ch in cleaned if ch.isdigit())
+            if 12 <= len(digits) <= 19 and re.fullmatch(r"[\d\s-]+", cleaned):
+                return digits
+            return cleaned[:50] or None
         if slot == "item":
             item = self.parser.rule._gift_item(text)
             if item:
@@ -1854,6 +1957,12 @@ class BankingAgent:
             if "每周" in text:
                 return "weekly"
             return "once"
+        if slot == "limit_type":
+            if any(word in text for word in ("单笔", "每笔")):
+                return "single"
+            if any(word in text for word in ("日限额", "每日", "一天", "单日")):
+                return "daily"
+            return None
         if slot == "kind":
             if any(word in text for word in ("储蓄卡", "借记卡", "储蓄账户", "借记账户")):
                 return "debit"
@@ -1942,8 +2051,16 @@ class BankingAgent:
                 blockers.append(f"{self._tool_label(step.tool)}：{decision.summary()}")
         if blockers:
             amount_slot = self._revisable_amount_slot(plan.intent)
+            blocker_text = "\n".join(blockers)
+            card_blocked = any(
+                term in blocker_text
+                for term in (
+                    "付款银行卡", "收款银行卡", "已冻结", "已挂失", "待激活",
+                    "信用卡不能", "不能是同一张卡", "未找到付款", "未找到收款",
+                )
+            )
             revision_hint = ""
-            if amount_slot:
+            if amount_slot and not card_blocked:
                 self.session.pending = Pending(
                     kind="blocked_draft",
                     intent=plan.intent,
@@ -2137,39 +2254,109 @@ class BankingAgent:
     def _assess_step(self, tool_name: str, args: Dict[str, Any], ctx: ToolContext) -> RiskDecision:
         if tool_name == "transfer.send":
             user = ctx.user
-            payer = resolve_payment_card(ctx, str(args.get("account", "")))
+            account_key = str(args.get("account", ""))
+            payer = resolve_payment_card(ctx, account_key)
             if payer is None:
                 return RiskDecision(
                     level="block",
                     blocked=True,
-                    reasons=["未找到指定的付款银行卡，请核对卡名、银行或尾号后重试"],
+                    reasons=[
+                        self._card_use_problem(
+                            resolve_owned_card(ctx, account_key),
+                            account_key,
+                            role="付款",
+                        )
+                    ],
                 )
+            channel = str(args.get("channel") or "phone")
             payee = ctx.providers.payees.find(user.user_id, str(args.get("payee", "")))
+            payee_account = str(args.get("payee_account") or "")
+            raw_payee = str(args.get("payee", ""))
+            raw_phone_ok = (
+                channel == "phone"
+                and bool(re.fullmatch(r"1[3-9]\d{9}", "".join(
+                    ch for ch in raw_payee if ch.isdigit()
+                )))
+            )
+            if not payee_account and not channel_account(payee, channel) and not raw_phone_ok:
+                return RiskDecision(
+                    level="block",
+                    blocked=True,
+                    reasons=["尚未提供有效的收款账号，本次转账没有发起"],
+                )
             return self.risk.check_transfer(user, payer, payee, str(args.get("payee", "")),
                                             float(args.get("amount", 0) or 0))
         tool = self.registry.get(tool_name)
         account = None
+        if tool_name in {"card.limit_adjust", "card.control"}:
+            requested_card = str(args.get("card", ""))
+            target = resolve_owned_card(ctx, requested_card)
+            if target is None:
+                return RiskDecision(
+                    level="block",
+                    blocked=True,
+                    reasons=[f"未找到目标卡片「{requested_card}」"],
+                )
+            status_problem = self._card_status_problem(
+                target,
+                "额度调整" if tool_name == "card.limit_adjust" else "交易开关调整",
+            )
+            if status_problem:
+                return RiskDecision(
+                    level="block",
+                    blocked=True,
+                    reasons=[status_problem],
+                )
         if tool_name in {"transfer.schedule", "transfer.internal", "card.repay"}:
             card_key = "account" if tool_name == "transfer.schedule" else "from_card"
-            account = resolve_payment_card(ctx, str(args.get(card_key, "")))
+            if tool_name == "transfer.schedule":
+                channel = str(args.get("channel") or "phone")
+                payee = ctx.providers.payees.find(
+                    ctx.user_id,
+                    str(args.get("payee") or ""),
+                )
+                if (
+                    not args.get("payee_account")
+                    and not channel_account(payee, channel)
+                    and not (
+                        channel == "phone"
+                        and re.fullmatch(r"1[3-9]\d{9}", "".join(
+                            ch for ch in str(args.get("payee") or "") if ch.isdigit()
+                        ))
+                    )
+                ):
+                    return RiskDecision(
+                        level="block",
+                        blocked=True,
+                        reasons=["尚未提供有效的收款账号，定时转账没有创建"],
+                    )
+            requested_source = str(args.get(card_key, ""))
+            account = resolve_payment_card(ctx, requested_source)
             if account is None:
                 return RiskDecision(
                     level="block",
                     blocked=True,
                     reasons=[
-                        f"未找到付款银行卡「{args.get(card_key, '')}」，"
-                        "请先到「资料与卡片设置」核对卡名和备注"
+                        self._card_use_problem(
+                            resolve_owned_card(ctx, requested_source),
+                            requested_source,
+                            role="付款",
+                        )
                     ],
                 )
             if tool_name == "transfer.internal":
-                target = resolve_payment_card(ctx, str(args.get("to_card", "")))
+                requested_target = str(args.get("to_card", ""))
+                target = resolve_payment_card(ctx, requested_target)
                 if target is None:
                     return RiskDecision(
                         level="block",
                         blocked=True,
                         reasons=[
-                            f"未找到收款银行卡「{args.get('to_card', '')}」，"
-                            "请先到「资料与卡片设置」核对卡名和备注"
+                            self._card_use_problem(
+                                resolve_owned_card(ctx, requested_target),
+                                requested_target,
+                                role="收款",
+                            )
                         ],
                     )
                 if target.card_id == account.card_id:
@@ -2178,8 +2365,43 @@ class BankingAgent:
                         blocked=True,
                         reasons=["付款卡和收款卡不能是同一张卡"],
                     )
+            if tool_name == "card.repay":
+                requested_target = str(args.get("card", ""))
+                target = resolve_owned_card(ctx, requested_target)
+                if target is None:
+                    return RiskDecision(
+                        level="block",
+                        blocked=True,
+                        reasons=[f"未找到待还款信用卡「{requested_target}」"],
+                    )
+                if target.kind != "credit":
+                    return RiskDecision(
+                        level="block",
+                        blocked=True,
+                        reasons=["还款目标必须是信用卡，请重新选择待还款卡片"],
+                    )
+                status_problem = self._card_status_problem(target, "信用卡还款")
+                if status_problem:
+                    return RiskDecision(
+                        level="block",
+                        blocked=True,
+                        reasons=[status_problem],
+                    )
         elif tool_name == "wealth.subscribe":
-            account = resolve_payment_card(ctx, str(args.get("account", "")))
+            requested_source = str(args.get("account", ""))
+            account = resolve_payment_card(ctx, requested_source)
+            if account is None:
+                return RiskDecision(
+                    level="block",
+                    blocked=True,
+                    reasons=[
+                        self._card_use_problem(
+                            resolve_owned_card(ctx, requested_source),
+                            requested_source,
+                            role="付款",
+                        )
+                    ],
+                )
         decision = self.risk.check_operation(tool_name, args, ctx.user, account)
         if tool is not None and tool.requires_confirmation and not decision.requires_confirmation:
             decision.requires_confirmation = True
@@ -2187,6 +2409,63 @@ class BankingAgent:
             if not decision.reasons:
                 decision.reasons.append(f"{tool.description}（需要二次确认）")
         return decision
+
+    @staticmethod
+    def _card_use_problem(card, requested: str, role: str = "付款") -> str:
+        """Explain why a nominated card cannot be used for this money move."""
+        if card is None:
+            return (
+                f"未找到{role}银行卡「{requested}」，"
+                "请核对发卡行、卡种、尾号或卡片备注"
+            )
+        kind_label = {
+            "debit": "借记卡",
+            "credit": "信用卡",
+            "virtual": "虚拟卡",
+            "supplementary": "附属卡",
+        }.get(card.kind, card.kind)
+        label = (
+            f"{card.brand} · {kind_label}（尾号{card.tail}）"
+        )
+        problems = []
+        status_text = {
+            "frozen": "已冻结",
+            "lost": "已挂失",
+            "pending": "待激活",
+            "cancelled": "已销卡",
+        }.get(card.status)
+        if status_text:
+            problems.append(f"当前为{status_text}，不能用于本次操作")
+        if card.kind == "credit":
+            if role == "收款":
+                problems.append("信用卡不能接收普通内部划转，请使用「信用卡还款」功能")
+            else:
+                problems.append("信用卡不能作为普通转账/互转的转出卡，请改用借记卡")
+        if problems:
+            return f"{label}：" + "；".join(problems)
+        return f"{label}当前不能作为{role}卡使用"
+
+    @staticmethod
+    def _card_status_problem(card, action: str) -> str:
+        status_text = {
+            "frozen": "已冻结",
+            "lost": "已挂失",
+            "pending": "待激活",
+            "cancelled": "已销卡",
+        }.get(card.status)
+        if not status_text:
+            return ""
+        kind = {
+            "debit": "借记卡",
+            "credit": "信用卡",
+            "virtual": "虚拟卡",
+            "supplementary": "附属卡",
+        }.get(card.kind, card.kind)
+        label = f"{card.brand} · {kind}（尾号{card.tail}）"
+        return (
+            f"{label}当前为{status_text}，{action}已暂停。"
+            "除查看、解冻或挂失外，请先解除冻结状态后再操作。"
+        )
 
     @staticmethod
     def _tool_label(tool_name: str) -> str:

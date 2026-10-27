@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Dict, List, Tuple
@@ -56,14 +57,16 @@ class Plan:
 # 意图 -> [(工具名, {工具参数: 槽位名})]
 SIMPLE_PLANS: Dict[str, List[Tuple[str, Dict[str, str]]]] = {
     "transfer.send": [("transfer.send", {"payee": "payee", "amount": "amount", "channel": "channel",
-                                         "note": "note", "account": "account"})],
+                                         "note": "note", "account": "account",
+                                         "payee_account": "payee_account"})],
     "transfer.internal": [("transfer.internal", {"from_card": "from_card",
                                                    "to_card": "to_card", "amount": "amount",
                                                    "note": "note"})],
     "transfer.schedule": [("transfer.schedule", {"payee": "payee", "amount": "amount", "when": "when",
                                                  "channel": "channel",
                                                  "repeat": "repeat", "note": "note",
-                                                 "account": "account"})],
+                                                 "account": "account",
+                                                 "payee_account": "payee_account"})],
     "transfer.split_aa": [("transfer.split_aa", {"total": "total", "participants": "participants",
                                                  "channel": "channel",
                                                  "note": "note"})],
@@ -89,7 +92,13 @@ SIMPLE_PLANS: Dict[str, List[Tuple[str, Dict[str, str]]]] = {
                                  "bank": "bank", "phone": "phone"})],
     "card.repay": [("card.repay", {"card": "card", "from_card": "from_card",
                                    "amount": "amount"})],
-    "card.limit_adjust": [("card.limit_adjust", {"card": "card", "new_limit": "new_limit"})],
+    "card.limit_adjust": [
+        ("card.limit_adjust", {
+            "card": "card",
+            "new_limit": "new_limit",
+            "limit_type": "limit_type",
+        }),
+    ],
     "card.control": [("card.control", {"card": "card", "scope": "scope", "enable": "enable"})],
     "card.freeze": [("card.freeze", {"card": "card", "reason": "reason"})],
     "card.unlock": [("card.unlock", {"card": "card"})],
@@ -135,9 +144,12 @@ DEFAULT_QUESTIONS = {
     "total": "请问这次一共消费了多少钱？",
     "participants": "请问都有谁一起参与？用顿号隔开就行，例如「我、王强、李思琪」。",
     "keyword": "请问要查哪家商户或哪类消费？例如「星巴克」「咖啡」。",
+    "payee_account": "请提供收款账号，例如 11 位手机号、微信号、支付宝账号或银行卡号。",
     "image": "请把账单截图或账单文件的路径发给我，例如 samples/bill_sample.png。",
     "product": "请问要操作哪只产品？可以说产品名，例如「稳利债券A」。",
     "card": "请问是哪张卡？可以说「信用卡」「虚拟卡」或卡号后四位。",
+    "limit_type": "请选择要调整哪种限额：单笔限额，还是日限额？",
+    "enable": "请说明要开启还是关闭该交易功能。",
     "card_no": "请把要绑定的银行卡号发给我（16-19 位）。",
     "password": "请输入该卡的取款密码（演示环境固定 123456）。",
     "payment_password": (
@@ -196,6 +208,15 @@ CARD_KIND_LABELS = {
     "debit": "借记卡",
     "virtual": "虚拟卡",
     "supplementary": "附属卡",
+}
+
+CARD_TARGET_INTENTS = {
+    "card.repay",
+    "card.limit_adjust",
+    "card.control",
+    "card.freeze",
+    "card.unlock",
+    "card.report_lost",
 }
 
 CARD_APPLY_REQUIREMENTS = {
@@ -273,9 +294,51 @@ class Planner:
         slots = dict(intent.slots)
         plan = Plan(intent=intent.name, slots=slots)
         missing = self._missing_slots(template, slots)
+        if intent.name in CARD_TARGET_INTENTS:
+            card_key = str(slots.get("card") or "").strip()
+            if not card_key:
+                plan.missing = ["card"]
+                plan.question = self._card_question(ctx)
+                return plan
+            card = ctx.providers.cards.find(ctx.user_id, card_key)
+            if card is None:
+                plan.missing = ["card"]
+                plan.question = self._card_question(
+                    ctx,
+                    prefix=f"没有找到「{card_key}」对应的卡片。",
+                )
+                return plan
+            if (
+                intent.name == "card.limit_adjust"
+                and card.kind != "credit"
+                and "new_limit" not in missing
+                and not slots.get("limit_type")
+            ):
+                missing.append("limit_type")
+        if (
+            intent.name in {"transfer.send", "transfer.schedule"}
+            and not missing
+            and not slots.get("payee_account")
+        ):
+            channel = str(slots.get("channel") or "")
+            payee_key = str(slots.get("payee") or "")
+            payee = ctx.providers.payees.find(ctx.user_id, payee_key)
+            has_account = bool(channel_account(payee, channel)) if payee else False
+            raw_phone_ok = (
+                channel == "phone"
+                and bool(re.fullmatch(r"1[3-9]\d{9}", "".join(
+                    ch for ch in payee_key if ch.isdigit()
+                )))
+            )
+            if not has_account and not raw_phone_ok:
+                missing.append("payee_account")
         if missing:
             plan.missing = missing
-            plan.question = self._question(missing[0])
+            plan.question = (
+                self._payee_account_question(ctx, slots)
+                if missing[0] == "payee_account"
+                else self._question(missing[0])
+            )
             return plan
         plan.steps = self._build_steps(template, slots)
         plan.description = self._describe(plan.steps, ctx)
@@ -313,6 +376,37 @@ class Planner:
     @staticmethod
     def _question(slot: str) -> str:
         return DEFAULT_QUESTIONS.get(slot, f"请补充一下「{slot}」。")
+
+    @staticmethod
+    def _card_question(ctx: ToolContext, prefix: str = "") -> str:
+        cards = ctx.providers.cards.of(ctx.user_id)
+        labels = []
+        for card in cards:
+            kind = CARD_KIND_LABELS.get(card.kind, card.kind)
+            note = f"，{card.note}" if card.note else ""
+            labels.append(f"{kind}尾号{card.tail}{note}")
+        options = "；".join(labels) if labels else "当前没有可操作的银行卡"
+        lead = f"{prefix}\n" if prefix else ""
+        return (
+            f"{lead}请问要操作哪张卡？可选：{options}。"
+            "请尽量提供发卡行、卡种或尾号，避免操作错卡。"
+        )
+
+    @staticmethod
+    def _payee_account_question(ctx: ToolContext, slots: Dict[str, Any]) -> str:
+        channel = str(slots.get("channel") or "phone")
+        labels = {
+            "phone": "数字人民币手机号（11 位）",
+            "wechat": "微信号",
+            "alipay": "支付宝账号",
+            "bank": "银行卡号或尾号",
+        }
+        payee = str(slots.get("payee") or "收款人")
+        return (
+            f"「{payee}」尚未配置{labels.get(channel, '收款账号')}。"
+            f"请提供本次要使用的{labels.get(channel, '收款账号')}，"
+            "确认前不会发起转账。"
+        )
 
     def _card_apply_plan(self, intent: Intent, ctx: ToolContext) -> Plan:
         """Build distinct intake flows for debit, credit, and other card types."""
@@ -558,7 +652,18 @@ class Planner:
             if tool == "transfer.send":
                 channel = str(args.get("channel") or "phone")
                 payee = ctx.providers.payees.find(ctx.user_id, str(args.get("payee") or ""))
-                target = channel_account(payee, channel) if payee else ""
+                target = (
+                    str(args.get("payee_account") or "")
+                    or (channel_account(payee, channel) if payee else "")
+                    or (
+                        str(args.get("payee") or "")
+                        if channel == "phone"
+                        and re.fullmatch(r"1[3-9]\d{9}", "".join(
+                            ch for ch in str(args.get("payee") or "") if ch.isdigit()
+                        ))
+                        else ""
+                    )
+                )
                 payer = resolve_payment_card(ctx, str(args.get("account") or ""))
                 parts = [
                     f"向「{self._payee_label(ctx, args.get('payee'))}」"
@@ -586,7 +691,10 @@ class Planner:
                 )
                 channel = str(args.get("channel") or "phone")
                 payee = ctx.providers.payees.find(ctx.user_id, str(args.get("payee") or ""))
-                target = channel_account(payee, channel) if payee else ""
+                target = (
+                    str(args.get("payee_account") or "")
+                    or (channel_account(payee, channel) if payee else "")
+                )
                 when = str(args.get("when", ""))
                 parsed = parse_date(when, ctx.clock.today())
                 when_text = parsed.isoformat() if parsed else when
@@ -712,7 +820,7 @@ class Planner:
                 )
                 source = resolve_payment_card(ctx, str(args.get("from_card") or ""))
                 credit_label = (
-                    f"信用卡（尾号 {credit_card.tail}，已用 {credit_card.used:,.2f} 元）"
+                    f"{self._card_label(credit_card)}，已用 {credit_card.used:,.2f} 元"
                     if credit_card else "未识别信用卡"
                 )
                 source_label = (
@@ -733,8 +841,7 @@ class Planner:
                         f"预留手机号：{phone}")
             if tool in {"card.freeze", "card.unlock", "card.report_lost"}:
                 card = ctx.providers.cards.find(ctx.user_id, str(args.get("card", "")))
-                label = (f"{CARD_KIND_LABELS.get(card.kind, card.kind)}（尾号{card.tail}）"
-                         if card else "未识别的卡片")
+                label = self._card_label(card) if card else "未识别的卡片"
                 if tool == "card.freeze":
                     return f"冻结{label}，暂停全部交易"
                 if tool == "card.unlock":
@@ -742,13 +849,19 @@ class Planner:
                 return f"为{label}办理挂失并补卡（原卡将永久失效）"
             if tool == "card.limit_adjust":
                 card = ctx.providers.cards.find(ctx.user_id, str(args.get("card", "")))
-                label = (f"{CARD_KIND_LABELS.get(card.kind, card.kind)}（尾号{card.tail}）"
-                         if card else "未识别的卡片")
-                return f"把{label}的额度调整为 {float(args.get('new_limit', 0)):,.0f} 元"
+                label = self._card_label(card) if card else "未识别的卡片"
+                limit_type = str(args.get("limit_type") or "")
+                if card is not None and card.kind == "credit":
+                    field_name = "信用额度"
+                else:
+                    field_name = "日限额" if limit_type == "daily" else "单笔限额"
+                return (
+                    f"把{label}的{field_name}调整为 "
+                    f"{float(args.get('new_limit', 0)):,.0f} 元"
+                )
             if tool == "card.control":
                 card = ctx.providers.cards.find(ctx.user_id, str(args.get("card", "")))
-                label = (f"{CARD_KIND_LABELS.get(card.kind, card.kind)}（尾号{card.tail}）"
-                         if card else "未识别的卡片")
+                label = self._card_label(card) if card else "未识别的卡片"
                 scope = {"online": "线上交易", "overseas": "境外交易",
                          "contactless": "小额免密"}.get(str(args.get("scope")), str(args.get("scope")))
                 return f"{'开启' if args.get('enable') else '关闭'}{label}的{scope}"
@@ -859,4 +972,10 @@ class Planner:
         if payee and payee.name:
             return payee.name if payee.name == keyword else f"{payee.name}（{keyword}）"
         return keyword
+
+    @staticmethod
+    def _card_label(card) -> str:
+        kind = CARD_KIND_LABELS.get(card.kind, card.kind)
+        brand = f"{card.brand} · " if card.brand else ""
+        return f"{brand}{kind}（尾号{card.tail}）"
 

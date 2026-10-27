@@ -96,7 +96,7 @@ class TestActionDataConfirmation(unittest.TestCase):
     def test_card_action_review_names_card_kind_and_tail(self):
         agent = make_agent()
 
-        reply = agent.handle("我的卡丢了，帮我挂失")
+        reply = agent.handle("我的信用卡丢了，帮我挂失")
 
         self.assertEqual(reply.kind, "confirm")
         self.assertEqual(agent.session.pending.kind, "data_confirm")

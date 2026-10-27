@@ -64,6 +64,7 @@ INTENTS: Dict[str, IntentSpec] = {
             L("amount", "金额（元）", True, "number"),
             L("note", "转账备注"),
             L("account", "付款银行卡，如 工资卡/尾号6222"),
+            L("payee_account", "本次使用的收款手机号、微信号、支付宝账号或银行卡号"),
             L("payment_password", "付款卡交易密码", True),
         ],
         ["给老婆转2000块", "转500给13700003333", "给房东转3800块交房租"],
@@ -87,6 +88,7 @@ INTENTS: Dict[str, IntentSpec] = {
             L("when", "执行时间", True),
             L("repeat", "重复方式", False, "string", ["once", "monthly", "weekly"]),
             L("note", "备注"),
+            L("payee_account", "本次使用的收款手机号、微信号、支付宝账号或银行卡号"),
         ],
         ["下个月5号自动给房东转3800", "每周一给妈妈转500"],
     ),
@@ -207,7 +209,11 @@ INTENTS: Dict[str, IntentSpec] = {
     ),
     "card.limit_adjust": IntentSpec(
         "card.limit_adjust", "卡片管理", "调整额度或交易限额",
-        [L("card", "卡片，如 信用卡/尾号8877"), L("new_limit", "新额度（元）", True, "number")],
+        [
+            L("card", "卡片，如 信用卡/尾号8877"),
+            L("new_limit", "新额度（元）", True, "number"),
+            L("limit_type", "非信用卡的限额类型：single=单笔，daily=日限额"),
+        ],
         ["把信用卡额度提到3万", "把虚拟卡单笔限额降到500"],
     ),
     "card.control": IntentSpec(

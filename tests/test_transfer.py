@@ -42,6 +42,20 @@ class TestSmartTransfer(unittest.TestCase):
         self.assertTrue(reply.ok)
         self.assertIn("王强", reply.text)
 
+    def test_missing_recipient_account_is_asked_before_confirmation(self):
+        reply = self.agent.handle("给新朋友转10块，用微信")
+        self.assertEqual(reply.intent, "transfer.send")
+        self.assertEqual(reply.kind, "question")
+        self.assertEqual(self.agent.session.pending.missing, ["payee_account"])
+        self.assertIn("尚未配置微信号", reply.text)
+        self.assertIn("确认前不会发起转账", reply.text)
+
+        reply = self.agent.handle("new_friend_wx")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("新朋友", reply.text)
+        self.assertIn("new_friend_wx", reply.text)
+        self.assertEqual(self.agent.session.pending.kind, "data_confirm")
+
     def test_balance_is_debited(self):
         account = self.agent.store.primary_account("u_001")
         card = self.agent.store.find_card("u_001", "工资卡")
@@ -87,6 +101,81 @@ class TestSmartTransfer(unittest.TestCase):
         self.assertAlmostEqual(source.balance, source_before - 20, places=2)
         self.assertAlmostEqual(target.balance, target_before + 20, places=2)
 
+    def test_internal_transfer_accepts_xiang_syntax(self):
+        source = self.agent.store.find_card("u_001", "工资卡")
+        target = self.agent.store.find_card("u_001", "6688")
+        source_before = source.balance
+        target_before = target.balance
+
+        reply = self.agent.handle("工资卡向借记卡尾号6688转20")
+        self.assertEqual(reply.intent, "transfer.internal")
+        self.assertEqual(reply.kind, "confirm")
+        reply = self.agent.handle("确认")
+        reply = self.agent.handle("246810")
+
+        self.assertTrue(reply.ok)
+        self.assertAlmostEqual(source.balance, source_before - 20, places=2)
+        self.assertAlmostEqual(target.balance, target_before + 20, places=2)
+
+    def test_internal_transfer_accepts_gei_syntax_without_payment_channel(self):
+        source = self.agent.store.find_card("u_001", "工资卡")
+        target = self.agent.store.find_card("u_001", "6688")
+        source_before = source.balance
+        target_before = target.balance
+
+        reply = self.agent.handle("工资卡给借记卡尾号6688转20")
+
+        self.assertEqual(reply.intent, "transfer.internal")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertNotIn("微信", reply.text)
+        self.assertNotIn("支付宝", reply.text)
+        reply = self.agent.handle("确认")
+        reply = self.agent.handle("246810")
+        self.assertTrue(reply.ok)
+        self.assertAlmostEqual(source.balance, source_before - 20, places=2)
+        self.assertAlmostEqual(target.balance, target_before + 20, places=2)
+
+    def test_frozen_credit_card_is_explained_before_internal_transfer(self):
+        self.agent.handle("冻结信用卡尾号8877")
+        self.agent.handle("确认")
+
+        reply = self.agent.handle(
+            "信用卡尾号8877，主刷信用卡向借记卡尾号6688，日常消费卡转200"
+        )
+
+        self.assertEqual(reply.intent, "transfer.internal")
+        self.assertEqual(reply.kind, "error")
+        self.assertFalse(reply.ok)
+        self.assertIn("已冻结", reply.text)
+        self.assertIn("信用卡不能作为普通转账", reply.text)
+        self.assertIn("改用借记卡", reply.text)
+        self.assertIsNone(self.agent.session.pending)
+
+    def test_frozen_debit_source_is_explained_instead_of_generic_missing_card(self):
+        self.agent.handle("冻结借记卡尾号6222")
+        self.agent.handle("确认")
+
+        reply = self.agent.handle("从工资卡转10到借记卡尾号6688")
+
+        self.assertEqual(reply.intent, "transfer.internal")
+        self.assertEqual(reply.kind, "error")
+        self.assertIn("尾号6222", reply.text)
+        self.assertIn("已冻结", reply.text)
+        self.assertNotIn("未找到指定的付款银行卡", reply.text)
+        self.assertIsNone(self.agent.session.pending)
+
+    def test_frozen_credit_card_blocks_external_transfer_before_confirmation(self):
+        self.agent.handle("冻结信用卡尾号8877")
+        self.agent.handle("确认")
+
+        reply = self.agent.handle("用信用卡尾号8877给王强转10，用微信")
+
+        self.assertEqual(reply.intent, "transfer.send")
+        self.assertEqual(reply.kind, "error")
+        self.assertIn("尾号8877", reply.text)
+        self.assertIn("已冻结", reply.text)
+        self.assertIsNone(self.agent.session.pending)
+
     def test_wrong_payment_password_does_not_move_money(self):
         card = self.agent.store.find_card("u_001", "工资卡")
         before = card.balance
@@ -103,7 +192,11 @@ class TestSmartTransfer(unittest.TestCase):
         self.assertIsNone(self.agent.session.pending)
 
     def test_scheduled_transfer_creates_task(self):
-        reply = send_money(self.agent, "下个月5号自动给房东转3800房租")
+        reply = send_money(
+            self.agent,
+            "下个月5号自动给房东转3800房租",
+            channel="支付宝",
+        )
         self.assertEqual(reply.intent, "transfer.schedule")
         self.assertEqual(reply.kind, "executed")
         self.assertTrue(reply.ok)
@@ -147,7 +240,7 @@ class TestTransferRisk(unittest.TestCase):
         return len(self.agent.store.transactions_of("u_001"))
 
     def test_new_payee_limit_blocks(self):
-        reply = send_money(self.agent, "给赵老板转9000")
+        reply = send_money(self.agent, "给13900007777转9000", channel="手机号")
         self.assertFalse(reply.ok)
         self.assertIn("首次向", reply.text)
 

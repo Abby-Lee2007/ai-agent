@@ -150,9 +150,9 @@ class TestCarePeopleTransfer(unittest.TestCase):
                 request_id="care-transfer-missing-channel",
             )
 
-        self.assertEqual(review["reply"]["kind"], "confirm")
-        self.assertIn("未配置支付宝收款账号", review["reply"]["text"])
-        self.assertIn("资料与卡片设置", review["reply"]["text"])
+        self.assertEqual(review["reply"]["kind"], "question")
+        self.assertIn("尚未配置支付宝账号", review["reply"]["text"])
+        self.assertIn("确认前不会发起转账", review["reply"]["text"])
 
     def test_repeated_profile_save_does_not_duplicate_payee(self):
         with tempfile.TemporaryDirectory() as temp_dir:

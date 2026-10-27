@@ -130,6 +130,7 @@ class RuleIntentParser:
         "crossscene.daily_brief",
         "crossscene.gift_plan",
         "bill.scan_receipt",
+        "card.repay",
         "transfer.split_aa",
         "transfer.list_scheduled",
         "transfer.internal",
@@ -148,7 +149,6 @@ class RuleIntentParser:
         "card.report_lost",
         "card.unlock",
         "card.freeze",
-        "card.repay",
         "card.bind",
         "card.control",
         "card.limit_adjust",
@@ -248,9 +248,31 @@ class RuleIntentParser:
         return self._has(t, "定时转账", "预约任务", "待执行任务", "有哪些定时", "我的计划")
 
     def _match_transfer_internal(self, t: str) -> bool:
-        if "到" not in t or not self._has(t, "转", "划转", "调拨"):
+        if not self._has(t, "转", "划转", "调拨"):
             return False
         if not self._has(t, "卡", "尾号", "账户"):
+            return False
+        separator = re.search(r"[向给]", t)
+        if separator and re.search(r"[向给].{0,80}(?:转|划转|调拨)", t):
+            left = t[:separator.start()]
+            right = t[separator.end():]
+            verb = re.search(r"转|划转|调拨", right)
+            target_text = right[:verb.start()] if verb else right
+            if (
+                self._looks_like_card_reference(left)
+                and self._looks_like_card_reference(target_text)
+            ):
+                return True
+            return False
+        if "到" not in t:
+            return False
+        _, right = t.split("到", 1)
+        target_text = re.split(
+            r"[，。,；;\s]|(?:\d+(?:\.\d+)?元)",
+            right,
+            maxsplit=1,
+        )[0]
+        if not self._looks_like_card_reference(target_text):
             return False
         return self._has(t, "从", "本人", "自己", "内部") or bool(
             re.search(r"(?:尾号)?\d{4}.{0,12}(?:转|划转).{0,12}(?:尾号)?\d{4}", t)
@@ -291,7 +313,16 @@ class RuleIntentParser:
         return self._has(t, "这张", "这几张", "这份") and self._has(t, "账单", "小票", "收据")
 
     def _match_bill_search(self, t: str) -> bool:
-        if not re.search(r"(花了多少|花多少|消费了多少|一共花|总共花|花了多少钱)", t):
+        asks_spend = re.search(
+            r"(花了多少|花多少|消费了多少|一共花|总共花|花了多少钱)",
+            t,
+        )
+        explicit_lookup = re.search(
+            r"(查|找|搜|检索|筛选|列出|调出|看看|看一下).{0,20}"
+            r"(消费|交易|流水)",
+            t,
+        )
+        if not asks_spend and not explicit_lookup:
             return False
         keyword = self._search_keyword(t)
         # "最近7天花了多少" 没有具体商户，应该走账单统计而不是关键词检索
@@ -345,8 +376,13 @@ class RuleIntentParser:
         return scope and action
 
     def _match_card_limit_adjust(self, t: str) -> bool:
-        return self._has(t, "额度", "限额", "上限") and self._has(
+        if self._has(t, "额度", "限额", "上限") and self._has(
             t, "提", "调", "改", "降", "升", "调整", "设成", "设为"
+        ):
+            return True
+        card_context = self._has(t, "卡", "尾号", "银行")
+        return card_context and bool(
+            re.search(r"(?:调整到|调到|改成|设为|设成)\s*\d", t)
         )
 
     def _match_card_apply(self, t: str) -> bool:
@@ -355,7 +391,24 @@ class RuleIntentParser:
         return self._has(t, *actions) and self._has(t, "卡")
 
     def _match_card_repay(self, t: str) -> bool:
-        return self._has(t, "信用卡") and self._has(t, "还款", "还信用卡", "偿还")
+        if "信用卡" not in t:
+            return False
+        if self._has(t, "还款", "还信用卡", "偿还", "归还信用卡"):
+            return True
+        has_transfer = self._has(t, "转", "划转", "支付")
+        targets_credit = bool(
+            re.search(r"(?:给|向|到|转入|转入到).{0,30}信用卡", t)
+        )
+        has_source_card = self._has(
+            t,
+            "从",
+            "用",
+            "虚拟卡",
+            "借记卡",
+            "储蓄卡",
+            "尾号",
+        )
+        return has_transfer and targets_credit and has_source_card
 
     def _match_card_bind(self, t: str) -> bool:
         return self._has(t, "绑定", "添加", "绑一张", "绑定一张") and self._has(
@@ -438,7 +491,23 @@ class RuleIntentParser:
         slots: Dict[str, Any] = {}
 
         if intent == "transfer.internal":
-            if "到" in text:
+            separator = re.search(r"[向给]", text)
+            if (
+                separator
+                and re.search(r"[向给].+?(?:转|划转|调拨)", text)
+            ):
+                left = text[:separator.start()]
+                right = text[separator.end():]
+                verb = re.search(r"转|划转|调拨", right)
+                source_text = left.strip("从用 ，,")
+                target_text = right[:verb.start()] if verb else right
+                source = self._card_reference(source_text)
+                target = self._card_reference(target_text)
+                if source:
+                    slots["from_card"] = source
+                if target:
+                    slots["to_card"] = target
+            elif "到" in text:
                 left, right = text.split("到", 1)
                 match = re.search(r"(?:从)?(.+?)(?:转|划转|调拨)", left)
                 if match:
@@ -568,12 +637,43 @@ class RuleIntentParser:
                 slots.pop("product", None)
 
         elif intent == "card.repay":
-            credit_card = self._card(text)
-            if credit_card:
-                slots["card"] = credit_card
-            match = re.search(r"(?:用|从)(.+?)(?:来)?(?:还|偿还)", text)
-            if match:
-                slots["from_card"] = match.group(1).strip()
+            source_text = ""
+            target_text = ""
+            if "给" in text and "信用卡" in text.split("给", 1)[1]:
+                source_text, right = text.split("给", 1)
+                verb = re.search(r"转|划转|还|偿还|支付", right)
+                target_text = right[:verb.start()] if verb else right
+            elif "到" in text and "信用卡" in text.split("到", 1)[1]:
+                source_text, right = text.split("到", 1)
+                verb = re.search(r"转|划转|还|偿还|支付", right)
+                target_text = right[:verb.start()] if verb else right
+            else:
+                match = re.search(
+                    r"(?:用|从)(.+?)(?:来)?(?:还款|还信用卡|还|偿还|归还信用卡)",
+                    text,
+                )
+                if match:
+                    source_text = match.group(1).strip()
+                after_repay = re.search(
+                    r"(?:还款|还信用卡|还|偿还|归还信用卡)(.+)$",
+                    text,
+                )
+                if after_repay:
+                    target_text = after_repay.group(1)
+            source = self._card_reference(source_text) if source_text else ""
+            target = (
+                self._card_reference(target_text)
+                if target_text and self._looks_like_card_reference(target_text)
+                else ""
+            )
+            if source:
+                slots["from_card"] = source
+            if target:
+                slots["card"] = target
+            if not slots.get("card"):
+                credit_card = self._card(text)
+                if credit_card:
+                    slots["card"] = credit_card
             amount = parse_amount(text)
             if amount is not None:
                 slots["amount"] = amount
@@ -585,6 +685,10 @@ class RuleIntentParser:
             card = self._card(text)
             if card:
                 slots["card"] = card
+            if self._has(text, "单笔", "每笔"):
+                slots["limit_type"] = "single"
+            elif self._has(text, "日限额", "每日", "一天", "单日"):
+                slots["limit_type"] = "daily"
 
         elif intent == "card.control":
             if self._has(text, "境外", "海外"):
@@ -593,7 +697,10 @@ class RuleIntentParser:
                 slots["scope"] = "contactless"
             else:
                 slots["scope"] = "online"
-            slots["enable"] = not self._has(text, "关闭", "关掉", "禁用", "禁止", "停用", "取消")
+            if self._has(text, "关闭", "关掉", "禁用", "禁止", "停用", "取消"):
+                slots["enable"] = False
+            elif self._has(text, "开启", "打开", "启用", "允许", "恢复"):
+                slots["enable"] = True
             card = self._card(text)
             if card:
                 slots["card"] = card
@@ -854,14 +961,47 @@ class RuleIntentParser:
         return ""
 
     def _search_keyword(self, text: str) -> str:
+        """Extract the merchant/category from a natural-language lookup.
+
+        Capability shortcuts send their label as the prompt, so words such as
+        "消费记录检索" must not be treated as a merchant name.
+        """
+        cleaned = (text or "").strip()
+        cleaned = re.sub(r"^(?:请|麻烦|帮我|劳驾|我想|我要|想|要)+", "", cleaned)
         cleaned = re.sub(
-            r"(花了多少钱|花了多少|消费了多少|一共花了|总共花了|花多少|多少钱|多少|花了|块钱|"
-            r"这个月|上个月|本月|今年|去年|最近|查一下|查询|看看|帮我|一共|总共|"
-            r"我|这|在|元)",
+            r"^(?:查一下|查查|查询|查找|查|找一下|找找|找|搜一下|搜索|搜|"
+            r"检索|筛选|筛|看看|看一下|列出|调出)+",
             "",
-            text,
+            cleaned,
         )
-        return re.sub(r"[?？。，,、\s]", "", cleaned)[:10]
+        cleaned = re.sub(
+            r"(花了多少钱|花了多少|消费了多少|一共花了|总共花了|花多少|"
+            r"多少钱|多少|花了|块钱)",
+            "",
+            cleaned,
+        )
+        cleaned = re.sub(
+            r"(这个月|上个月|本月|今年|去年|最近|本周|这周|近\d+天|"
+            r"最近\d+天|我|一共|总共)",
+            "",
+            cleaned,
+        )
+        cleaned = re.sub(r"^[在于是关于有关\s]+", "", cleaned)
+        cleaned = re.sub(
+            r"(?:相关)?(?:的)?(?:消费记录|消费|交易记录|交易|流水记录|流水|支出)$",
+            "",
+            cleaned,
+        )
+        cleaned = re.sub(r"^[的\s]+|[的\s]+$", "", cleaned)
+        cleaned = re.sub(r"[?？。，,、：:；;\"'“”‘’\s]", "", cleaned)
+        generic_terms = {
+            "消费", "消费记录", "消费记录检索", "消费检索", "消费查询",
+            "查消费", "交易记录", "交易检索", "流水", "流水记录",
+            "账单消费", "查交易", "查流水", "检索消费", "检索交易",
+        }
+        if cleaned in generic_terms:
+            return ""
+        return cleaned[:20]
 
     def _product(self, text: str) -> str:
         if self.store is None:
@@ -909,6 +1049,50 @@ class RuleIntentParser:
             return tail.group(1)
         digits = re.findall(r"(?<![\d])\d{4}(?![\d])", text)
         return digits[0] if digits else ""
+
+    def _card_reference(self, text: str) -> str:
+        """Return the most precise card reference available in one clause."""
+        tail = re.search(r"(?:尾号|后四位|末四位)\s*(\d{4})", text)
+        if tail:
+            return tail.group(1)
+        if self.store is not None and self.user_id:
+            for card in self.store.cards_of(self.user_id):
+                if card.note and card.note in text:
+                    return card.note
+        for alias in (
+            "工资卡", "日常消费卡", "主刷信用卡", "定期存单", "定期卡",
+            "网购专用虚拟卡", "信用卡", "借记卡", "储蓄卡", "虚拟卡",
+        ):
+            if alias in text:
+                return alias
+        cleaned = re.sub(r"[，。,；;\s]", "", text)
+        return cleaned[:30]
+
+    def _looks_like_card_reference(self, text: str) -> bool:
+        if re.search(r"(?:尾号|后四位|末四位)\s*\d{4}", text):
+            return True
+        if self.store is not None and self.user_id:
+            if any(card.note and card.note in text for card in self.store.cards_of(self.user_id)):
+                return True
+            bare_tail = re.fullmatch(r"\s*(\d{4})\s*", text)
+            if bare_tail and any(
+                card.tail == bare_tail.group(1)
+                for card in self.store.cards_of(self.user_id)
+            ):
+                return True
+        return self._has(
+            text,
+            "信用卡",
+            "借记卡",
+            "储蓄卡",
+            "虚拟卡",
+            "附属卡",
+            "工资卡",
+            "日常消费卡",
+            "主刷信用卡",
+            "定期存单",
+            "定期卡",
+        )
 
 
 class IntentParser:

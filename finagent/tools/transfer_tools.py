@@ -45,6 +45,27 @@ def channel_account(payee, channel: str) -> str:
     return ""
 
 
+def set_payee_channel_account(payee, channel: str, account: str) -> str:
+    """Bind a user-supplied receiving account to the selected transfer channel."""
+    value = str(account or "").strip()
+    if not value:
+        return ""
+    if channel == "phone":
+        digits = "".join(ch for ch in value if ch.isdigit())
+        payee.wallet_phone = digits
+        if not payee.phone:
+            payee.phone = digits
+    elif channel == "wechat":
+        payee.wechat = value
+    elif channel == "alipay":
+        payee.alipay = value
+    elif channel == "bank":
+        digits = "".join(ch for ch in value if ch.isdigit())
+        if digits:
+            payee.tail = digits[-4:]
+    return value
+
+
 def resolve_account(ctx: ToolContext, keyword: str = "") -> Optional[Account]:
     """把"信用卡 / 零钱 / 活期"这类口语映射到具体账户。"""
     providers = ctx.providers or build_data_providers(ctx.store)
@@ -91,6 +112,20 @@ def resolve_payment_card(ctx: ToolContext, keyword: str = "") -> Optional[Card]:
     return None
 
 
+def resolve_owned_card(ctx: ToolContext, keyword: str = "") -> Optional[Card]:
+    """Resolve any owned card, including frozen, lost, or credit cards.
+
+    Payment operations use resolve_payment_card for executable cards. This
+    helper is for diagnostics so the agent can explain why a nominated card
+    cannot be used instead of silently falling back to another card.
+    """
+    key = (keyword or "").strip().strip("从给到向 ")
+    if not key:
+        return None
+    providers = ctx.providers or build_data_providers(ctx.store)
+    return providers.cards.find(ctx.user_id, key)
+
+
 class TransferTool(Tool):
     """立即转账。"""
 
@@ -104,6 +139,7 @@ class TransferTool(Tool):
         ToolParam("channel", "string", True, "收款方式", enum=["phone", "wechat", "alipay", "bank"]),
         ToolParam("note", "string", False, "转账备注"),
         ToolParam("account", "string", False, "付款银行卡，如 工资卡/尾号6222，默认活期卡"),
+        ToolParam("payee_account", "string", False, "本次提供的收款账号"),
         ToolParam("payment_password", "string", True, "付款卡 6 位交易密码"),
     ]
     examples = ["给老婆转2000块，用微信", "转500给13700003333，用支付宝", "给房东转3800房租，用银行卡"]
@@ -116,6 +152,7 @@ class TransferTool(Tool):
         channel: str = "",
         note: str = "",
         account: str = "",
+        payee_account: str = "",
         payment_password: str = "",
         payment_verified: bool = False,
     ) -> ToolResult:
@@ -170,6 +207,13 @@ class TransferTool(Tool):
             payee_obj.last_used = ctx.clock.iso()
 
         target_account = channel_account(payee_obj, channel)
+        if payee_account:
+            target_account = set_payee_channel_account(
+                payee_obj,
+                channel,
+                payee_account,
+            )
+            ctx.store.touch(payee_obj)
         if not target_account:
             return ToolResult(
                 False,
@@ -368,6 +412,7 @@ class ScheduledTransferTool(Tool):
         ToolParam("repeat", "string", False, "重复方式", enum=["once", "monthly", "weekly"]),
         ToolParam("note", "string", False, "转账备注"),
         ToolParam("account", "string", False, "付款银行卡，如 工资卡/尾号6222"),
+        ToolParam("payee_account", "string", False, "本次提供的收款账号"),
         ToolParam("payment_password", "string", True, "付款卡 6 位交易密码"),
     ]
     examples = ["下个月5号自动给房东转3800房租", "明天给妈妈转2000"]
@@ -382,6 +427,7 @@ class ScheduledTransferTool(Tool):
         repeat: str = "once",
         note: str = "",
         account: str = "",
+        payee_account: str = "",
         payment_password: str = "",
     ) -> ToolResult:
         user = ctx.user
@@ -406,6 +452,15 @@ class ScheduledTransferTool(Tool):
         repeat_label = {"once": "一次性", "monthly": "每月", "weekly": "每周"}.get(repeat, "一次性")
         channel = (channel or "phone").strip().lower()
         channel_label = CHANNEL_LABELS.get(channel, CHANNEL_LABELS["phone"])
+        if payee_account:
+            set_payee_channel_account(payee_obj, channel, payee_account)
+            ctx.store.touch(payee_obj)
+        if not channel_account(payee_obj, channel):
+            return ToolResult(
+                False,
+                f"「{payee_obj.name}」还没有绑定{channel_label}收款账号，"
+                "本次定时转账未创建。",
+            )
         payer = resolve_payment_card(ctx, account)
         if payer is None:
             return ToolResult(False, "没有找到可用的付款银行卡。")

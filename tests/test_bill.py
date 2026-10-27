@@ -55,6 +55,25 @@ class TestBillAnalysis(unittest.TestCase):
         self.assertEqual(reply.intent, "bill.search")
         self.assertGreaterEqual(reply.data["count"], 0)
 
+    def test_bill_search_shortcut_asks_for_a_real_keyword(self):
+        reply = self.agent.handle("消费记录检索")
+        self.assertEqual(reply.intent, "bill.search")
+        self.assertTrue(reply.needs_input)
+        self.assertIn("哪家商户", reply.text)
+
+        reply = self.agent.handle("星巴克")
+        self.assertEqual(reply.intent, "bill.search")
+        self.assertNotIn("消费记录检索", reply.text)
+
+    def test_search_accepts_natural_language_how_to_lookup_phrases(self):
+        category_reply = self.agent.handle("查一下本月在餐饮上的消费")
+        self.assertEqual(category_reply.intent, "bill.search")
+        self.assertIn("餐饮", category_reply.text)
+
+        merchant_reply = self.agent.handle("查一下星巴克的消费")
+        self.assertEqual(merchant_reply.intent, "bill.search")
+        self.assertIn("星巴克", merchant_reply.text)
+
     def test_anomaly_engine_is_reusable(self):
         engine = RiskEngine(self.agent.store, self.agent.clock)
         rows = self.agent.store.transactions_of("u_001", "2026-09-15", "2026-10-14")

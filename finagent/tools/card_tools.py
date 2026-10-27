@@ -44,6 +44,12 @@ SCOPE_LABEL = {
 }
 
 
+def _card_display(card: Card) -> str:
+    kind = KIND_LABEL.get(card.kind, card.kind)
+    brand = f"{card.brand} · " if card.brand else ""
+    return f"{brand}{kind}（尾号{card.tail}）"
+
+
 def _cards(ctx: ToolContext, status: str = ""):
     if getattr(ctx, "providers", None) is not None:
         return ctx.providers.cards.of(ctx.user_id, status or None)
@@ -104,12 +110,15 @@ class CardListTool(Tool):
             rows.append([
                 KIND_LABEL.get(c.kind, c.kind), f"尾号{c.tail}",
                 STATUS_LABEL.get(c.status, c.status), balance, limit,
-                switches, source,
+                switches, source, f"{c.brand}｜{c.note or '-'}",
             ])
         lines = [
             f"您名下共有 {len(cards)} 张卡片：",
             render_table(
-                ["卡种", "卡号", "状态", "余额/可用", "额度/限额", "交易开关", "来源"],
+                [
+                    "卡种", "卡号", "状态", "余额/可用", "额度/限额",
+                    "交易开关", "来源", "发卡行/备注",
+                ],
                 rows,
             ),
         ]
@@ -1060,8 +1069,15 @@ class CardLimitAdjustTool(Tool):
     risk_level = "medium"
     requires_confirmation = True
     params = [
-        ToolParam("card", "string", False, "卡片，如 信用卡/尾号8877"),
+        ToolParam("card", "string", True, "卡片，如 信用卡/尾号8877"),
         ToolParam("new_limit", "number", True, "新的额度（元）"),
+        ToolParam(
+            "limit_type",
+            "string",
+            False,
+            "非信用卡的限额类型：single=单笔限额，daily=日限额",
+            enum=["single", "daily"],
+        ),
     ]
     examples = ["把信用卡额度提到3万", "把虚拟卡单笔限额降到500"]
 
@@ -1069,11 +1085,18 @@ class CardLimitAdjustTool(Tool):
         self,
         ctx: ToolContext,
         new_limit: Any,
-        card: str = "",
+        card: str,
+        limit_type: str = "",
     ) -> ToolResult:
         target = _find_card(ctx, card)
         if target is None:
             return ToolResult(False, "没有找到对应的卡片。")
+        if target.status != "active":
+            return ToolResult(
+                False,
+                f"{_card_display(target)}当前为{STATUS_LABEL.get(target.status, target.status)}，"
+                "额度调整已暂停，请先解冻卡片。",
+            )
         try:
             limit = float(new_limit)
         except (TypeError, ValueError):
@@ -1088,14 +1111,30 @@ class CardLimitAdjustTool(Tool):
             target.credit_limit = limit
             field_name = "信用额度"
         else:
-            old = target.single_limit
-            target.single_limit = min(limit, target.daily_limit)
-            field_name = "单笔限额"
+            limit_kind = (limit_type or "single").strip().lower()
+            if limit_kind == "daily":
+                old = target.daily_limit
+                target.daily_limit = limit
+                if target.single_limit > target.daily_limit:
+                    target.single_limit = target.daily_limit
+                field_name = "日限额"
+            elif limit_kind == "single":
+                old = target.single_limit
+                if limit > target.daily_limit:
+                    return ToolResult(
+                        False,
+                        f"单笔限额不能高于当前日限额 {target.daily_limit:,.0f} 元。"
+                        "请先调整日限额，或将单笔限额设置为不超过日限额。",
+                    )
+                target.single_limit = limit
+                field_name = "单笔限额"
+            else:
+                return ToolResult(False, "请明确选择调整单笔限额还是日限额。")
         ctx.store.touch(target)
 
         direction = "提升" if limit > old else "调低"
         lines = [
-            f"{KIND_LABEL.get(target.kind, target.kind)}（尾号{target.tail}）{field_name}已{direction}",
+            f"{_card_display(target)}{field_name}已{direction}",
             f"  {old:,.0f} 元 → {limit:,.0f} 元，即刻生效",
         ]
         if target.kind == "credit":
@@ -1119,7 +1158,7 @@ class CardControlTool(Tool):
     risk_level = "medium"
     requires_confirmation = True
     params = [
-        ToolParam("card", "string", False, "卡片，如 信用卡/尾号8877"),
+        ToolParam("card", "string", True, "卡片，如 信用卡/尾号8877"),
         ToolParam("scope", "string", True, "要调整的开关", enum=["online", "overseas", "contactless"]),
         ToolParam("enable", "boolean", True, "true=开启，false=关闭"),
     ]
@@ -1135,6 +1174,12 @@ class CardControlTool(Tool):
         target = _find_card(ctx, card)
         if target is None:
             return ToolResult(False, "没有找到对应的卡片。")
+        if target.status != "active":
+            return ToolResult(
+                False,
+                f"{_card_display(target)}当前为{STATUS_LABEL.get(target.status, target.status)}，"
+                "交易开关调整已暂停，请先解冻卡片。",
+            )
         scope_key = (scope or "").strip().lower()
         aliases = {"境外": "overseas", "海外": "overseas", "线上": "online", "网络": "online",
                    "免密": "contactless", "闪付": "contactless", "云闪付": "contactless"}
@@ -1148,7 +1193,7 @@ class CardControlTool(Tool):
         ctx.store.touch(target)
         action = "已开启" if value else "已关闭"
         lines = [
-            f"{KIND_LABEL.get(target.kind, target.kind)}（尾号{target.tail}）{SCOPE_LABEL[scope_key]}{action}",
+            f"{_card_display(target)}{SCOPE_LABEL[scope_key]}{action}",
             f"  变更前：{'开启' if before else '关闭'} → 变更后：{'开启' if value else '关闭'}（即刻生效）",
         ]
         if before == value:
@@ -1172,7 +1217,7 @@ class CardFreezeTool(Tool):
     risk_level = "high"
     requires_confirmation = True
     params = [
-        ToolParam("card", "string", False, "卡片，如 信用卡/尾号8877"),
+        ToolParam("card", "string", True, "卡片，如 信用卡/尾号8877"),
         ToolParam("reason", "string", False, "冻结原因"),
     ]
     examples = ["把信用卡冻结", "我的卡好像被盗刷了，先冻结"]
@@ -1182,13 +1227,13 @@ class CardFreezeTool(Tool):
         if target is None:
             return ToolResult(False, "没有找到对应的卡片。")
         if target.status == "frozen":
-            return ToolResult(True, f"{KIND_LABEL.get(target.kind, target.kind)}（尾号{target.tail}）已经是冻结状态。",
+            return ToolResult(True, f"{_card_display(target)}已经是冻结状态。",
                               summary="卡片已处于冻结状态")
         target.status = "frozen"
         ctx.store.touch(target)
         ctx.store.log("card.freeze", card_id=target.card_id, reason=reason)
         lines = [
-            f"已冻结{KIND_LABEL.get(target.kind, target.kind)}（尾号{target.tail}）",
+            f"已冻结{_card_display(target)}",
             "  冻结后该卡所有交易都会被拒绝，包括线上、线下和代扣。",
             "  确认安全后可随时说「解冻信用卡」恢复使用。",
         ]
@@ -1207,7 +1252,7 @@ class CardUnlockTool(Tool):
     risk_level = "medium"
     requires_confirmation = True
     params = [
-        ToolParam("card", "string", False, "卡片，如 信用卡/尾号8877"),
+        ToolParam("card", "string", True, "卡片，如 信用卡/尾号8877"),
     ]
     examples = ["解冻信用卡"]
 
@@ -1225,7 +1270,7 @@ class CardUnlockTool(Tool):
         ctx.store.log("card.unlock", card_id=target.card_id)
         return ToolResult(
             True,
-            f"已解冻{KIND_LABEL.get(target.kind, target.kind)}（尾号{target.tail}），现已恢复正常交易。",
+            f"已解冻{_card_display(target)}，现已恢复正常交易。",
             data={"card_id": target.card_id},
             summary=f"已解冻尾号{target.tail}的卡片",
         )
@@ -1240,7 +1285,7 @@ class CardReportLostTool(Tool):
     risk_level = "high"
     requires_confirmation = True
     params = [
-        ToolParam("card", "string", False, "卡片，如 信用卡/尾号8877"),
+        ToolParam("card", "string", True, "卡片，如 信用卡/尾号8877"),
     ]
     examples = ["我的卡丢了，帮我挂失", "挂失信用卡"]
 
@@ -1280,7 +1325,7 @@ class CardReportLostTool(Tool):
         )
         ctx.store.log("card.report_lost", card_id=target.card_id, new_card=new_card.card_id)
         lines = [
-            f"已挂失{KIND_LABEL.get(target.kind, target.kind)}（尾号{target.tail}），该卡即刻起无法用于任何交易。",
+            f"已挂失{_card_display(target)}，该卡即刻起无法用于任何交易。",
             f"  补卡申请编号：{new_card.card_id}   预计 3-5 个工作日寄出",
             f"  进度提醒任务：{task.task_id}",
             "  温馨提示：原卡的自动扣款协议（如订阅、还款）会一并转移到新卡。",

@@ -16,6 +16,8 @@ class TestCardManagement(unittest.TestCase):
         self.assertEqual(reply.data["count"], 4)
         self.assertIn("32,860.52", reply.text)
         self.assertIn("150,000.00", reply.text)
+        self.assertIn("银联｜工资卡", reply.text)
+        self.assertIn("微众银行｜网购专用虚拟卡", reply.text)
 
     def test_add_existing_card_and_open_new_card_are_different_intents(self):
         bind_agent = make_agent()
@@ -308,6 +310,61 @@ class TestCardManagement(unittest.TestCase):
         card = self.agent.store.find_card("u_001", "信用卡")
         self.assertEqual(card.credit_limit, 30000.0)
 
+    def test_limit_adjust_keeps_card_selected_in_follow_up(self):
+        reply = self.agent.handle("额度调整")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("哪张卡", reply.text)
+        self.assertIn("3011", reply.text)
+
+        reply = self.agent.handle("微众银行 · 尾号3011的卡调整到10000")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("单笔限额", reply.text)
+        self.assertIn("日限额", reply.text)
+        self.assertNotIn("8877", reply.text)
+        self.assertEqual(self.agent.session.pending.missing, ["limit_type"])
+
+        reply = self.agent.handle("调整日限额")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("虚拟卡", reply.text)
+        self.assertIn("3011", reply.text)
+        self.assertIn("日限额", reply.text)
+        self.assertIn("10,000", reply.text)
+        self.assertNotIn("8877", reply.text)
+
+        reply = self.agent.handle("确认")
+        if reply.kind == "verify":
+            reply = self.agent.handle("123456")
+        self.assertTrue(reply.ok)
+        self.assertEqual(self.agent.store.find_card("u_001", "3011").daily_limit, 10000.0)
+        self.assertEqual(self.agent.store.find_card("u_001", "8877").credit_limit, 50000.0)
+
+    def test_direct_limit_adjust_phrase_does_not_use_default_credit_card(self):
+        reply = self.agent.handle("把微众银行尾号3011的卡调整到10000")
+        self.assertEqual(reply.intent, "card.limit_adjust")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("单笔限额", reply.text)
+        self.assertIn("日限额", reply.text)
+        self.assertEqual(self.agent.session.pending.slots["card"], "3011")
+        self.assertEqual(self.agent.session.pending.slots["new_limit"], 10000.0)
+
+    def test_card_control_shortcut_requires_card_and_explicit_action(self):
+        reply = self.agent.handle("线上交易设置")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("哪张卡", reply.text)
+
+        reply = self.agent.handle("微众银行尾号3011")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("开启还是关闭", reply.text)
+        self.assertNotIn("8877", reply.text)
+
+        reply = self.agent.handle("关闭")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("虚拟卡", reply.text)
+        self.assertIn("3011", reply.text)
+        self.assertIn("线上交易", reply.text)
+        self.assertIn("关闭", reply.text)
+        self.assertNotIn("8877", reply.text)
+
     def test_turn_off_overseas_transactions(self):
         reply = self.agent.handle("关闭信用卡的境外交易")
         self.assertEqual(reply.kind, "confirm")
@@ -332,20 +389,55 @@ class TestCardManagement(unittest.TestCase):
         self.assertTrue(reply.ok)
         self.assertEqual(self.agent.store.find_card("u_001", "信用卡").status, "active")
 
+    def test_freeze_confirmation_cannot_be_silently_replaced_by_transfer(self):
+        card = self.agent.store.find_card("u_001", "3011")
+        source = self.agent.store.find_card("u_001", "工资卡")
+        source_before = source.balance
+
+        self.agent.handle("冻结卡片")
+        reply = self.agent.handle("虚拟卡尾号3011，网购专用虚拟卡")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertEqual(self.agent.session.pending.intent, "card.freeze")
+
+        reply = self.agent.handle(
+            "从工资卡转账300到虚拟卡尾号3011，网购专用虚拟卡"
+        )
+
+        self.assertEqual(reply.intent, "card.freeze")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("尚未执行", reply.text)
+        self.assertIn("请先回复「确认」", reply.text)
+        self.assertEqual(card.status, "active")
+        self.assertAlmostEqual(source.balance, source_before, places=2)
+        self.assertEqual(self.agent.session.pending.intent, "card.freeze")
+
+        reply = self.agent.handle("确认")
+        self.assertTrue(reply.ok)
+        self.assertEqual(card.status, "frozen")
+
+        reply = self.agent.handle(
+            "从工资卡转账300到虚拟卡尾号3011，网购专用虚拟卡"
+        )
+        self.assertEqual(reply.intent, "transfer.internal")
+        self.assertEqual(reply.kind, "error")
+        self.assertIn("尾号3011", reply.text)
+        self.assertIn("已冻结", reply.text)
+        self.assertAlmostEqual(source.balance, source_before, places=2)
+
     def test_report_lost_is_two_step_plan(self):
-        reply = self.agent.handle("我的卡丢了，帮我挂失")
+        reply = self.agent.handle("我的微众银行尾号3011虚拟卡丢了，帮我挂失")
         self.assertEqual(reply.kind, "confirm")
         self.assertEqual(reply.plan, ["card.freeze", "card.report_lost"])
         reply = self.agent.handle("确认")
         self.assertTrue(reply.ok)
         self.assertEqual(len(reply.trace), 2)
-        card = self.agent.store.find_card("u_001", "信用卡")
+        card = self.agent.store.find_card("u_001", "3011")
         self.assertEqual(card.status, "lost")
         # 自动生成了补卡申请
         self.assertTrue([c for c in self.agent.store.cards_of("u_001") if c.status == "pending"])
 
     def test_lost_card_cannot_be_unfrozen(self):
-        run_to_completion(self.agent, self.agent.handle("我的卡丢了，帮我挂失"))
+        run_to_completion(self.agent, self.agent.handle("我的信用卡丢了，帮我挂失"))
         reply = run_to_completion(self.agent, self.agent.handle("解冻信用卡"))
         self.assertFalse(reply.ok)
 
@@ -366,6 +458,62 @@ class TestCardManagement(unittest.TestCase):
         self.assertAlmostEqual(credit.used, used_before - 3000, places=2)
         self.assertIn("信用卡还款成功", reply.text)
         self.assertIn("银行卡资产总额", reply.text)
+
+    def test_virtual_card_to_own_credit_card_is_repayment(self):
+        source = self.agent.store.find_card("u_001", "3011")
+        target = self.agent.store.find_card("u_001", "8877")
+        source_before = source.balance
+        used_before = target.used
+
+        reply = self.agent.handle(
+            "虚拟卡尾号3011，网购专用虚拟卡给信用卡尾号8877，主刷信用卡转500"
+        )
+
+        self.assertEqual(reply.intent, "card.repay")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("信用卡还款", reply.text)
+        self.assertIn("3011", reply.text)
+        self.assertIn("8877", reply.text)
+        self.assertNotIn("数字人民币", reply.text)
+
+        reply = self.agent.handle("确认")
+        self.assertEqual(reply.kind, "question")
+        reply = self.agent.handle("246810")
+        self.assertTrue(reply.ok)
+        self.assertAlmostEqual(source.balance, source_before - 500, places=2)
+        self.assertAlmostEqual(target.used, used_before - 500, places=2)
+
+    def test_frozen_card_blocks_repayment_and_management(self):
+        self.agent.handle("冻结信用卡尾号8877")
+        self.agent.handle("确认")
+
+        cases = [
+            (
+                "虚拟卡尾号3011给信用卡尾号8877转500",
+                "card.repay",
+                "信用卡还款",
+            ),
+            (
+                "信用卡尾号8877额度调整到30000",
+                "card.limit_adjust",
+                "额度调整",
+            ),
+            (
+                "关闭信用卡尾号8877的线上交易",
+                "card.control",
+                "交易开关调整",
+            ),
+        ]
+        for text, expected_intent, expected_action in cases:
+            with self.subTest(intent=expected_intent):
+                reply = self.agent.handle(text)
+                self.assertEqual(reply.intent, expected_intent)
+                self.assertEqual(reply.kind, "error")
+                self.assertFalse(reply.ok)
+                self.assertIn("尾号8877", reply.text)
+                self.assertIn("已冻结", reply.text)
+                self.assertIn(expected_action, reply.text)
+                self.assertIsNone(self.agent.session.pending)
 
 
 if __name__ == "__main__":
