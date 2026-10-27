@@ -163,6 +163,16 @@ class TestCrossScene(unittest.TestCase):
         self.assertEqual(self.agent.session.pending.kind, "gift_choice")
         self.assertTrue(switched.data["options"])
 
+    def test_gift_choice_can_switch_to_another_shortcut(self):
+        begin_birthday_recommendation(self.agent)
+        self.assertEqual(self.agent.session.pending.kind, "gift_choice")
+
+        switched = self.agent.handle("自动续费检测")
+
+        self.assertEqual(switched.intent, "subscription.detect")
+        self.assertIsNone(self.agent.session.pending)
+        self.assertNotIn("请回复要选择的方案序号", switched.text)
+
     def test_due_tasks_execute_on_time_travel(self):
         recommendation = begin_birthday_recommendation(self.agent)
         run_to_completion(self.agent, choose_first_gift(self.agent, recommendation))

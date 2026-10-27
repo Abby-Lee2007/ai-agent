@@ -33,6 +33,7 @@ from finagent.agent.subscription_lifecycle import process_subscription_lifecycle
 from finagent.data.store import Clock, DataStore
 from finagent.data.market import MarketDataProvider
 from finagent.data.providers import build_data_providers
+from finagent.nlu.capability_catalog import resolve_capability_label
 from finagent.nlu.intent_parser import GENERIC_PERSON_VALUES, IntentParser
 from finagent.nlu.intent_parser import normalize_synonyms
 from finagent.nlu.intent_schema import Intent
@@ -316,6 +317,10 @@ class BankingAgent:
             return self._explain_last_reply(text)
 
         pending = self.session.pending
+        if pending is not None:
+            interrupted = self._interrupt_with_capability_shortcut(text)
+            if interrupted is not None:
+                return interrupted
 
         if pending is not None and pending.kind == "blocked_draft":
             return self._resume_blocked_draft(pending, text)
@@ -415,6 +420,16 @@ class BankingAgent:
         self.last_intent_name = intent.name
         if intent.is_unknown():
             return AgentReply(self._unknown_reply(text), kind="question", needs_input=True)
+        return self._continue_with_intent(intent)
+
+    def _interrupt_with_capability_shortcut(self, text: str) -> Optional[AgentReply]:
+        """Let a complete shortcut label replace any unfinished conversation state."""
+        if classify_control(text) or resolve_capability_label(text) is None:
+            return None
+        intent = self.parser.parse(text, history=self.session.history[:-1])
+        if intent.is_unknown():
+            return None
+        self.session.clear_pending()
         return self._continue_with_intent(intent)
 
     def _continue_with_intent(self, intent: Intent) -> AgentReply:

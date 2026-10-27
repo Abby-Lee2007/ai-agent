@@ -262,7 +262,51 @@ try {
   assert(birthdayShortcut.userText === "生日惊喜", "生日惊喜快捷指令没有只发送卡片简称");
   assert(!birthdayShortcut.agentText.includes("老婆"), "生日惊喜仍预设了妻子");
   assert(!birthdayShortcut.agentText.includes("对象"), "生日惊喜仍预设了对象");
+  await sendPrompt(cdp, "老师", "生日");
+  await sendPrompt(cdp, "11月20日", "礼物偏好");
+  await sendPrompt(cdp, "沿用资料", "过敏");
+  await sendPrompt(cdp, "无", "预算");
+  await sendPrompt(cdp, "1000", "第1个");
+  await waitFor(
+    cdp,
+    `document.querySelector("#service-status")?.textContent === "接口就绪"
+      && document.querySelector("#send-button")?.disabled === false`,
+  );
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-category")]
+      .find((item) => item.textContent.includes("智能转账"));
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll(".capability-action")].some(
+      (button) => button.textContent.trim() === "给他人转账"
+    )`,
+  );
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-action")]
+      .find((item) => item.textContent.trim() === "给他人转账");
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent.includes("转给谁")`,
+  );
+  const giftChoiceInterrupted = await evaluate(cdp, `(() => ({
+    userText: [...document.querySelectorAll(".message.user .bubble")].at(-1)?.textContent.trim(),
+    interfaceText: document.querySelector("#service-status")?.textContent
+  }))()`);
+  assert(giftChoiceInterrupted.userText === "给他人转账", "待选礼物状态下其他快捷指令被锁住");
+  assert(giftChoiceInterrupted.interfaceText === "接口就绪", "待选礼物切换后界面仍处于忙碌状态");
   await sendPrompt(cdp, "取消", "本次操作已取消");
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-category")]
+      .find((item) => item.textContent.includes("人际礼物"));
+    button?.click();
+    return Boolean(button);
+  })()`);
   await waitFor(
     cdp,
     `[...document.querySelectorAll(".capability-action")].some(

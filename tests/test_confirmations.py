@@ -136,6 +136,24 @@ class TestActionDataConfirmation(unittest.TestCase):
         self.assertEqual(len(agent.store.transactions_of("u_001")), before + 1)
         self.assertEqual(len(agent.store.membership_orders_of("u_001")), 1)
 
+    def test_membership_pending_shortcuts_can_switch_tasks(self):
+        cases = [
+            ("帮我充腾讯视频3个月60元、Keep12个月199元", "membership_options"),
+            ("充一个QQ音乐绿钻的年度会员", "membership_purchase_prices"),
+            ("充腾讯视频3个月60元，自动续费", "membership_renewal_prices"),
+        ]
+        for text, pending_kind in cases:
+            with self.subTest(pending_kind=pending_kind):
+                agent = make_agent()
+                prompt = agent.handle(text)
+                self.assertEqual(prompt.kind, "question")
+                self.assertEqual(agent.session.pending.kind, pending_kind)
+
+                switched = agent.handle("自动续费检测")
+
+                self.assertEqual(switched.intent, "subscription.detect")
+                self.assertIsNone(agent.session.pending)
+
     def test_annual_membership_without_price_asks_for_price(self):
         agent = make_agent()
 
