@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Callable, Dict, Optional
 
 from finagent.agent.core import AgentReply, BankingAgent
@@ -243,6 +243,7 @@ class AgentSessionService:
         with self._lock:
             record = self._get_or_load(session_id)
             store = record.agent.store
+            today = store.clock.today()
             user = store.get_user(record.user_id)
             if user is None:
                 raise ValueError(f"用户不存在：{record.user_id}")
@@ -277,22 +278,25 @@ class AgentSessionService:
                     raise ValueError("月收入不能为负数")
                 user.monthly_income = round(income, 2)
             if values.get("birthday") is not None:
-                birthday = self._validate_date(values["birthday"], "生日")
+                birthday = self._validate_birthday(values["birthday"], "生日", today)
                 user.birthday = birthday
 
             prefs = dict(user.preferences or {})
             if values.get("spouse_name") is not None:
                 prefs["spouse"] = str(values["spouse_name"]).strip()[:40]
             if values.get("spouse_birthday") is not None:
-                prefs["spouse_birthday"] = self._validate_date(
-                    values["spouse_birthday"], "爱人生日"
+                prefs["spouse_birthday"] = self._validate_birthday(
+                    values["spouse_birthday"], "爱人生日", today
                 )
             if values.get("anniversary") is not None:
                 prefs["anniversary"] = self._validate_date(
                     values["anniversary"], "纪念日"
                 )
             if values.get("care_people") is not None:
-                prefs["care_people"] = self._normalize_care_people(values["care_people"])
+                prefs["care_people"] = self._normalize_care_people(
+                    values["care_people"],
+                    today,
+                )
             if values.get("favorite_gift") is not None:
                 prefs["favorite_gift"] = self._list_values(values["favorite_gift"])
             if values.get("avoid") is not None:
@@ -550,6 +554,13 @@ class AgentSessionService:
         except ValueError as exc:
             raise ValueError(f"{label}格式应为 YYYY-MM-DD") from exc
 
+    @classmethod
+    def _validate_birthday(cls, value: Any, label: str, today: date) -> str:
+        text = cls._validate_date(value, label)
+        if text and text > today.isoformat():
+            raise ValueError(f"{label}不能晚于今天")
+        return text
+
     @staticmethod
     def _list_values(value: Any) -> list[str]:
         if isinstance(value, list):
@@ -575,7 +586,7 @@ class AgentSessionService:
             people.append(person)
         return people
 
-    def _normalize_care_people(self, value: Any) -> list[dict[str, Any]]:
+    def _normalize_care_people(self, value: Any, today: date) -> list[dict[str, Any]]:
         if not isinstance(value, list):
             raise ValueError("关心的人必须是列表")
         from finagent.tools.card_tools import luhn_ok
@@ -617,7 +628,11 @@ class AgentSessionService:
                 "person_id": str(item.get("person_id") or f"CARE{index + 1:04d}")[:40],
                 "name": name[:40],
                 "relation": str(item.get("relation") or "关心的人").strip()[:20],
-                "birthday": self._validate_date(item.get("birthday"), f"{name}的生日"),
+                "birthday": self._validate_birthday(
+                    item.get("birthday"),
+                    f"{name}的生日",
+                    today,
+                ),
                 "anniversary": self._validate_date(item.get("anniversary"), f"{name}的纪念日"),
                 "phone": phone,
                 "wechat": str(item.get("wechat") or "").strip()[:100],

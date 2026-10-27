@@ -11,6 +11,28 @@ from tests.support import make_store
 
 
 class TestProfileSettings(unittest.TestCase):
+    def test_birthdays_cannot_be_in_the_future(self):
+        service = AgentSessionService(make_store(), llm_mode="off")
+        session_id = service.create_session(user_id="u_001", channel="h5")["session_id"]
+        future = "2027-01-01"
+
+        cases = [
+            {"birthday": future},
+            {"spouse_birthday": future},
+            {
+                "care_people": [{
+                    "name": "小雅",
+                    "relation": "朋友",
+                    "birthday": future,
+                }]
+            },
+        ]
+        for values in cases:
+            with self.subTest(field=next(iter(values))):
+                with self.assertRaises(ValueError) as raised:
+                    service.update_profile_settings(session_id, values)
+                self.assertIn("不能晚于今天", str(raised.exception))
+
     def test_risk_assessment_result_is_written_back_to_profile(self):
         service = AgentSessionService(make_store(), llm_mode="off")
         session_id = service.create_session(user_id="u_001", channel="h5")["session_id"]

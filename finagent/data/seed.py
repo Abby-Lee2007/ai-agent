@@ -123,7 +123,7 @@ def _add_users(store) -> None:
         verified=True,
         preferences={
             "spouse": "林雅雯",
-            "spouse_birthday": "2026-11-20",
+            "spouse_birthday": "1996-11-20",
             "anniversary": "2027-05-20",
             "monthly_budget": 9000.0,
             "budget_categories": ["餐饮", "购物", "娱乐"],

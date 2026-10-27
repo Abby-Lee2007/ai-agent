@@ -1636,6 +1636,12 @@
     let capabilityCatalog = null;
     let activeCapabilityId = "";
 
+    function localTodayISO() {
+      const now = new Date();
+      const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+      return local.toISOString().slice(0, 10);
+    }
+
     function newRequestId() {
       if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
       return `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -2695,6 +2701,8 @@
         risk_profile: `${user.risk_profile || "未测评"}${user.risk_score ? `（${user.risk_score}/5）` : ""}`,
         risk_assessed_at: user.risk_assessed_at || "尚未完成",
       });
+      const birthdayInput = profileForm.querySelector('[name="birthday"]');
+      if (birthdayInput) birthdayInput.max = localTodayISO();
       customerName.textContent = user.name || "演示客户";
       customerSubtitle.textContent = `${user.city || "深圳"} · ${user.risk_profile || "平衡型投资者"}`;
       carePeople = Array.isArray(prefs.care_people) ? prefs.care_people.map((item) => ({ ...item })) : [];
@@ -2708,6 +2716,7 @@
           phone: "",
           wechat: "",
           alipay: "",
+          bank_name: "",
           bank_card: "",
           favorite_gift: prefs.favorite_gift || [],
           avoid: prefs.avoid || [],
@@ -2791,6 +2800,7 @@
         relation.placeholder = "配偶/母亲/朋友";
         const birthday = makeInput("date", person.birthday || "");
         birthday.dataset.field = "birthday";
+        birthday.max = localTodayISO();
         const anniversary = makeInput("date", person.anniversary || "");
         anniversary.dataset.field = "anniversary";
         const phone = makeInput("tel", person.phone || "");

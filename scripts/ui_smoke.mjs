@@ -630,6 +630,8 @@ try {
     careBankPlaceholder: document.querySelector('.care-person [data-field="bank_card"]')?.placeholder || "",
     careBankLabel: document.querySelector('.care-person [data-field="bank_card"]')
       ?.closest(".settings-field")?.textContent || "",
+    ownBirthdayMax: document.querySelector('[name="birthday"]')?.max || "",
+    careBirthdayMax: document.querySelector('.care-person [data-field="birthday"]')?.max || "",
     careWideFieldsAligned: (() => {
       const grid = document.querySelector(".care-person .settings-grid");
       if (!grid) return false;
@@ -676,6 +678,13 @@ try {
   assert(profilePanel.careBankHint.includes("完整卡号"), "银行卡提示没有说明需要完整卡号");
   assert(profilePanel.careBankPlaceholder.includes("完整"), "银行卡输入框仍暗示只输入尾号");
   assert(profilePanel.careBankLabel.includes("完整卡号"), "银行卡字段名没有说明需要完整卡号");
+  const today = await evaluate(cdp, `(() => {
+    const now = new Date();
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 10);
+  })()`);
+  assert(profilePanel.ownBirthdayMax === today, "个人生日没有禁止选择未来日期");
+  assert(profilePanel.careBirthdayMax === today, "关心的人生日没有禁止选择未来日期");
   assert(profilePanel.careWideFieldsAligned, "关心的人长字段没有按整行对齐");
   assert(profilePanel.cardEditors >= 3, "银行卡设置没有加载预设卡片");
   assert(profilePanel.cardDeletes >= 3, "银行卡设置没有删除按钮");
