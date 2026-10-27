@@ -366,12 +366,21 @@ class Planner:
         slots = dict(intent.slots)
         person = str(slots.get("person") or "").strip()
         if not person:
-            return Plan(
-                intent=intent.name,
-                slots=slots,
-                missing=["person"],
-                question="这份生日惊喜要送给谁？可以填写姓名或关系，例如「老师」「妈妈」。",
-            )
+            care_people = [
+                item
+                for item in ((ctx.user.preferences or {}).get("care_people") or [])
+                if isinstance(item, dict) and str(item.get("name") or "").strip()
+            ]
+            if len(care_people) == 1:
+                person = str(care_people[0].get("name") or "").strip()
+                slots["person"] = person
+            else:
+                return Plan(
+                    intent=intent.name,
+                    slots=slots,
+                    missing=["person"],
+                    question="这份生日惊喜要送给谁？可以填写姓名或关系，例如「老师」「妈妈」。",
+                )
         target_person, birthday = lookup_person(ctx, person)
         display_name = target_person.name if target_person else person
         given = slots.get("birthday")

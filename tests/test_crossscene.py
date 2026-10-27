@@ -102,6 +102,24 @@ class TestCrossScene(unittest.TestCase):
         self.assertIn("生日", reply.text)
         self.assertEqual(self.agent.session.pending.missing, ["birthday"])
 
+    def test_birthday_shortcut_uses_the_only_saved_care_person(self):
+        prefs = dict(self.agent.store.get_user("u_001").preferences or {})
+        prefs["care_people"] = [{
+            "person_id": "CARE-SISTER",
+            "name": "妹妹",
+            "relation": "妹妹",
+            "birthday": "2000-05-01",
+        }]
+        self.agent.store.get_user("u_001").preferences = prefs
+
+        reply = self.agent.handle("生日惊喜")
+
+        self.assertEqual(reply.intent, "crossscene.birthday_plan")
+        self.assertNotIn("要送给谁", reply.text)
+        self.assertIn("妹妹", reply.text)
+        self.assertIn("2027-05-01", reply.text)
+        self.assertNotIn("birthday", self.agent.session.pending.missing)
+
     def test_birthday_plan_asks_for_unknown_birthday(self):
         self.agent.store.get_user("u_003").birthday = ""
         reply = self.agent.handle("帮我给王强准备生日惊喜")
