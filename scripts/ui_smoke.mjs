@@ -188,6 +188,7 @@ try {
     const columnPositions = rows.map((row) =>
       [...row.querySelectorAll("td")].map((cell) => Math.round(cell.getBoundingClientRect().left))
     );
+    const rowHeights = rows.map((row) => Math.round(row.getBoundingClientRect().height));
     const firstRow = rows[0];
     const amountCell = firstRow?.querySelector("td:nth-child(2)");
     const bubbleRect = bubble?.getBoundingClientRect();
@@ -200,6 +201,9 @@ try {
         && columnPositions.every((positions) =>
           positions.every((left, index) => Math.abs(left - columnPositions[0][index]) <= 1)
         ),
+      rowHeights,
+      uniformRowHeights: rowHeights.length > 1
+        && Math.max(...rowHeights) - Math.min(...rowHeights) <= 1,
       amountRightAligned: amountCell ? getComputedStyle(amountCell).textAlign === "right" : false,
       bubbleInsideViewport: bubbleRect
         ? bubbleRect.left >= 0 && bubbleRect.right <= innerWidth + 1
@@ -215,6 +219,7 @@ try {
   assert(subscriptionTable.headers.includes("自动续费"), "自动续费表格缺少自动续费列");
   assert(subscriptionTable.cellCounts.every((count) => count === 6), "自动续费表格列数不一致");
   assert(subscriptionTable.columnsConsistent, "自动续费表格各行列未对齐");
+  assert(subscriptionTable.uniformRowHeights, "自动续费表格行高不一致");
   assert(subscriptionTable.amountRightAligned, "自动续费金额列没有右对齐");
   assert(subscriptionTable.bubbleInsideViewport, "自动续费表格气泡超出桌面视口");
   assert(subscriptionTable.hasScrollWrapper, "自动续费表格缺少横向滚动容器");

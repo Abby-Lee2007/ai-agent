@@ -294,6 +294,12 @@
       font-size: 11px;
       white-space: normal;
     }
+    .subscription-service-meta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
     .subscription-service .subscription-service-alert {
       color: var(--warning);
       font-weight: 700;
@@ -1401,15 +1407,18 @@
         service.className = "subscription-service";
         const merchant = document.createElement("strong");
         merchant.textContent = item.merchant || "未知订阅";
+        const meta = document.createElement("span");
+        meta.className = "subscription-service-meta";
         const category = document.createElement("span");
         category.textContent = item.category || "订阅服务";
-        service.append(merchant, category);
+        meta.appendChild(category);
         if (item.hiked) {
           const alert = document.createElement("span");
           alert.className = "subscription-service-alert";
           alert.textContent = "近期涨价";
-          service.appendChild(alert);
+          meta.appendChild(alert);
         }
+        service.append(merchant, meta);
         serviceCell.appendChild(service);
 
         const amountCell = document.createElement("td");
