@@ -40,6 +40,7 @@ from finagent.tools import (
     SplitBillTool,
     SubscribeTool,
     SubscriptionCancelTool,
+    SubscriptionChangeCycleTool,
     SubscriptionDetectTool,
     SubscriptionListTool,
     SubscriptionRemindTool,
@@ -129,6 +130,7 @@ def build_default_registry() -> ToolRegistry:
             SubscriptionResumeTool(),
             SubscriptionRemindTool(),
             MembershipPurchaseTool(),
+            SubscriptionChangeCycleTool(),
             # 跨场景联动
             GoalCreateTool(),
             GoalListTool(),

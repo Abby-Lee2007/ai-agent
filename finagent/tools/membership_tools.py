@@ -219,3 +219,81 @@ class MembershipPurchaseTool(Tool):
             },
             summary=f"会员充值 {len(fulfilled)} 项，合计 {total:,.2f} 元",
         )
+
+
+class SubscriptionChangeCycleTool(Tool):
+    """Change the next term of an active subscription without charging now."""
+
+    name = "subscription.change_cycle"
+    category = "订阅管理"
+    description = "修改已有订阅的下一个续费周期和续费价格"
+    risk_level = "medium"
+    requires_confirmation = True
+    params = [
+        ToolParam("merchant", "string", True, "订阅平台名称"),
+        ToolParam("term_months", "integer", True, "新的续费周期月数"),
+        ToolParam("renewal_price", "number", True, "新的每期续费价格"),
+        ToolParam("auto_renew", "boolean", False, "下期是否自动续费", default=True),
+    ]
+    examples = [
+        "把腾讯视频改成12个月续费，续费价288元",
+        "Keep下个周期改成6个月，续费价120元",
+    ]
+
+    def run(  # type: ignore[override]
+        self,
+        ctx: ToolContext,
+        merchant: str,
+        term_months: Any,
+        renewal_price: Any,
+        auto_renew: bool = True,
+    ) -> ToolResult:
+        try:
+            term = int(term_months)
+            price = round(float(renewal_price), 2)
+        except (TypeError, ValueError):
+            return ToolResult(False, "周期或续费价格无法识别。")
+        if term < 1 or term > 36:
+            return ToolResult(False, "续费周期必须在 1 到 36 个月之间。")
+        if price <= 0:
+            return ToolResult(False, "续费价格必须大于 0。")
+
+        target = next(
+            (
+                subscription
+                for subscription in ctx.store.subscriptions_of(ctx.user_id, status="active")
+                if merchant and (
+                    merchant in subscription.merchant
+                    or subscription.merchant in merchant
+                )
+            ),
+            None,
+        )
+        if target is None:
+            return ToolResult(False, f"没有找到可调整周期的「{merchant}」订阅。")
+        effective_at = target.expires_at or target.next_charge_date
+        target.pending_term_months = term
+        target.pending_amount = price
+        target.pending_auto_renew = bool(auto_renew)
+        target.pending_effective_at = effective_at
+        ctx.store.touch(target)
+        return ToolResult(
+            True,
+            "\n".join([
+                f"已登记「{target.merchant}」的下期服务计划",
+                f"  当前周期：{target.term_months} 个月，续费价 "
+                f"{target.amount:,.2f} 元",
+                f"  下期周期：{term} 个月，续费价 {price:,.2f} 元",
+                f"  生效时间：{effective_at}（当前周期到期后）",
+                f"  下期自动续费：{'是' if auto_renew else '否'}",
+            ]),
+            data={
+                "sub_id": target.sub_id,
+                "merchant": target.merchant,
+                "current_expires_at": effective_at,
+                "pending_term_months": term,
+                "pending_amount": price,
+                "pending_auto_renew": bool(auto_renew),
+            },
+            summary=f"已登记「{target.merchant}」下期改为 {term} 个月",
+        )

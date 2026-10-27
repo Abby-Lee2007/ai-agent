@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import calendar
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List
@@ -23,6 +24,26 @@ def _subscriptions(ctx: ToolContext, status: str = "active"):
     if getattr(ctx, "providers", None) is not None:
         return ctx.providers.subscriptions.of(ctx.user_id, status)
     return ctx.store.subscriptions_of(ctx.user_id, status or None)
+
+
+def _roll_subscription_expiry(value: date, cycle: str, today: date) -> date:
+    """Move an expired subscription forward to its next valid billing date."""
+    candidate = value
+    while candidate < today:
+        if cycle == "weekly":
+            candidate += timedelta(days=7)
+        elif cycle == "yearly":
+            year = candidate.year + 1
+            month = candidate.month
+            day = min(candidate.day, calendar.monthrange(year, month)[1])
+            candidate = date(year, month, day)
+        else:
+            month_index = candidate.month
+            year = candidate.year + (month_index // 12)
+            month = month_index % 12 + 1
+            day = min(candidate.day, calendar.monthrange(year, month)[1])
+            candidate = date(year, month, day)
+    return candidate
 
 
 def detect_subscriptions(ctx: ToolContext) -> List[Dict[str, Any]]:
@@ -93,19 +114,40 @@ class SubscriptionDetectTool(Tool):
         detected = detect_subscriptions(ctx)
         if not detected:
             return ToolResult(True, "没有从流水里识别到周期性扣费。", summary="未识别到订阅")
+        existing = {s.merchant: s for s in _subscriptions(ctx, status="")}
         rows = []
         monthly_total = 0.0
+        auto_renew_count = 0
         for item in detected:
-            monthly_total += item["amount"]
+            subscription = existing.get(item["merchant"])
+            if subscription is not None:
+                item["expires_at"] = subscription.expires_at or subscription.next_charge_date
+                item["auto_renew"] = bool(
+                    subscription.auto_renew and subscription.status == "active"
+                )
+            else:
+                item["expires_at"] = (
+                    date.fromisoformat(item["last_date"]) + timedelta(days=30)
+                ).isoformat()
+                item["auto_renew"] = True
+            if item["auto_renew"]:
+                monthly_total += item["amount"]
+                auto_renew_count += 1
             amount_text = f"{item['amount']:,.2f}"
             if item["hiked"]:
                 amount_text += f" ↑（原 {item['previous_amount']:,.2f}）"
             rows.append([item["merchant"], item["category"], amount_text,
-                         f"{item['interval_days']:.0f} 天", item["last_date"], str(item["occurrences"])])
+                         item["expires_at"], "是" if item["auto_renew"] else "否",
+                         f"{item['interval_days']:.0f} 天", item["last_date"],
+                         str(item["occurrences"])])
         lines = [
-            f"共识别到 {len(detected)} 项自动续费，合计每月约 {monthly_total:,.2f} 元"
+            f"共识别到 {len(detected)} 项订阅，其中 {auto_renew_count} 项目前自动续费，"
+            f"合计每月约 {monthly_total:,.2f} 元"
             f"（一年约 {monthly_total * 12:,.2f} 元）：",
-            render_table(["商户", "类别", "最近扣费", "周期", "最近日期", "次数"], rows),
+            render_table(
+                ["商户", "类别", "最近扣费", "到期时间", "自动续费", "周期", "最近日期", "次数"],
+                rows,
+            ),
             "",
             "  ↑ 表示该订阅近期涨价，建议确认是否继续使用。",
         ]
@@ -114,10 +156,10 @@ class SubscriptionDetectTool(Tool):
             lines.append(f"  其中有 {len(hiked)} 项涨价：" + "、".join(d["merchant"] for d in hiked))
 
         # 把识别结果同步到订阅表，保证后续"取消订阅"能按商户找到记录
-        existing = {s.merchant for s in _subscriptions(ctx, status="")}
         for item in detected:
             if item["merchant"] in existing:
                 continue
+            next_charge_date = (date.fromisoformat(item["last_date"]) + timedelta(days=30)).isoformat()
             sub = Subscription(
                 sub_id=ctx.store.next_id("subscriptions"),
                 user_id=ctx.user_id,
@@ -125,16 +167,27 @@ class SubscriptionDetectTool(Tool):
                 amount=item["amount"],
                 category=item["category"],
                 last_charge_date=item["last_date"],
-                next_charge_date=(date.fromisoformat(item["last_date"]) + timedelta(days=30)).isoformat(),
+                next_charge_date=next_charge_date,
+                expires_at=next_charge_date,
+                auto_renew=True,
                 auto_detected=True,
             )
             ctx.store.touch(sub)
             ctx.store.subscriptions[sub.sub_id] = sub
+            existing[sub.merchant] = sub
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"count": len(detected), "monthly_total": round(monthly_total, 2), "items": detected},
-            summary=f"识别到 {len(detected)} 项订阅，每月约 {monthly_total:,.2f} 元",
+            data={
+                "count": len(detected),
+                "auto_renew_count": auto_renew_count,
+                "monthly_total": round(monthly_total, 2),
+                "items": detected,
+            },
+            summary=(
+                f"识别到 {len(detected)} 项订阅，其中 {auto_renew_count} 项自动续费，"
+                f"每月约 {monthly_total:,.2f} 元"
+            ),
         )
 
 
@@ -143,42 +196,74 @@ class SubscriptionListTool(Tool):
 
     name = "subscription.list"
     category = "订阅管理"
-    description = "列出所有订阅服务、下次扣费日期与月度合计"
+    description = "列出所有订阅服务、到期时间、自动续费状态与月度合计"
     risk_level = "low"
     params = []
     examples = ["我的订阅都有什么", "每个月自动扣多少钱"]
 
     def run(self, ctx: ToolContext) -> ToolResult:  # type: ignore[override]
-        subs = _subscriptions(ctx)
+        subs = _subscriptions(ctx, status="")
         if not subs:
-            return ToolResult(True, "您当前没有进行中的订阅。", summary="无订阅")
-        today = ctx.clock.today()
+            return ToolResult(True, "您当前没有任何订阅记录。", summary="无订阅")
         rows = []
         for s in subs:
-            days = ""
-            try:
-                days = f"{(date.fromisoformat(s.next_charge_date) - today).days} 天后"
-            except ValueError:
-                days = "-"
-            status = "涨价提醒" if (s.price_history and s.amount > max(s.price_history[:-1] or [s.amount]) * 1.2) else "正常"
+            expires_at = s.expires_at or s.next_charge_date
+            auto_renew = "是" if s.auto_renew and s.status == "active" else "否"
+            status = {
+                "active": "生效中",
+                "cancelled": "已取消",
+                "paused": "已暂停",
+                "trial": "试用中",
+            }.get(s.status, s.status)
+            if (
+                s.status == "active"
+                and s.price_history
+                and s.amount > max(s.price_history[:-1] or [s.amount]) * 1.2
+            ):
+                status += " · 涨价提醒"
             rows.append([
                 s.merchant,
                 s.category,
                 f"{s.amount:,.2f}",
-                s.next_charge_date,
-                days,
+                expires_at,
+                auto_renew,
                 status,
                 source_badge(s.source, s.is_live, s.is_demo),
             ])
         monthly = ctx.store.monthly_subscription_total(ctx.user_id)
+        auto_renew_count = sum(1 for s in subs if s.auto_renew and s.status == "active")
+        cancelled_count = sum(1 for s in subs if s.status == "cancelled")
         lines = [
-            f"当前生效的订阅共 {len(subs)} 项，月度合计约 {monthly:,.2f} 元：",
-            render_table(["商户", "类别", "金额", "下次扣费", "倒计时", "状态", "来源"], rows),
+            f"订阅共 {len(subs)} 项（自动续费 {auto_renew_count} 项，已取消 {cancelled_count} 项），"
+            f"月度自动续费合计约 {monthly:,.2f} 元：",
+            render_table(["商户", "类别", "金额", "到期时间", "自动续费", "状态", "来源"], rows),
         ]
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"count": len(subs), "monthly_total": monthly},
+            data={
+                "count": len(subs),
+                "monthly_total": monthly,
+                "items": [
+                    {
+                        "sub_id": s.sub_id,
+                        "merchant": s.merchant,
+                        "category": s.category,
+                        "amount": s.amount,
+                        "cycle": s.cycle,
+                        "next_charge_date": s.next_charge_date,
+                        "expires_at": s.expires_at or s.next_charge_date,
+                        "last_charge_date": s.last_charge_date,
+                        "auto_renew": bool(s.auto_renew and s.status == "active"),
+                        "status": s.status,
+                        "hiked": bool(
+                            s.price_history
+                            and s.amount > max(s.price_history[:-1] or [s.amount]) * 1.2
+                        ),
+                    }
+                    for s in subs
+                ],
+            },
             summary=f"{len(subs)} 项订阅，每月 {monthly:,.2f} 元",
         )
 
@@ -208,14 +293,30 @@ class SubscriptionCancelTool(Tool):
             return ToolResult(False, f"没有找到「{merchant}」的订阅。当前有：{names}")
 
         target.status = "cancelled"
+        target.auto_renew = False
+        target.expires_at = target.expires_at or target.next_charge_date
+        target.pending_term_months = 0
+        target.pending_amount = 0.0
+        target.pending_auto_renew = False
+        target.pending_effective_at = ""
         ctx.store.touch(target)
-        ctx.store.add_task(
+        for task in ctx.store.tasks_of(ctx.user_id, status="pending"):
+            if task.kind == "reminder" and task.payload.get("sub_id") == target.sub_id:
+                task.status = "cancelled"
+                task.executed_at = ctx.clock.iso()
+                task.result = "订阅已取消，续费提醒作废"
+                ctx.store.touch(task)
+        cancel_task = ctx.store.add_task(
             user_id=ctx.user_id,
             kind="subscription_cancel",
             run_date=ctx.clock.date_str(),
             title=f"已取消 {target.merchant} 自动续费",
             payload={"sub_id": target.sub_id, "merchant": target.merchant},
         )
+        cancel_task.status = "done"
+        cancel_task.executed_at = ctx.clock.iso()
+        cancel_task.result = "自动续费已关闭"
+        ctx.store.touch(cancel_task)
         saved = target.amount * (12 if target.cycle == "monthly" else 1)
         lines = [
             f"已取消「{target.merchant}」的自动续费",
@@ -227,6 +328,78 @@ class SubscriptionCancelTool(Tool):
             "\n".join(lines),
             data={"sub_id": target.sub_id, "merchant": target.merchant, "saved": round(saved, 2)},
             summary=f"已取消「{target.merchant}」订阅，年省约 {saved:,.2f} 元",
+        )
+
+
+class SubscriptionResumeTool(Tool):
+    """恢复已取消订阅的自动续费。"""
+
+    name = "subscription.resume"
+    category = "订阅管理"
+    description = "恢复指定订阅的自动续费"
+    risk_level = "high"
+    requires_confirmation = True
+    params = [
+        ToolParam("merchant", "string", True, "已取消的订阅商户名称"),
+    ]
+    examples = ["恢复腾讯视频VIP自动续费", "重新开通Keep会员"]
+
+    def run(self, ctx: ToolContext, merchant: str) -> ToolResult:  # type: ignore[override]
+        subs = _subscriptions(ctx, status="")
+        target = None
+        for subscription in subs:
+            if merchant and (
+                merchant in subscription.merchant
+                or subscription.merchant in merchant
+            ):
+                target = subscription
+                break
+        if target is None:
+            names = "、".join(s.merchant for s in subs if s.status == "cancelled") or "暂无"
+            return ToolResult(False, f"没有找到「{merchant}」的已取消订阅。可恢复：{names}")
+        if target.status == "active" and target.auto_renew:
+            return ToolResult(
+                True,
+                f"「{target.merchant}」已经在自动续费中，无需重复恢复。",
+                data={
+                    "sub_id": target.sub_id,
+                    "merchant": target.merchant,
+                    "expires_at": target.expires_at or target.next_charge_date,
+                    "auto_renew": True,
+                },
+                summary=f"「{target.merchant}」已处于自动续费状态",
+            )
+
+        today = ctx.clock.today()
+        current_expiry = target.expires_at or target.next_charge_date
+        try:
+            expiry = date.fromisoformat(current_expiry)
+        except ValueError:
+            expiry = today
+        next_expiry = _roll_subscription_expiry(expiry, target.cycle, today)
+
+        target.status = "active"
+        target.auto_renew = True
+        target.expires_at = next_expiry.isoformat()
+        target.next_charge_date = next_expiry.isoformat()
+        ctx.store.touch(target)
+
+        message = "\n".join([
+            f"已恢复「{target.merchant}」的自动续费",
+            f"  每期金额：{target.amount:,.2f} 元",
+            f"  当前周期到期：{target.expires_at}",
+            "  后续将按订阅周期继续自动扣款。",
+        ])
+        return ToolResult(
+            True,
+            message,
+            data={
+                "sub_id": target.sub_id,
+                "merchant": target.merchant,
+                "expires_at": target.expires_at,
+                "auto_renew": True,
+            },
+            summary=f"已恢复「{target.merchant}」自动续费",
         )
 
 
@@ -250,6 +423,8 @@ class SubscriptionRemindTool(Tool):
         today = ctx.clock.today()
         upcoming = []
         for s in _subscriptions(ctx):
+            if not s.auto_renew:
+                continue
             try:
                 delta = (date.fromisoformat(s.next_charge_date) - today).days
             except ValueError:
