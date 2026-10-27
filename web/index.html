@@ -695,7 +695,6 @@
     }
     .gift-option-select {
       width: 100%;
-      margin-top: auto;
       padding: 8px 10px;
       border: 1px solid #b9d6cf;
       border-radius: 6px;
@@ -704,10 +703,33 @@
       font-size: 12px;
       font-weight: 750;
     }
-    .gift-option-card .gift-option-select { margin-top: 14px; }
+    .gift-option-actions {
+      display: grid;
+      gap: 7px;
+      margin-top: auto;
+      padding-top: 14px;
+    }
     .gift-option-select:hover,
     .gift-option-select:focus-visible {
       border-color: var(--accent);
+      outline: none;
+    }
+    .gift-taobao-link {
+      display: block;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: var(--surface-soft);
+      font-size: 11.5px;
+      font-weight: 700;
+      text-align: center;
+      text-decoration: none;
+    }
+    .gift-taobao-link:hover,
+    .gift-taobao-link:focus-visible {
+      border-color: #b9d6cf;
+      color: var(--accent-strong);
       outline: none;
     }
     .gift-footer {
@@ -2288,14 +2310,34 @@
         select.addEventListener("click", () => {
           if (!busy) sendMessage(`第${option.index}个`);
         });
-        card.append(top, name, items, reason, select);
+        const itemLabels = (option.items || [])
+          .map((item) => item.label || item.item || "")
+          .filter(Boolean)
+          .join(" ");
+        const budget = Math.ceil(Number(option.total || 0));
+        const taobaoQuery = [
+          "生日礼物",
+          itemLabels,
+          budget > 0 ? `${budget}元以内` : "",
+        ].filter(Boolean).join(" ");
+        const taobao = document.createElement("a");
+        taobao.className = "gift-taobao-link";
+        taobao.href = `https://s.taobao.com/search?q=${encodeURIComponent(taobaoQuery)}`;
+        taobao.target = "_blank";
+        taobao.rel = "noopener noreferrer";
+        taobao.textContent = "去淘宝看看";
+        taobao.title = "在淘宝搜索同类礼物，价格和库存以淘宝页面为准";
+        const actions = document.createElement("div");
+        actions.className = "gift-option-actions";
+        actions.append(select, taobao);
+        card.append(top, name, items, reason, actions);
         grid.appendChild(card);
       });
 
       const footer = document.createElement("div");
       footer.className = "gift-footer";
       const note = document.createElement("span");
-      note.textContent = "选择前不会锁定资金，也不会创建礼物预约。";
+      note.textContent = "选择前不会锁定资金，也不会创建礼物预约；淘宝价格与库存以页面为准。";
       const refresh = document.createElement("button");
       refresh.type = "button";
       refresh.className = "gift-refresh";

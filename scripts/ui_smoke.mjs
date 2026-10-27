@@ -276,11 +276,24 @@ try {
     const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
     const grid = bubble?.querySelector(".gift-option-grid");
     const cards = [...(bubble?.querySelectorAll(".gift-option-card") || [])];
+    const taobaoLinks = cards
+      .map((card) => card.querySelector(".gift-taobao-link"))
+      .filter(Boolean);
     const bubbleRect = bubble?.getBoundingClientRect();
     return {
       count: cards.length,
       hasSummary: Boolean(bubble?.querySelector(".gift-summary")),
       hasSelectButtons: cards.every((card) => Boolean(card.querySelector(".gift-option-select"))),
+      taobaoLinkCount: taobaoLinks.length,
+      taobaoLinksSafe: taobaoLinks.every((link) =>
+        link.target === "_blank"
+        && link.rel.includes("noopener")
+        && link.rel.includes("noreferrer")
+      ),
+      taobaoQueries: taobaoLinks.map((link) =>
+        new URL(link.href).searchParams.get("q") || ""
+      ),
+      taobaoHosts: taobaoLinks.map((link) => new URL(link.href).hostname),
       columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").length : 0,
       allInside: Boolean(bubbleRect) && cards.every((card) => {
         const rect = card.getBoundingClientRect();
@@ -291,6 +304,18 @@ try {
   assert(giftLayout.count === 3, "生日礼物候选没有渲染 3 张方案卡");
   assert(giftLayout.hasSummary, "生日礼物候选缺少条件摘要");
   assert(giftLayout.hasSelectButtons, "生日礼物方案缺少选择按钮");
+  assert(giftLayout.taobaoLinkCount === 3, "生日礼物方案缺少淘宝搜索入口");
+  assert(giftLayout.taobaoLinksSafe, "淘宝搜索链接缺少安全窗口属性");
+  assert(giftLayout.taobaoHosts.every((host) => host === "s.taobao.com"), "淘宝搜索链接域名不正确");
+  assert(
+    giftLayout.taobaoQueries.every((query) =>
+      query.includes("生日礼物")
+      && !query.includes("老师")
+      && !query.includes("没有禁忌")
+      && !query.includes("沿用资料")
+    ),
+    "淘宝搜索链接传递了不必要的个人条件",
+  );
   assert(giftLayout.columns === 3, "桌面端礼物方案没有按三列排版");
   assert(giftLayout.allInside, "礼物方案卡超出消息气泡");
   await screenshot(cdp, "gift-options.png");
