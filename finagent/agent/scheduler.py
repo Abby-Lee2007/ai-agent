@@ -9,6 +9,7 @@ from datetime import date
 from typing import List, Optional
 
 from finagent.agent.registry import ToolRegistry
+from finagent.agent.subscription_lifecycle import process_subscription_lifecycle
 from finagent.data.models import ScheduledTask
 from finagent.data.providers import DataProviderRegistry, build_data_providers
 from finagent.data.store import Clock, DataStore
@@ -38,7 +39,11 @@ class Scheduler:
 
     def run_due(self, user_id: str) -> List[str]:
         """执行全部到期任务，返回给用户看的执行记录。"""
-        messages: List[str] = []
+        messages: List[str] = process_subscription_lifecycle(
+            self.store,
+            self.clock,
+            user_id,
+        )
         ctx = ToolContext(
             store=self.store,
             clock=self.clock,

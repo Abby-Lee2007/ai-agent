@@ -29,6 +29,7 @@ from finagent.agent.planner import (
 )
 from finagent.agent.registry import ToolRegistry, build_default_registry
 from finagent.agent.scheduler import Scheduler
+from finagent.agent.subscription_lifecycle import process_subscription_lifecycle
 from finagent.data.store import Clock, DataStore
 from finagent.data.market import MarketDataProvider
 from finagent.data.providers import build_data_providers
@@ -232,6 +233,22 @@ class BankingAgent:
         return self.scheduler.run_due(self.user_id)
 
     def handle(self, text: str) -> AgentReply:
+        lifecycle_messages = process_subscription_lifecycle(
+            self.store,
+            self.clock,
+            self.user_id,
+        )
+        reply = self._handle_input(text)
+        if lifecycle_messages:
+            notice = "\n".join(f"  · {message}" for message in lifecycle_messages)
+            reply.text = (
+                f"订阅状态更新：\n{notice}\n\n{reply.text}"
+                if reply.text else f"订阅状态更新：\n{notice}"
+            )
+            reply.data["lifecycle_messages"] = lifecycle_messages
+        return reply
+
+    def _handle_input(self, text: str) -> AgentReply:
         """处理一句用户输入。"""
         raw = (text or "").strip()
         if not raw:
@@ -580,7 +597,13 @@ class BankingAgent:
             ),
             (
                 ("订阅", "自动续费", "续费"),
-                ("subscription.detect", "subscription.list", "subscription.cancel", "subscription.remind"),
+                (
+                    "subscription.detect",
+                    "subscription.list",
+                    "subscription.cancel",
+                    "subscription.resume",
+                    "subscription.remind",
+                ),
                 "订阅管理",
             ),
             (("余额",), ("account.balance",), "余额查询"),
