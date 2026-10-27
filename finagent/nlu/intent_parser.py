@@ -370,9 +370,18 @@ class RuleIntentParser:
     def _match_crossscene_gift_plan(self, t: str) -> bool:
         if "生日" in t:
             return False
-        return self._has(
+        explicit_gift = self._has(
             t, "伴手礼", "礼物预约", "准备礼物", "纪念日礼物", "送礼", "礼物",
         )
+        contextual_gift = (
+            self._has(t, "下单", "送", "订", "买", "准备")
+            and bool(self._person(t))
+            and not self._has(
+                t, "转账", "转给", "汇款", "红包", "话费", "账单",
+                "理财", "基金", "申购", "赎回", "会员", "订阅",
+            )
+        )
+        return explicit_gift or contextual_gift
 
     def _match_goal_list(self, t: str) -> bool:
         return self._has(t, "我的目标", "攒钱目标", "心愿", "锁了多少钱", "目标进度", "有哪些目标", "资金目标")
@@ -629,12 +638,9 @@ class RuleIntentParser:
             person = self._person(text)
             if person:
                 slots["person"] = person
-            if self._has(text, "鲜花", "花束", "一束花", "伴手礼"):
-                slots["item"] = "鲜花"
-            elif self._has(text, "蛋糕"):
-                slots["item"] = "蛋糕"
-            else:
-                slots["item"] = "鲜花"
+            item = self._gift_item(text)
+            if item:
+                slots["item"] = item
             when = self._when(text)
             if when:
                 slots["date"] = when
@@ -671,6 +677,29 @@ class RuleIntentParser:
         if match:
             return self._clean_name(match.group(1))
         return None
+
+    @staticmethod
+    def _gift_item(text: str) -> str:
+        generic = {"礼物", "毕业礼物", "伴手礼", "一份礼物", "一个礼物"}
+        match = re.search(
+            r"(?:改成|换成|改为|下单|送|订|买|准备)"
+            r"\s*(?:一个|一份|一束|一件|个|份|束)?\s*"
+            r"([^，,。；;！!？?]{1,30})",
+            text,
+        )
+        if not match:
+            return ""
+        item = match.group(1).strip(" 的")
+        item = re.split(
+            r"\s*(?:预算|价格|报价|送达|明天|今天|后天|大后天|下周|本周|\d{1,2}月)",
+            item,
+            maxsplit=1,
+        )[0].strip()
+        if "花" in item:
+            return "鲜花"
+        if "蛋糕" in item:
+            return "蛋糕"
+        return "" if item in generic else item
 
     def _channel(self, text: str) -> str:
         """识别收款渠道：手机号（数字人民币）/ 微信 / 支付宝 / 银行卡。"""

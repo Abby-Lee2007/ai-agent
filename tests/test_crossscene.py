@@ -85,7 +85,7 @@ class TestCrossScene(unittest.TestCase):
         self.assertIn("生日惊喜金", reply.text)
 
     def test_souvenir_gift_plan_asks_for_date_and_creates_task(self):
-        reply = self.agent.handle("给老婆准备一份伴手礼")
+        reply = self.agent.handle("给老婆准备一束花")
         self.assertEqual(reply.intent, "crossscene.gift_plan")
         self.assertEqual(reply.kind, "question")
         self.assertIn("日期", reply.text)
@@ -99,6 +99,68 @@ class TestCrossScene(unittest.TestCase):
         tasks = self.agent.store.tasks_of("u_001", status="pending")
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0].kind, "gift_order")
+
+    def test_generic_graduation_gift_asks_for_item_and_custom_price(self):
+        reply = self.agent.handle("明天毕业了我想给老师送个毕业礼物")
+        self.assertEqual(reply.intent, "crossscene.gift_plan")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("什么礼物", reply.text)
+
+        reply = self.agent.handle("给老师下单一个苹果手机")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("价格", reply.text)
+
+        reply = self.agent.handle("预算8000")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("苹果手机", reply.text)
+        self.assertIn("8,000.00", reply.text)
+        self.assertIn("2026-10-15", reply.text)
+        self.assertIn("用户报价", reply.text)
+
+        reply = self.agent.handle("确认")
+        self.assertTrue(reply.ok, reply.text)
+        task = self.agent.store.tasks_of("u_001", status="pending")[0]
+        self.assertEqual(task.payload["item"], "苹果手机")
+        self.assertEqual(task.payload["budget"], 8000.0)
+        self.assertEqual(task.payload["source"], "user:quote")
+
+    def test_gift_confirmation_can_be_revised_to_another_item_and_price(self):
+        reply = self.agent.handle("明天给老师送一束花")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("2026-10-15", reply.text)
+        self.assertIn("花间集", reply.text)
+
+        reply = self.agent.handle("把礼物改成苹果手机，预算8000")
+        self.assertEqual(reply.intent, "crossscene.gift_plan")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("苹果手机", reply.text)
+        self.assertIn("8,000.00", reply.text)
+        self.assertIn("2026-10-15", reply.text)
+
+        reply = self.agent.handle("确认")
+        self.assertTrue(reply.ok, reply.text)
+        task = self.agent.store.tasks_of("u_001", status="pending")[0]
+        self.assertEqual(task.payload["item"], "苹果手机")
+        self.assertEqual(task.payload["budget"], 8000.0)
+
+    def test_other_custom_gift_is_not_forced_to_flower_or_cake(self):
+        reply = self.agent.handle("明天给老师送一盒茶叶，预算300")
+        self.assertEqual(reply.intent, "crossscene.gift_plan")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("一盒茶叶", reply.text)
+        self.assertIn("用户报价", reply.text)
+
+        reply = self.agent.handle("确认")
+        self.assertTrue(reply.ok, reply.text)
+        task = self.agent.store.tasks_of("u_001", status="pending")[0]
+        self.assertEqual(task.payload["item"], "一盒茶叶")
+        self.assertEqual(task.payload["budget"], 300.0)
+
+    def test_custom_gift_name_with_variant_is_preserved(self):
+        reply = self.agent.handle("明天给老师下单一个苹果手机 Pro，预算8999")
+        self.assertEqual(reply.intent, "crossscene.gift_plan")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("苹果手机 Pro", reply.text)
 
 
 if __name__ == "__main__":

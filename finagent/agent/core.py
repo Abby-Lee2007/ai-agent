@@ -317,6 +317,10 @@ class BankingAgent:
             if control == "deny":
                 self.session.clear_pending()
                 return AgentReply("好的，本次操作已取消，没有执行任何业务动作。")
+            if pending.intent == "crossscene.gift_plan":
+                revised = self._revise_gift_draft(pending, text)
+                if revised is not None:
+                    return revised
 
         if pending is not None and pending.kind == "membership_options":
             if classify_control(text) == "deny":
@@ -571,6 +575,35 @@ class BankingAgent:
         )
         pending.slots["items"] = items
         return self._advance_membership_order(items)
+
+    def _revise_gift_draft(self, pending: Pending, text: str) -> Optional[AgentReply]:
+        """Allow natural-language edits while a gift order awaits confirmation."""
+        slots = dict(pending.slots)
+        revision = self.parser.parse(text, history=self.session.history[:-1])
+        if revision.name == "crossscene.gift_plan":
+            slots.update(revision.slots)
+        else:
+            item = self.parser.rule._gift_item(text)
+            if item:
+                slots["item"] = item
+            amount = parse_amount(text)
+            if amount is not None and self._has_any(
+                text, "预算", "价格", "报价", "元",
+            ):
+                slots["budget"] = amount
+            if not item and amount is None:
+                return None
+        self.session.clear_pending()
+        return self._continue_with_intent(Intent(
+            "crossscene.gift_plan",
+            slots,
+            confidence=0.9,
+            source="revision",
+        ))
+
+    @staticmethod
+    def _has_any(text: str, *words: str) -> bool:
+        return any(word in text for word in words)
 
     def _interrupt_intent(self, text: str) -> Optional[Intent]:
         """Return a valid new business intent that should break a pending prompt."""
@@ -1393,7 +1426,7 @@ class BankingAgent:
             return AgentReply("好的，本次操作已取消，没有执行任何业务动作。")
         ctx = self.context()
         current_slot_answer = None
-        if pending.intent == "card.apply" and pending.missing:
+        if pending.intent in {"card.apply", "crossscene.gift_plan"} and pending.missing:
             current_slot = pending.missing[0]
             current_slot_answer = self._extract_slot(current_slot, text, ctx)
         interrupt = (
@@ -1594,6 +1627,8 @@ class BankingAgent:
             parts = [p.strip() for p in text.replace("，", "、").replace(",", "、").replace("和", "、").split("、")]
             names = [p for p in parts if p]
             return names if len(names) >= 2 else None
+        if slot == "item":
+            return self.parser.rule._gift_item(text) or None
         if slot in NUMERIC_SLOTS:
             if slot == "existing_debt" and any(
                     word in text for word in ("没有", "无负债", "没负债", "零", "0元")):

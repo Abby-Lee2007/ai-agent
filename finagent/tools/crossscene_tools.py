@@ -298,27 +298,50 @@ class ScheduleGiftTool(Tool):
             city=ctx.user.city,
         )
         if offer is None:
-            return ToolResult(
-                False,
-                f"当前没有可预约的{item}商户，可能超出预算、库存不足或配送范围不支持。",
+            catalog_offer = merchant_provider.find_offer(
+                item=item,
+                budget=None,
+                delivery_date=run_day.isoformat(),
+                city=ctx.user.city,
             )
-        money = offer.price
+            if catalog_offer is not None:
+                return ToolResult(
+                    False,
+                    f"「{item}」的演示商户最低报价为 {catalog_offer.price:,.2f} 元，"
+                    "当前预算不足。",
+                )
+            if max_budget is None or max_budget <= 0:
+                return ToolResult(
+                    False,
+                    f"演示商户目录中没有「{item}」，请提供本次礼物价格后再预约。",
+                )
+            merchant_name = "用户报价模拟代购"
+            money = max_budget
+            source = "user:quote"
+            delivery_radius = 0.0
+            source_note = "用户报价，未联网核验"
+        else:
+            merchant_name = offer.merchant
+            money = offer.price
+            source = offer.source
+            delivery_radius = offer.delivery_radius_km
+            source_note = offer.source
 
         task = (
             ctx.providers.tasks.add(
                 user_id=ctx.user_id,
                 kind="gift_order",
                 run_date=run_day.isoformat(),
-                title=f"为{display_name}在{offer.merchant}预订{item}（{money:,.0f} 元）",
+                title=f"为{display_name}在{merchant_name}预订{item}（{money:,.0f} 元）",
                 payload={
                     "person": display_name,
                     "item": item,
                     "budget": money,
-                    "offer_id": offer.offer_id,
-                    "merchant": offer.merchant,
-                    "delivery_radius_km": offer.delivery_radius_km,
-                    "source": offer.source,
-                    "is_demo": offer.is_demo,
+                    "offer_id": offer.offer_id if offer is not None else "",
+                    "merchant": merchant_name,
+                    "delivery_radius_km": delivery_radius,
+                    "source": source,
+                    "is_demo": offer.is_demo if offer is not None else True,
                     "note": note,
                     "channel": "同城即时配送",
                 },
@@ -328,16 +351,16 @@ class ScheduleGiftTool(Tool):
                 user_id=ctx.user_id,
                 kind="gift_order",
                 run_date=run_day.isoformat(),
-                title=f"为{display_name}在{offer.merchant}预订{item}（{money:,.0f} 元）",
+                title=f"为{display_name}在{merchant_name}预订{item}（{money:,.0f} 元）",
                 payload={
                     "person": display_name,
                     "item": item,
                     "budget": money,
-                    "offer_id": offer.offer_id,
-                    "merchant": offer.merchant,
-                    "delivery_radius_km": offer.delivery_radius_km,
-                    "source": offer.source,
-                    "is_demo": offer.is_demo,
+                    "offer_id": offer.offer_id if offer is not None else "",
+                    "merchant": merchant_name,
+                    "delivery_radius_km": delivery_radius,
+                    "source": source,
+                    "is_demo": offer.is_demo if offer is not None else True,
                     "note": note,
                     "channel": "同城即时配送",
                 },
@@ -345,9 +368,9 @@ class ScheduleGiftTool(Tool):
         )
         lines = [
             f"已预约：{run_day.isoformat()} 为「{display_name}」下单{item}，预算 {money:,.2f} 元",
-            f"  商户：{offer.merchant}（{offer.source}）",
+            f"  商户：{merchant_name}（{source_note}）",
             f"  预约单号：{task.task_id}",
-            f"  配送方案：同城即时配送，覆盖半径 {offer.delivery_radius_km:g} 公里（原型为模拟下单）",
+            f"  配送方案：同城即时配送，覆盖半径 {delivery_radius:g} 公里（原型为模拟下单）",
         ]
         if note:
             lines.append(f"  贺卡留言：{note}")

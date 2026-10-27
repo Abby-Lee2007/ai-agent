@@ -243,6 +243,8 @@ class Planner:
     def plan(self, intent: Intent, ctx: ToolContext) -> Plan:
         if intent.name == "crossscene.birthday_plan":
             return self._birthday_plan(intent, ctx)
+        if intent.name == "crossscene.gift_plan":
+            return self._gift_plan(intent, ctx)
         if intent.name == "card.apply":
             return self._card_apply_plan(intent, ctx)
         if intent.name not in SIMPLE_PLANS:
@@ -389,6 +391,109 @@ class Planner:
             f"  2. {gift_day.isoformat()}（生日前 2 天）订购鲜花，预算 {budget * 0.35:,.2f} 元\n"
             f"  3. {gift_day.isoformat()}（生日前 2 天）预订蛋糕，预算 {budget * 0.45:,.2f} 元"
         )
+        return plan
+
+    def _gift_plan(self, intent: Intent, ctx: ToolContext) -> Plan:
+        """Plan a flexible gift order without assuming a fixed product."""
+        slots = dict(intent.slots)
+        person = str(slots.get("person") or "").strip()
+        if not person:
+            return Plan(
+                intent=intent.name,
+                slots=slots,
+                missing=["person"],
+                question="请问这份礼物要送给谁？",
+            )
+        item = str(slots.get("item") or "").strip()
+        if not item:
+            return Plan(
+                intent=intent.name,
+                slots=slots,
+                missing=["item"],
+                question="请问想送什么礼物？请直接说具体物品，例如「鲜花」「蛋糕」或「苹果手机」。",
+            )
+        date_text = str(slots.get("date") or "").strip()
+        if not date_text:
+            return Plan(
+                intent=intent.name,
+                slots=slots,
+                missing=["date"],
+                question="请问希望哪一天送达（日期）？例如「11月20日」或「下周六」。",
+            )
+        run_day = parse_date(date_text, ctx.clock.today())
+        if run_day is None:
+            return Plan(
+                intent=intent.name,
+                slots=slots,
+                missing=["date"],
+                question="这个送达日期无法识别，请重新输入，例如「明天」「11月20日」。",
+            )
+        slots["date"] = run_day.isoformat()
+
+        try:
+            budget = float(slots.get("budget") or 0)
+        except (TypeError, ValueError):
+            budget = 0.0
+        provider = (
+            ctx.providers.merchants
+            if getattr(ctx, "providers", None) is not None
+            else MerchantOfferProvider(ctx.store)
+        )
+        offer = provider.find_offer(
+            item,
+            budget or None,
+            run_day.isoformat(),
+            ctx.user.city,
+        )
+        base_offer = provider.find_offer(
+            item,
+            None,
+            run_day.isoformat(),
+            ctx.user.city,
+        )
+        if base_offer is not None and budget and budget < base_offer.price:
+            slots.pop("budget", None)
+            return Plan(
+                intent=intent.name,
+                slots=slots,
+                missing=["budget"],
+                question=(
+                    f"「{item}」在演示商户中的最低价格为 {base_offer.price:,.2f} 元，"
+                    "请提高预算或更换礼物。"
+                ),
+            )
+        if base_offer is None and budget <= 0:
+            return Plan(
+                intent=intent.name,
+                slots=slots,
+                missing=["budget"],
+                question=(
+                    f"演示商户目录中没有「{item}」。请提供本次礼物价格，"
+                    "我会按“用户报价、模拟代购”处理。"
+                ),
+            )
+
+        target_person, _ = lookup_person(ctx, person)
+        display_name = target_person.name if target_person else person
+        step = PlanStep(
+            tool="crossscene.schedule_gift",
+            args={
+                "person": display_name,
+                "item": item,
+                "date": run_day.isoformat(),
+                **({"budget": budget} if budget > 0 else {}),
+            },
+            note="确认后创建礼物预约",
+        )
+        if offer is not None:
+            price_text = f"商户报价 {offer.price:,.2f} 元（{offer.merchant}）"
+        else:
+            price_text = f"用户报价 {budget:,.2f} 元，模拟代购（未联网核验）"
+        plan = Plan(intent=intent.name, steps=[step], slots=slots)
+        plan.description = "\n".join([
+            f"  · 预约 {run_day.isoformat()} 为「{display_name}」下单「{item}」",
+            f"  · {price_text}",
+        ])
         return plan
 
     def _describe(self, steps: List[PlanStep], ctx: ToolContext) -> str:
