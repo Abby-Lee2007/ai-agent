@@ -169,11 +169,15 @@ try {
       scrollWidth: document.documentElement.scrollWidth,
       app: [app.left, app.top, app.right, app.bottom],
       composerOverlap: !(prompt.right <= send.left || send.right <= prompt.left),
+      membershipQuick: [...document.querySelectorAll(".quick")].some(
+        (button) => button.textContent.trim() === "会员批量充值"
+      ),
     };
   })()`);
   assert(desktop.title === "AI Banking Agent", "H5 标题不正确");
   assert(desktop.scrollWidth <= desktop.viewport[0], "桌面页面出现横向滚动");
   assert(desktop.composerOverlap === false, "输入框与发送按钮重叠");
+  assert(desktop.membershipQuick, "缺少会员批量充值快捷入口");
   await sendPrompt(cdp, "帮我看看有哪些自动续费", "到期时间");
   const subscriptionTable = await evaluate(cdp, `(() => {
     const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);

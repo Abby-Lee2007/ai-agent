@@ -245,7 +245,12 @@ INTENTS: Dict[str, IntentSpec] = {
         "membership.purchase", "订阅管理",
         "批量购买一个或多个平台的会员周期",
         [L("items", "会员购买项目列表", True, "array")],
-        ["帮我充腾讯视频3个月60元、Keep12个月199元"],
+        [
+            "帮我充腾讯视频3个月60元、Keep12个月199元",
+            "开通B站大会员12个月148元，不自动续费",
+            "购买网易云音乐3个月45元，自动续费，续费价同本次价格",
+            "给稻壳阅读器充1个月12元、百度网盘6个月150元",
+        ],
     ),
     "subscription.remind": IntentSpec(
         "subscription.remind", "订阅管理", "查看即将扣费的订阅并设置提醒",

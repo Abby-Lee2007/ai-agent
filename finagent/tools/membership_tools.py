@@ -53,6 +53,9 @@ class MembershipPurchaseTool(Tool):
     examples = [
         "帮我充腾讯视频3个月60元、Keep12个月199元",
         "给米游社充6个月98元，自动续费，续费价88元",
+        "开通B站大会员12个月148元，不自动续费",
+        "购买网易云音乐3个月45元，自动续费，续费价同本次价格",
+        "给稻壳阅读器充1个月12元、百度网盘6个月150元",
     ]
 
     def run(self, ctx: ToolContext, items: List[Dict[str, Any]]) -> ToolResult:  # type: ignore[override]

@@ -39,6 +39,20 @@ class TestMembershipParser(unittest.TestCase):
         self.assertTrue(items[0].auto_renew)
         self.assertEqual(items[0].renewal_price, 88.0)
 
+    def test_documented_unlisted_platform_examples_are_recognized(self):
+        cases = {
+            "开通B站大会员12个月148元，不自动续费": ("B站大会员", 12),
+            "购买网易云音乐3个月45元，自动续费，续费价同本次价格": ("网易云音乐", 3),
+            "给稻壳阅读器充1个月12元、百度网盘6个月150元": ("稻壳阅读器", 1),
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                items = parse_membership_items(text)
+                self.assertEqual(
+                    (items[0].platform, items[0].term_months),
+                    expected,
+                )
+
     def test_apply_numbered_auto_renew_options(self):
         items = [
             {"platform": "腾讯视频", "term_months": 3, "purchase_price": 60.0},
