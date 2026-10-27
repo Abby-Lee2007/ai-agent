@@ -1596,7 +1596,18 @@ class BankingAgent:
                         needs_input=True,
                     )
             next_slot = pending.missing[0]
-            return AgentReply(self.planner._question(next_slot), intent=pending.intent,
+            question = self.planner._question(next_slot)
+            if (
+                pending.intent == "crossscene.birthday_plan"
+                and current_slot == "preferences"
+                and str(pending.slots.get("preferences") or "").strip()
+                not in {"", "沿用资料"}
+            ):
+                question = (
+                    f"已记录偏好「{str(pending.slots.get('preferences')).strip()}」。\n"
+                    + question
+                )
+            return AgentReply(question, intent=pending.intent,
                               kind="question", needs_input=True)
         intent = Intent(pending.intent, pending.slots, 0.9, "system")
         plan = self.planner.plan(intent, ctx)

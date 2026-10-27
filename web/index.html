@@ -2282,7 +2282,11 @@
         rank.textContent = `方案 ${option.index}`;
         const price = document.createElement("strong");
         price.className = "gift-option-price";
-        price.textContent = `¥${money(option.total)}`;
+        const externalOnly = Boolean(
+          option.external_only
+          || (option.items || []).some((item) => item.price_pending)
+        );
+        price.textContent = externalOnly ? "价格待核实" : `¥${money(option.total)}`;
         top.append(rank, price);
 
         const name = document.createElement("h4");
@@ -2303,19 +2307,21 @@
         const reason = document.createElement("p");
         reason.className = "gift-option-reason";
         reason.textContent = option.reason || "";
-        const select = document.createElement("button");
-        select.type = "button";
-        select.className = "gift-option-select";
-        select.textContent = `选择方案 ${option.index}`;
-        select.addEventListener("click", () => {
-          if (!busy) sendMessage(`第${option.index}个`);
-        });
+        const select = externalOnly ? null : document.createElement("button");
+        if (select) {
+          select.type = "button";
+          select.className = "gift-option-select";
+          select.textContent = `选择方案 ${option.index}`;
+          select.addEventListener("click", () => {
+            if (!busy) sendMessage(`第${option.index}个`);
+          });
+        }
         const itemLabels = (option.items || [])
           .map((item) => item.label || item.item || "")
           .filter(Boolean)
           .join(" ");
         const budget = Math.ceil(Number(option.total || 0));
-        const taobaoQuery = [
+        const taobaoQuery = option.search_query || [
           "生日礼物",
           itemLabels,
           budget > 0 ? `${budget}元以内` : "",
@@ -2329,7 +2335,8 @@
         taobao.title = "在淘宝搜索同类礼物，价格和库存以淘宝页面为准";
         const actions = document.createElement("div");
         actions.className = "gift-option-actions";
-        actions.append(select, taobao);
+        if (select) actions.appendChild(select);
+        actions.appendChild(taobao);
         card.append(top, name, items, reason, actions);
         grid.appendChild(card);
       });

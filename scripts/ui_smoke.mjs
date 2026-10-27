@@ -283,7 +283,10 @@ try {
     return {
       count: cards.length,
       hasSummary: Boolean(bubble?.querySelector(".gift-summary")),
-      hasSelectButtons: cards.every((card) => Boolean(card.querySelector(".gift-option-select"))),
+      selectButtonCount: cards.filter((card) => card.querySelector(".gift-option-select")).length,
+      pricePendingCount: cards.filter(
+        (card) => card.querySelector(".gift-option-price")?.textContent === "价格待核实"
+      ).length,
       taobaoLinkCount: taobaoLinks.length,
       taobaoLinksSafe: taobaoLinks.every((link) =>
         link.target === "_blank"
@@ -303,7 +306,8 @@ try {
   })()`);
   assert(giftLayout.count === 3, "生日礼物候选没有渲染 3 张方案卡");
   assert(giftLayout.hasSummary, "生日礼物候选缺少条件摘要");
-  assert(giftLayout.hasSelectButtons, "生日礼物方案缺少选择按钮");
+  assert(giftLayout.selectButtonCount === 3, "礼物方案缺少选择按钮");
+  assert(giftLayout.pricePendingCount === 0, "目录内礼物方案不应显示价格待核实");
   assert(giftLayout.taobaoLinkCount === 3, "生日礼物方案缺少淘宝搜索入口");
   assert(giftLayout.taobaoLinksSafe, "淘宝搜索链接缺少安全窗口属性");
   assert(giftLayout.taobaoHosts.every((host) => host === "s.taobao.com"), "淘宝搜索链接域名不正确");

@@ -155,6 +155,9 @@ GIFT_OFFER_LABELS = {
     "OFFER000007": "双人手作体验",
     "OFFER000008": "纪念照片书",
     "OFFER000009": "定制饰品",
+    "OFFER000010": "大疆 Osmo Mobile 7P 手机云台",
+    "OFFER000011": "大疆 Mini 4K 无人机",
+    "OFFER000012": "大疆 Action 4 运动相机",
 }
 
 FRUIT_AVOID_WORDS = (
@@ -188,6 +191,9 @@ def ensure_gift_offer_catalog(ctx: ToolContext) -> None:
         ("OFFER000007", "周末手作", "礼物", 399.0, "双人手作体验"),
         ("OFFER000008", "纸上时光", "礼物", 329.0, "纪念照片书"),
         ("OFFER000009", "匠作工坊", "礼物", 599.0, "定制饰品"),
+        ("OFFER000010", "大疆", "礼物", 599.0, "大疆 Osmo Mobile 7P 手机云台"),
+        ("OFFER000011", "大疆", "礼物", 1499.0, "大疆 Mini 4K 无人机"),
+        ("OFFER000012", "大疆", "礼物", 2199.0, "大疆 Action 4 运动相机"),
     ]
     for offer_id, merchant, item, price, label in catalog:
         GIFT_OFFER_LABELS[offer_id] = label
@@ -499,6 +505,28 @@ class GiftRecommendTool(Tool):
                 if not any(word in offer_risk_text(gift) for word in DAIRY_EGG_AVOID_WORDS)
             ]
 
+        preference_groups = {
+            ("大疆", "无人机", "云台", "运动相机", "数码", "电子", "相机", "摄影"): (
+                "大疆", "无人机", "云台", "运动相机",
+            ),
+            ("相册", "照片", "纪念", "回忆", "记录"): ("相册", "照片书", "纪念"),
+            ("银饰", "首饰", "饰品", "项链"): ("银饰", "饰品"),
+            ("手作", "体验", "一起", "共同"): ("手作", "体验"),
+        }
+        gift_scores: Dict[str, int] = {}
+        for triggers, matches in preference_groups.items():
+            if not any(trigger in preference_text for trigger in triggers):
+                continue
+            for gift in gifts:
+                text = offer_risk_text(gift)
+                if any(match in text for match in matches):
+                    gift_scores[gift.offer_id] = gift_scores.get(gift.offer_id, 0) + 1
+        matched_gifts = [gift for gift in gifts if gift.offer_id in gift_scores]
+        if matched_gifts:
+            gifts = matched_gifts + [
+                gift for gift in gifts if gift.offer_id not in gift_scores
+            ]
+
         options: List[Dict[str, Any]] = []
 
         def add_option(name: str, items: List[Any], reason: str) -> None:
@@ -525,7 +553,44 @@ class GiftRecommendTool(Tool):
                 "reason": reason,
             })
 
+        explicit_preference = str(preferences or "").strip()
+        preference_label = (
+            explicit_preference
+            if explicit_preference not in {"", "沿用资料", "无"}
+            else ""
+        )
+        if not preference_label and not matched_gifts:
+            profile_favorites = [
+                str(item).strip()
+                for item in (profile.get("favorite_gift") or [])
+                if str(item).strip() not in {"", "鲜花", "蛋糕"}
+            ]
+            preference_label = "、".join(profile_favorites)
+        if preference_label and not matched_gifts:
+            for suffix in ("生日礼物", "礼盒", "精选"):
+                query = f"{preference_label} {suffix}"
+                options.append({
+                    "key": (f"taobao:{query}",),
+                    "name": query,
+                    "items": [{
+                        "item": "礼物",
+                        "label": query,
+                        "offer_id": "",
+                        "merchant": "淘宝搜索",
+                        "price": 0.0,
+                        "price_pending": True,
+                    }],
+                    "total": 0.0,
+                    "reason": (
+                        f"按本次偏好「{preference_label}」生成；"
+                        "价格与库存请在淘宝页面核实"
+                    ),
+                    "external_only": True,
+                    "search_query": query,
+                })
+
         prefer_safe_gifts = fruit_risk or dairy_egg_risk or flower_risk or cake_risk
+        prioritize_gifts = prefer_safe_gifts or bool(matched_gifts)
 
         def add_gift_options() -> None:
             gift_reasons = [
@@ -534,10 +599,13 @@ class GiftRecommendTool(Tool):
                 "适合记录共同经历，实用性较强",
             ]
             for index, gift in enumerate(gifts[:3]):
+                reason = gift_reasons[index]
+                if gift.offer_id in gift_scores:
+                    reason = f"匹配本次偏好「{preferences or preference_text}」，{reason}"
                 add_option(
                     offer_product_label(gift),
                     [gift],
-                    gift_reasons[index],
+                    reason,
                 )
             if len(gifts) >= 2:
                 first_gift = gifts[0]
@@ -556,7 +624,7 @@ class GiftRecommendTool(Tool):
                     "兼顾纪念意义和实用体验",
                 )
 
-        if prefer_safe_gifts:
+        if prioritize_gifts:
             add_gift_options()
         if flowers and cakes:
             flower_label = offer_product_label(flowers[0])
@@ -597,7 +665,7 @@ class GiftRecommendTool(Tool):
                     [cakes[-1]],
                     "预算内提升口味和造型",
                 )
-        if not prefer_safe_gifts:
+        if not prioritize_gifts:
             add_gift_options()
         if not options:
             return ToolResult(
@@ -667,6 +735,8 @@ class GiftRecommendTool(Tool):
                         "total": option["total"],
                         "items": option["items"],
                         "reason": option["reason"],
+                        "external_only": bool(option.get("external_only")),
+                        "search_query": str(option.get("search_query") or ""),
                     }
                     for option in visible
                 ],

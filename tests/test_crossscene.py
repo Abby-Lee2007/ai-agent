@@ -206,6 +206,78 @@ class TestCrossScene(unittest.TestCase):
         ))
         self.assertTrue(any(item["item"] == "礼物" for item in options[0]["items"]))
 
+    def test_birthday_recommendations_follow_supplied_preference(self):
+        prefs = dict(self.agent.store.get_user("u_001").preferences or {})
+        prefs["care_people"] = [{
+            "person_id": "CARE-SISTER",
+            "name": "两只猪头",
+            "relation": "妹妹",
+            "birthday": "2000-10-17",
+        }]
+        self.agent.store.get_user("u_001").preferences = prefs
+
+        recommendation = begin_birthday_recommendation(
+            self.agent,
+            text="给两只猪头准备生日惊喜",
+            budget="90000",
+            preferences="大疆",
+            avoid="无",
+        )
+
+        option_names = [option["name"] for option in recommendation.data["options"]]
+        self.assertEqual(len(option_names), 3)
+        self.assertTrue(all(
+            "大疆" in name or "无人机" in name or "云台" in name or "运动相机" in name
+            for name in option_names
+        ))
+
+    def test_unknown_preference_creates_taobao_search_options(self):
+        prefs = dict(self.agent.store.get_user("u_001").preferences or {})
+        prefs["care_people"] = [{
+            "person_id": "CARE-SISTER",
+            "name": "两只猪头",
+            "relation": "妹妹",
+            "birthday": "2000-10-17",
+        }]
+        self.agent.store.get_user("u_001").preferences = prefs
+
+        recommendation = begin_birthday_recommendation(
+            self.agent,
+            text="给两只猪头准备生日惊喜",
+            budget="90000",
+            preferences="乐高",
+            avoid="无",
+        )
+
+        options = recommendation.data["options"]
+        self.assertEqual(len(options), 3)
+        self.assertTrue(all("乐高" in option["name"] for option in options))
+        self.assertTrue(all(option.get("external_only") for option in options))
+        self.assertTrue(all(
+            option["items"][0]["merchant"] == "淘宝搜索"
+            and option["items"][0]["price_pending"]
+            for option in options
+        ))
+
+    def test_birthday_preference_followup_acknowledges_answer(self):
+        prefs = dict(self.agent.store.get_user("u_001").preferences or {})
+        prefs["care_people"] = [{
+            "person_id": "CARE-SISTER",
+            "name": "两只猪头",
+            "relation": "妹妹",
+            "birthday": "2000-10-17",
+        }]
+        self.agent.store.get_user("u_001").preferences = prefs
+
+        reply = self.agent.handle("给两只猪头准备生日惊喜")
+        self.assertEqual(self.agent.session.pending.missing[0], "preferences")
+
+        reply = self.agent.handle("大疆")
+
+        self.assertIn("已记录偏好「大疆」", reply.text)
+        self.assertIn("过敏", reply.text)
+        self.assertEqual(self.agent.session.pending.missing[0], "avoid")
+
     def test_gift_choice_can_switch_to_another_shortcut(self):
         begin_birthday_recommendation(self.agent)
         self.assertEqual(self.agent.session.pending.kind, "gift_choice")
