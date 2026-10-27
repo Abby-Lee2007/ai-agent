@@ -1757,9 +1757,11 @@
           return group;
         }),
       );
-      const initial = catalog.categories.find((item) => item.id === activeCapabilityId)
-        || catalog.categories[0];
-      if (initial) selectCapabilityCategory(initial.id);
+      const initial = catalog.categories.find((item) => item.id === activeCapabilityId);
+      if (initial) {
+        activeCapabilityId = "";
+        selectCapabilityCategory(initial.id);
+      }
     }
 
     async function loadCapabilityCatalog() {

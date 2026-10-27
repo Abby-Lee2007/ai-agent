@@ -176,6 +176,9 @@ try {
       globalActions: [...document.querySelectorAll(".capability-global-action")].map(
         (button) => button.textContent.trim()
       ),
+      expandedCategories: [...document.querySelectorAll(".capability-category")]
+        .filter((button) => button.getAttribute("aria-expanded") === "true")
+        .map((button) => button.textContent.trim()),
     };
   })()`);
   assert(desktop.title === "AI Banking Agent", "H5 标题不正确");
@@ -185,6 +188,7 @@ try {
   assert(desktop.capabilityLabels[0].includes("智能转账"), "缺少智能转账分类");
   assert(desktop.capabilityLabels[5].includes("人际礼物"), "缺少人际礼物分类");
   assert(desktop.globalActions.includes("每日简报"), "缺少全局每日简报入口");
+  assert(desktop.expandedCategories.length === 0, "默认界面不应展开任何业务分类");
   const shortcutPrompts = await evaluate(cdp, `(async () => {
     const response = await fetchWithAuth("/v1/capabilities");
     const payload = await response.json();
