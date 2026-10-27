@@ -1180,7 +1180,7 @@
         <button class="history-close" id="profile-settings-close" type="button">关闭</button>
       </header>
       <div class="settings-body">
-        <p class="settings-note">个人资料、爱人生日和银行卡目前都来自演示种子数据，可在这里直接修改。</p>
+        <p class="settings-note">个人资料、关心的人、资金目标和银行卡目前都来自演示种子数据，可在这里直接修改。</p>
         <form id="profile-settings-form">
           <section class="settings-section">
             <h3>个人资料</h3>
@@ -1199,6 +1199,11 @@
             <p class="settings-note">自己的生日在上方“个人资料”中维护；这里同时维护生日提醒和转账收款账号。</p>
             <div id="care-people-list"></div>
             <button class="history-button" id="add-care-person" type="button">添加关心的人</button>
+          </section>
+          <section class="settings-section">
+            <h3>资金目标</h3>
+            <p class="settings-note">可调整目标名称、金额、日期、状态和备注；已锁定金额只读。</p>
+            <div id="profile-goals"></div>
           </section>
           <section class="settings-section">
             <h3>通知与礼物偏好</h3>
@@ -1275,6 +1280,7 @@
     const profileClose = document.getElementById("profile-settings-close");
     const profileForm = document.getElementById("profile-settings-form");
     const profileCards = document.getElementById("profile-cards");
+    const profileGoals = document.getElementById("profile-goals");
     const carePeopleList = document.getElementById("care-people-list");
     const addCarePersonButton = document.getElementById("add-care-person");
     const newCardForm = document.getElementById("new-card-form");
@@ -2141,6 +2147,7 @@
         }];
       }
       renderCarePeople(carePeople);
+      renderGoalEditors(profile.goals || []);
       renderCardEditors(profile.cards || []);
     }
 
@@ -2233,6 +2240,106 @@
         );
         row.append(head, grid);
         carePeopleList.appendChild(row);
+      });
+    }
+
+    function renderGoalEditors(goals) {
+      profileGoals.replaceChildren();
+      if (!goals.length) {
+        const empty = document.createElement("div");
+        empty.className = "history-empty";
+        empty.textContent = "当前没有资金目标。";
+        profileGoals.appendChild(empty);
+        return;
+      }
+      goals.forEach((goal) => {
+        const editor = document.createElement("div");
+        editor.className = "card-editor goal-editor";
+        editor.dataset.goalId = goal.goal_id || "";
+
+        const head = document.createElement("div");
+        head.className = "card-editor-head";
+        const title = document.createElement("strong");
+        title.textContent = goal.name || "资金目标";
+        const source = document.createElement("span");
+        source.textContent = goal.is_demo ? "预设演示" : "用户修改";
+        head.append(title, source);
+
+        const grid = document.createElement("div");
+        grid.className = "settings-grid";
+        const name = makeInput("text", goal.name || "");
+        name.dataset.field = "name";
+        const target = makeInput("number", goal.target_amount);
+        target.dataset.field = "target_amount";
+        target.min = "0.01";
+        target.step = "0.01";
+        const deadline = makeInput("date", goal.deadline || "");
+        deadline.dataset.field = "deadline";
+        const status = document.createElement("select");
+        status.dataset.field = "status";
+        [["active", "进行中"], ["achieved", "已完成"]].forEach(([value, label]) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          option.selected = goal.status === value;
+          status.appendChild(option);
+        });
+        const locked = makeInput("number", goal.locked_amount);
+        locked.dataset.field = "locked_amount";
+        locked.disabled = true;
+        const note = makeInput("text", goal.note || "");
+        note.dataset.field = "note";
+        note.className = "wide";
+        grid.append(
+          makeSettingsField("目标名称", name),
+          makeSettingsField("目标金额", target),
+          makeSettingsField("目标日期", deadline),
+          makeSettingsField("状态", status),
+          makeSettingsField("已锁定金额（只读）", locked),
+          makeSettingsField("备注", note),
+        );
+
+        const actions = document.createElement("div");
+        actions.className = "settings-actions";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "settings-save goal-save";
+        save.textContent = "保存目标";
+        const localStatus = document.createElement("span");
+        localStatus.className = "settings-status goal-save-status";
+        actions.append(save, localStatus);
+        save.addEventListener("click", async () => {
+          save.disabled = true;
+          localStatus.textContent = "保存中...";
+          try {
+            const response = await fetchWithAuth(
+              `/v1/goals/${encodeURIComponent(goal.goal_id)}`,
+              {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  session_id: sessionId,
+                  name: name.value,
+                  target_amount: Number(target.value || 0),
+                  deadline: deadline.value,
+                  status: status.value,
+                  note: note.value,
+                }),
+              },
+            );
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.message || "保存失败");
+            title.textContent = payload.name;
+            source.textContent = "用户修改";
+            localStatus.textContent = "目标已保存。";
+          } catch (error) {
+            localStatus.textContent = error.message || "保存失败";
+          } finally {
+            save.disabled = false;
+          }
+        });
+        editor.append(head, grid, actions);
+        profileGoals.appendChild(editor);
       });
     }
 

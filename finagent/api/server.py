@@ -128,6 +128,18 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                 values = {key: value for key, value in payload.items() if key != "session_id"}
                 self._send_json(200, self.service.update_profile_settings(session_id, values))
                 return
+            goal_prefix = "/v1/goals/"
+            if parsed.path.startswith(goal_prefix):
+                goal_id = unquote(parsed.path[len(goal_prefix):]).strip("/")
+                if not goal_id:
+                    raise ValueError("goal_id 不能为空")
+                values = {key: value for key, value in payload.items() if key != "session_id"}
+                self._send_json(200, self.service.update_goal_settings(
+                    session_id,
+                    goal_id,
+                    values,
+                ))
+                return
             card_prefix = "/v1/cards/"
             if parsed.path.startswith(card_prefix):
                 card_id = unquote(parsed.path[len(card_prefix):]).strip("/")

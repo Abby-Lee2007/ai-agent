@@ -445,11 +445,15 @@ try {
       .map((label) => label.textContent)
       .filter((text) => ["手机号", "微信号", "支付宝账号", "银行卡号"].some((name) => text.includes(name)))
       .length,
-    cardEditors: document.querySelectorAll(".card-editor:not(.care-person)").length,
-    cardDeletes: document.querySelectorAll(".card-editor:not(.care-person) .history-delete").length,
-    cardDeleteText: document.querySelector(".card-editor:not(.care-person) .history-delete")?.textContent,
+    cardEditors: document.querySelectorAll(".cards-settings-section .card-editor").length,
+    cardDeletes: document.querySelectorAll(".cards-settings-section .card-editor .history-delete").length,
+    cardDeleteText: document.querySelector(".cards-settings-section .card-editor .history-delete")?.textContent,
+    goalEditors: document.querySelectorAll(".goal-editor").length,
+    firstGoalName: document.querySelector('.goal-editor [data-field="name"]')?.value || "",
+    firstGoalTarget: document.querySelector('.goal-editor [data-field="target_amount"]')?.value || "",
+    firstGoalLocked: document.querySelector('.goal-editor [data-field="locked_amount"]')?.value || "",
     deleteAtRight: (() => {
-      const actions = document.querySelector(".card-editor:not(.care-person) .settings-actions");
+      const actions = document.querySelector(".cards-settings-section .card-editor .settings-actions");
       const button = actions?.querySelector(".history-delete");
       if (!actions || !button) return false;
       return Math.abs(actions.getBoundingClientRect().right - button.getBoundingClientRect().right) <= 1;
@@ -468,9 +472,39 @@ try {
   assert(profilePanel.careContactLabels === 4, "关心的人转账联系方式字段名不完整");
   assert(profilePanel.cardEditors >= 3, "银行卡设置没有加载预设卡片");
   assert(profilePanel.cardDeletes >= 3, "银行卡设置没有删除按钮");
+  assert(profilePanel.goalEditors >= 1, "资料页没有加载资金目标");
+  assert(profilePanel.firstGoalName, "资金目标名称没有加载");
+  assert(profilePanel.firstGoalTarget === "8000", "资金目标金额没有加载");
+  assert(profilePanel.firstGoalLocked === "8000", "资金目标锁定金额没有加载");
   assert(profilePanel.cardDeleteText === "删除这张卡", "银行卡删除文案不正确");
   assert(profilePanel.deleteAtRight, "删除这张卡没有位于操作行最右侧");
   assert(profilePanel.profileCardsGap >= 20, "保存偏好与银行卡栏之间的间距不足");
+  await evaluate(cdp, `(() => {
+    const goal = document.querySelector(".goal-editor");
+    goal.querySelector('[data-field="name"]').value = "UI毕业旅行基金";
+    goal.querySelector('[data-field="target_amount"]').value = "9000";
+    goal.querySelector('[data-field="deadline"]').value = "2026-12-31";
+    goal.querySelector('[data-field="status"]').value = "active";
+    goal.querySelector('[data-field="note"]').value = "毕业后出发";
+    goal.querySelector(".goal-save").click();
+    return true;
+  })()`);
+  await waitFor(
+    cdp,
+    `document.querySelector(".goal-editor .goal-save-status")?.textContent.includes("已保存")`,
+  );
+  const savedGoal = await evaluate(cdp, `(async () => {
+    const response = await fetchWithAuth(
+      \`/v1/profile?session_id=\${encodeURIComponent(sessionId)}\`
+    );
+    const payload = await response.json();
+    return payload.goals?.[0] || {};
+  })()`);
+  assert(savedGoal.name === "UI毕业旅行基金", "资金目标名称没有保存");
+  assert(savedGoal.target_amount === 9000, "资金目标金额没有保存");
+  assert(savedGoal.deadline === "2026-12-31", "资金目标日期没有保存");
+  assert(savedGoal.note === "毕业后出发", "资金目标备注没有保存");
+  assert(savedGoal.locked_amount === 8000, "锁定金额被资料页错误修改");
   await evaluate(cdp, `(() => {
     const person = document.querySelector(".care-person");
     const values = {

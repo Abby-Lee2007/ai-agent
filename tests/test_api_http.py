@@ -339,6 +339,30 @@ class ApiServerTestCase(unittest.TestCase):
             for card in after_delete["cards"]
         ))
 
+    def test_profile_goals_can_be_edited(self):
+        with self.post_json("/v1/sessions", {"user_id": "u_001", "channel": "h5"}) as response:
+            session_id = json.loads(response.read().decode("utf-8"))["session_id"]
+        with self.get_json(f"/v1/profile?session_id={session_id}") as response:
+            profile = json.loads(response.read().decode("utf-8"))
+        self.assertGreaterEqual(len(profile["goals"]), 1)
+        goal = profile["goals"][0]
+
+        with self.patch_json(f"/v1/goals/{goal['goal_id']}", {
+            "session_id": session_id,
+            "name": "毕业旅行基金",
+            "target_amount": 12000,
+            "deadline": "2027-01-31",
+            "status": "active",
+            "note": "毕业后旅行",
+            "locked_amount": 1,
+        }) as response:
+            updated = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(updated["name"], "毕业旅行基金")
+        self.assertEqual(updated["target_amount"], 12000.0)
+        self.assertEqual(updated["deadline"], "2027-01-31")
+        self.assertEqual(updated["locked_amount"], goal["locked_amount"])
+
     def test_access_password_protects_api_but_not_health(self):
         service = AgentSessionService(make_store(), llm_mode="off")
         server = create_server(

@@ -95,6 +95,32 @@ class TestAgentSessionService(unittest.TestCase):
             second_store.primary_account("u_001").balance,
         )
 
+    def test_profile_goals_are_listed_and_safe_fields_are_editable(self):
+        session_id = self.service.create_session(user_id="u_001", channel="h5")["session_id"]
+        before = self.service.get_profile_settings(session_id)
+        self.assertGreaterEqual(len(before["goals"]), 1)
+        goal = before["goals"][0]
+
+        updated = self.service.update_goal_settings(
+            session_id,
+            goal["goal_id"],
+            {
+                "name": "云南毕业旅行基金",
+                "target_amount": 9000,
+                "deadline": "2026-12-31",
+                "status": "active",
+                "note": "毕业后出发",
+                "locked_amount": 1,
+            },
+        )
+
+        self.assertEqual(updated["name"], "云南毕业旅行基金")
+        self.assertEqual(updated["target_amount"], 9000.0)
+        self.assertEqual(updated["deadline"], "2026-12-31")
+        self.assertEqual(updated["status"], "active")
+        self.assertEqual(updated["note"], "毕业后出发")
+        self.assertEqual(updated["locked_amount"], goal["locked_amount"])
+
     def test_failed_idempotency_record_is_not_replayed(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             repository = SQLiteRepository(Path(temp_dir) / "agent.db")

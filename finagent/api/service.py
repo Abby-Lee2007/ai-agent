@@ -230,6 +230,7 @@ class AgentSessionService:
                     "notify_channel": prefs.get("notify_channel", "APP"),
                 },
                 "cards": [asdict(card) for card in store.cards_of(record.user_id)],
+                "goals": [asdict(goal) for goal in store.goals_of(record.user_id)],
             }
 
     def update_profile_settings(self, session_id: str, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -327,6 +328,48 @@ class AgentSessionService:
             store.log("profile.updated", user_id=user.user_id)
             self._persist_session(record)
             return self.get_profile_settings(session_id)
+
+    def update_goal_settings(
+        self,
+        session_id: str,
+        goal_id: str,
+        values: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Update user-editable goal metadata without changing locked funds."""
+        with self._lock:
+            record = self._get_or_load(session_id)
+            store = record.agent.store
+            goal = store.goals.get(goal_id)
+            if goal is None or goal.user_id != record.user_id:
+                raise ValueError(f"资金目标不存在：{goal_id}")
+            if values.get("name") is not None:
+                name = str(values["name"]).strip()
+                if not name:
+                    raise ValueError("目标名称不能为空")
+                goal.name = name[:60]
+            if values.get("target_amount") is not None:
+                try:
+                    target_amount = float(values["target_amount"])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("目标金额必须是数字") from exc
+                if target_amount <= 0:
+                    raise ValueError("目标金额必须大于 0")
+                goal.target_amount = round(target_amount, 2)
+            if values.get("deadline") is not None:
+                goal.deadline = self._validate_date(values["deadline"], "目标日期")
+            if values.get("status") is not None:
+                status = str(values["status"]).strip()
+                if status not in {"active", "achieved"}:
+                    raise ValueError("资金目标状态只能是进行中或已完成")
+                goal.status = status
+            if values.get("note") is not None:
+                goal.note = str(values["note"]).strip()[:200]
+            goal.source = "user:profile"
+            goal.is_demo = False
+            store.touch(goal)
+            store.log("goal.profile_updated", goal_id=goal.goal_id)
+            self._persist_session(record)
+            return asdict(goal)
 
     def create_card_settings(self, session_id: str, values: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
