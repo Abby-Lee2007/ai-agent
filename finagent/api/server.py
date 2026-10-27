@@ -95,12 +95,19 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         session_id = parse_qs(parsed.query).get("session_id", [""])[0]
         try:
             upload_prefix = "/v1/uploads/"
+            goal_prefix = "/v1/goals/"
             card_prefix = "/v1/cards/"
             if parsed.path.startswith(upload_prefix):
                 item_id = unquote(parsed.path[len(upload_prefix):]).strip("/")
                 if not item_id or not session_id:
                     raise ValueError("session_id 和 upload_id 不能为空")
                 self._send_json(200, self.service.delete_upload(session_id, item_id))
+                return
+            if parsed.path.startswith(goal_prefix):
+                item_id = unquote(parsed.path[len(goal_prefix):]).strip("/")
+                if not item_id or not session_id:
+                    raise ValueError("session_id 和 goal_id 不能为空")
+                self._send_json(200, self.service.delete_goal_settings(session_id, item_id))
                 return
             if parsed.path.startswith(card_prefix):
                 item_id = unquote(parsed.path[len(card_prefix):]).strip("/")
@@ -204,6 +211,12 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                 return
             if path in {"/v1/uploads", "/api/upload"}:
                 self._upload(payload)
+                return
+            if path == "/v1/goals":
+                session_id = str(payload.get("session_id") or "")
+                if not session_id:
+                    raise ValueError("session_id 不能为空")
+                self._send_json(201, self.service.create_goal_settings(session_id, payload))
                 return
             if path == "/v1/cards":
                 self._send_json(200, self.service.create_card_settings(

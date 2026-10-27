@@ -371,6 +371,75 @@ class AgentSessionService:
             self._persist_session(record)
             return asdict(goal)
 
+    def create_goal_settings(
+        self,
+        session_id: str,
+        values: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Create a profile goal without reserving account funds."""
+        with self._lock:
+            record = self._get_or_load(session_id)
+            store = record.agent.store
+            name = str(values.get("name") or "").strip()
+            if not name:
+                raise ValueError("目标名称不能为空")
+            try:
+                target_amount = float(values.get("target_amount"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("目标金额必须是数字") from exc
+            if target_amount <= 0:
+                raise ValueError("目标金额必须大于 0")
+            deadline = self._validate_date(values.get("deadline"), "目标日期")
+            status = str(values.get("status") or "active").strip()
+            if status not in {"active", "achieved"}:
+                raise ValueError("资金目标状态只能是进行中或已完成")
+            goal = store.add_goal(
+                user_id=record.user_id,
+                name=name[:60],
+                target_amount=target_amount,
+                deadline=deadline,
+                scenario="profile",
+                note=str(values.get("note") or "").strip()[:200],
+            )
+            goal.status = status
+            goal.source = "user:profile"
+            goal.is_demo = False
+            store.touch(goal)
+            store.log("goal.profile_created", goal_id=goal.goal_id)
+            self._persist_session(record)
+            return asdict(goal)
+
+    def delete_goal_settings(self, session_id: str, goal_id: str) -> Dict[str, Any]:
+        """Delete a profile goal and release any funds it still holds."""
+        with self._lock:
+            record = self._get_or_load(session_id)
+            store = record.agent.store
+            goal = store.goals.get(goal_id)
+            if goal is None or goal.user_id != record.user_id:
+                raise ValueError(f"资金目标不存在：{goal_id}")
+            released_amount = 0.0
+            account = store.accounts.get(goal.account_id)
+            if account is not None and account.user_id == record.user_id and goal.locked_amount > 0:
+                released_amount = min(
+                    round(float(goal.locked_amount), 2),
+                    max(0.0, round(float(account.locked), 2)),
+                )
+                if released_amount:
+                    account.locked = round(max(0.0, account.locked - released_amount), 2)
+                    store.touch(account)
+            del store.goals[goal_id]
+            store.log(
+                "goal.profile_deleted",
+                goal_id=goal_id,
+                released_amount=released_amount,
+            )
+            self._persist_session(record)
+            return {
+                "deleted_goal_id": goal_id,
+                "released_amount": released_amount,
+                "remaining_goals": len(store.goals_of(record.user_id)),
+            }
+
     def create_card_settings(self, session_id: str, values: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
             record = self._get_or_load(session_id)

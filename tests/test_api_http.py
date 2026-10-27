@@ -363,6 +363,38 @@ class ApiServerTestCase(unittest.TestCase):
         self.assertEqual(updated["deadline"], "2027-01-31")
         self.assertEqual(updated["locked_amount"], goal["locked_amount"])
 
+    def test_profile_goals_can_be_created_and_deleted(self):
+        with self.post_json("/v1/sessions", {"user_id": "u_001", "channel": "h5"}) as response:
+            session_id = json.loads(response.read().decode("utf-8"))["session_id"]
+
+        with self.post_json("/v1/goals", {
+            "session_id": session_id,
+            "name": "毕业旅行基金",
+            "target_amount": 6000,
+            "deadline": "2027-06-30",
+            "status": "active",
+            "note": "毕业后出发",
+        }) as response:
+            created = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(created["locked_amount"], 0.0)
+        self.assertEqual(created["source"], "user:profile")
+
+        with self.delete_json(
+            f"/v1/goals/{created['goal_id']}?session_id={session_id}"
+        ) as response:
+            deleted = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(deleted["deleted_goal_id"], created["goal_id"])
+        self.assertEqual(deleted["released_amount"], 0.0)
+
+        with self.get_json(f"/v1/profile?session_id={session_id}") as response:
+            profile = json.loads(response.read().decode("utf-8"))
+        self.assertFalse(any(
+            goal["goal_id"] == created["goal_id"]
+            for goal in profile["goals"]
+        ))
+
     def test_access_password_protects_api_but_not_health(self):
         service = AgentSessionService(make_store(), llm_mode="off")
         server = create_server(

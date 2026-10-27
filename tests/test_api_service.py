@@ -121,6 +121,51 @@ class TestAgentSessionService(unittest.TestCase):
         self.assertEqual(updated["note"], "毕业后出发")
         self.assertEqual(updated["locked_amount"], goal["locked_amount"])
 
+    def test_profile_goal_can_be_created_without_locking_funds(self):
+        session_id = self.service.create_session(user_id="u_001", channel="h5")["session_id"]
+        account = self.service.store.primary_account("u_001")
+        locked_before = account.locked
+
+        created = self.service.create_goal_settings(
+            session_id,
+            {
+                "name": "新电脑基金",
+                "target_amount": 12000,
+                "deadline": "2027-06-01",
+                "status": "active",
+                "note": "毕业前攒够",
+            },
+        )
+
+        self.assertEqual(created["name"], "新电脑基金")
+        self.assertEqual(created["target_amount"], 12000.0)
+        self.assertEqual(created["locked_amount"], 0.0)
+        self.assertEqual(created["account_id"], "")
+        self.assertEqual(created["source"], "user:profile")
+        self.assertFalse(created["is_demo"])
+        self.assertEqual(account.locked, locked_before)
+
+    def test_delete_profile_goal_releases_locked_funds(self):
+        session_id = self.service.create_session(user_id="u_001", channel="h5")["session_id"]
+        created = self.service.create_goal_settings(
+            session_id,
+            {"name": "短期目标", "target_amount": 500},
+        )
+        store = self.service._sessions[session_id].agent.store
+        account = store.primary_account("u_001")
+        goal = store.goals[created["goal_id"]]
+        goal.account_id = account.account_id
+        goal.locked_amount = 300.0
+        account.locked = 300.0
+        store.touch(goal, account)
+
+        deleted = self.service.delete_goal_settings(session_id, goal.goal_id)
+
+        self.assertEqual(deleted["deleted_goal_id"], goal.goal_id)
+        self.assertEqual(deleted["released_amount"], 300.0)
+        self.assertEqual(account.locked, 0.0)
+        self.assertNotIn(goal.goal_id, store.goals)
+
     def test_failed_idempotency_record_is_not_replayed(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             repository = SQLiteRepository(Path(temp_dir) / "agent.db")

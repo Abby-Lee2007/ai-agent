@@ -449,6 +449,9 @@ try {
     cardDeletes: document.querySelectorAll(".cards-settings-section .card-editor .history-delete").length,
     cardDeleteText: document.querySelector(".cards-settings-section .card-editor .history-delete")?.textContent,
     goalEditors: document.querySelectorAll(".goal-editor").length,
+    goalDeletes: document.querySelectorAll(".goal-editor .goal-delete").length,
+    addGoalButton: Boolean(document.querySelector("#add-goal")),
+    newGoalForm: Boolean(document.querySelector("#new-goal-form")),
     firstGoalName: document.querySelector('.goal-editor [data-field="name"]')?.value || "",
     firstGoalTarget: document.querySelector('.goal-editor [data-field="target_amount"]')?.value || "",
     firstGoalLocked: document.querySelector('.goal-editor [data-field="locked_amount"]')?.value || "",
@@ -473,6 +476,9 @@ try {
   assert(profilePanel.cardEditors >= 3, "银行卡设置没有加载预设卡片");
   assert(profilePanel.cardDeletes >= 3, "银行卡设置没有删除按钮");
   assert(profilePanel.goalEditors >= 1, "资料页没有加载资金目标");
+  assert(profilePanel.goalDeletes === profilePanel.goalEditors, "资金目标缺少删除按钮");
+  assert(profilePanel.addGoalButton, "资金目标缺少新增按钮");
+  assert(profilePanel.newGoalForm, "资金目标缺少新增表单");
   assert(profilePanel.firstGoalName, "资金目标名称没有加载");
   assert(profilePanel.firstGoalTarget === "8000", "资金目标金额没有加载");
   assert(profilePanel.firstGoalLocked === "8000", "资金目标锁定金额没有加载");
@@ -505,6 +511,80 @@ try {
   assert(savedGoal.deadline === "2026-12-31", "资金目标日期没有保存");
   assert(savedGoal.note === "毕业后出发", "资金目标备注没有保存");
   assert(savedGoal.locked_amount === 8000, "锁定金额被资料页错误修改");
+  await evaluate(cdp, `document.querySelector("#add-goal").click()`);
+  await waitFor(cdp, `document.querySelector("#new-goal-form")?.hidden === false`);
+  await evaluate(cdp, `(() => {
+    const form = document.querySelector("#new-goal-form");
+    form.querySelector('[data-new-goal="name"]').value = "UI新电脑基金";
+    form.querySelector('[data-new-goal="target_amount"]').value = "12000";
+    form.querySelector('[data-new-goal="deadline"]').value = "2027-06-01";
+    form.querySelector('[data-new-goal="status"]').value = "active";
+    form.querySelector('[data-new-goal="note"]').value = "毕业前攒够";
+    form.querySelector(".goal-create-submit").click();
+    return true;
+  })()`);
+  await waitFor(
+    cdp,
+    `document.querySelector(".goal-create-status")?.textContent.includes("已创建")`,
+  );
+  const createdGoal = await evaluate(cdp, `(async () => {
+    const response = await fetchWithAuth(
+      \`/v1/profile?session_id=\${encodeURIComponent(sessionId)}\`
+    );
+    const payload = await response.json();
+    return payload.goals?.find((goal) => goal.name === "UI新电脑基金") || {};
+  })()`);
+  assert(createdGoal.goal_id, "资料页没有新增资金目标");
+  assert(createdGoal.locked_amount === 0, "资料页新增目标不应锁定资金");
+  assert(
+    await evaluate(cdp, `Boolean(document.querySelector("#goal-delete-dialog"))`),
+    "资金目标缺少删除确认弹窗",
+  );
+  await evaluate(cdp, `(() => {
+    const editor = [...document.querySelectorAll(".goal-editor")]
+      .find((row) => row.dataset.goalId === ${JSON.stringify(createdGoal.goal_id)});
+    editor?.querySelector(".goal-delete")?.click();
+    return Boolean(editor);
+  })()`);
+  await waitFor(cdp, `document.querySelector("#goal-delete-dialog")?.open === true`);
+  const goalStillPresentBeforeConfirm = await evaluate(cdp, `(
+    [...document.querySelectorAll(".goal-editor")].some(
+      (row) => row.dataset.goalId === ${JSON.stringify(createdGoal.goal_id)}
+    )
+  )`);
+  assert(goalStillPresentBeforeConfirm, "确认删除前资金目标不应消失");
+  await evaluate(cdp, `document.querySelector("#goal-delete-cancel").click()`);
+  await waitFor(cdp, `document.querySelector("#goal-delete-dialog")?.open === false`);
+  const goalStillPresentAfterCancel = await evaluate(cdp, `(
+    [...document.querySelectorAll(".goal-editor")].some(
+      (row) => row.dataset.goalId === ${JSON.stringify(createdGoal.goal_id)}
+    )
+  )`);
+  assert(goalStillPresentAfterCancel, "取消确认后资金目标不应被删除");
+  await evaluate(cdp, `(() => {
+    const editor = [...document.querySelectorAll(".goal-editor")]
+      .find((row) => row.dataset.goalId === ${JSON.stringify(createdGoal.goal_id)});
+    editor?.querySelector(".goal-delete")?.click();
+    return Boolean(editor);
+  })()`);
+  await waitFor(cdp, `document.querySelector("#goal-delete-dialog")?.open === true`);
+  await evaluate(cdp, `document.querySelector("#goal-delete-confirm").click()`);
+  await waitFor(
+    cdp,
+    `![...document.querySelectorAll(".goal-editor")].some(
+      (row) => row.dataset.goalId === ${JSON.stringify(createdGoal.goal_id)}
+    )`,
+  );
+  const deletedGoalCount = await evaluate(cdp, `(async () => {
+    const response = await fetchWithAuth(
+      \`/v1/profile?session_id=\${encodeURIComponent(sessionId)}\`
+    );
+    const payload = await response.json();
+    return payload.goals?.filter(
+      (goal) => goal.goal_id === ${JSON.stringify(createdGoal.goal_id)}
+    ).length || 0;
+  })()`);
+  assert(deletedGoalCount === 0, "资料页没有删除资金目标");
   await evaluate(cdp, `(() => {
     const person = document.querySelector(".care-person");
     const values = {

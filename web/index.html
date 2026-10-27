@@ -837,6 +837,46 @@
       color: var(--muted);
       background: var(--surface-soft);
     }
+    .confirm-dialog {
+      width: min(420px, calc(100vw - 32px));
+      padding: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ink);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .confirm-dialog::backdrop { background: rgba(20, 38, 35, .34); }
+    .confirm-dialog-body { padding: 20px; }
+    .confirm-dialog h3 { margin: 0; font-size: 18px; }
+    .confirm-dialog p {
+      margin: 9px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .confirm-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 20px;
+    }
+    .confirm-dialog-cancel,
+    .confirm-dialog-danger {
+      padding: 8px 13px;
+      border-radius: 6px;
+      font-weight: 650;
+    }
+    .confirm-dialog-cancel {
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: var(--surface-soft);
+    }
+    .confirm-dialog-danger {
+      border: 1px solid var(--danger);
+      color: #fff;
+      background: var(--danger);
+    }
     .history-list {
       min-height: 120px;
       padding: 4px 18px 16px;
@@ -1202,8 +1242,27 @@
           </section>
           <section class="settings-section">
             <h3>资金目标</h3>
-            <p class="settings-note">可调整目标名称、金额、日期、状态和备注；已锁定金额只读。</p>
+            <p class="settings-note">可新增、调整或删除资金目标；新增目标不会自动锁定账户资金，已有锁定金额保持只读。</p>
             <div id="profile-goals"></div>
+            <button class="history-button" id="add-goal" type="button">新增资金目标</button>
+            <div class="card-editor goal-create-form" id="new-goal-form" hidden>
+              <div class="settings-grid">
+                <label class="settings-field">目标名称<input data-new-goal="name" maxlength="60"></label>
+                <label class="settings-field">目标金额<input data-new-goal="target_amount" type="number" min="0.01" step="0.01"></label>
+                <label class="settings-field">目标日期<input data-new-goal="deadline" type="date"></label>
+                <label class="settings-field">状态
+                  <select data-new-goal="status">
+                    <option value="active">进行中</option>
+                    <option value="achieved">已完成</option>
+                  </select>
+                </label>
+                <label class="settings-field wide">备注<input data-new-goal="note" maxlength="200"></label>
+              </div>
+              <div class="settings-actions">
+                <button class="settings-save goal-create-submit" type="button">创建目标</button>
+                <span class="settings-status goal-create-status"></span>
+              </div>
+            </div>
           </section>
           <section class="settings-section">
             <h3>通知与礼物偏好</h3>
@@ -1261,6 +1320,17 @@
     </section>
   </div>
 
+  <dialog class="confirm-dialog" id="goal-delete-dialog" aria-labelledby="goal-delete-title">
+    <div class="confirm-dialog-body">
+      <h3 id="goal-delete-title">删除资金目标</h3>
+      <p id="goal-delete-message"></p>
+      <div class="confirm-dialog-actions">
+        <button class="confirm-dialog-cancel" id="goal-delete-cancel" type="button">取消</button>
+        <button class="confirm-dialog-danger" id="goal-delete-confirm" type="button">确认删除</button>
+      </div>
+    </div>
+  </dialog>
+
   <script>
     const messages = document.getElementById("messages");
     const form = document.getElementById("composer");
@@ -1281,6 +1351,14 @@
     const profileForm = document.getElementById("profile-settings-form");
     const profileCards = document.getElementById("profile-cards");
     const profileGoals = document.getElementById("profile-goals");
+    const addGoalButton = document.getElementById("add-goal");
+    const newGoalForm = document.getElementById("new-goal-form");
+    const newGoalSubmit = newGoalForm.querySelector(".goal-create-submit");
+    const newGoalStatus = newGoalForm.querySelector(".goal-create-status");
+    const goalDeleteDialog = document.getElementById("goal-delete-dialog");
+    const goalDeleteMessage = document.getElementById("goal-delete-message");
+    const goalDeleteCancel = document.getElementById("goal-delete-cancel");
+    const goalDeleteConfirm = document.getElementById("goal-delete-confirm");
     const carePeopleList = document.getElementById("care-people-list");
     const addCarePersonButton = document.getElementById("add-care-person");
     const newCardForm = document.getElementById("new-card-form");
@@ -1293,6 +1371,7 @@
     let carePeople = [];
     let sessionId = localStorage.getItem("finagent_session_id") || "";
     let accessToken = sessionStorage.getItem("finagent_access_token") || "";
+    let pendingGoalDelete = null;
     let busy = false;
     let awaitingSecret = false;
     let capabilityCatalog = null;
@@ -2305,9 +2384,13 @@
         save.type = "button";
         save.className = "settings-save goal-save";
         save.textContent = "保存目标";
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "history-delete goal-delete";
+        remove.textContent = "删除目标";
         const localStatus = document.createElement("span");
         localStatus.className = "settings-status goal-save-status";
-        actions.append(save, localStatus);
+        actions.append(save, localStatus, remove);
         save.addEventListener("click", async () => {
           save.disabled = true;
           localStatus.textContent = "保存中...";
@@ -2337,6 +2420,28 @@
           } finally {
             save.disabled = false;
           }
+        });
+        remove.addEventListener("click", () => {
+          const lockedAmount = Number(goal.locked_amount || 0);
+          const releaseHint = lockedAmount > 0
+            ? "删除后会按关联账户的实际锁定金额释放资金。"
+            : "该目标没有锁定资金。";
+          requestGoalDelete(title.textContent, releaseHint, async () => {
+            remove.disabled = true;
+            localStatus.textContent = "删除中...";
+            try {
+              const response = await fetchWithAuth(
+                `/v1/goals/${encodeURIComponent(goal.goal_id)}?session_id=${encodeURIComponent(sessionId)}`,
+                { method: "DELETE" },
+              );
+              const payload = await response.json();
+              if (!response.ok) throw new Error(payload.message || "删除失败");
+              await loadProfileSettings();
+            } catch (error) {
+              localStatus.textContent = error.message || "删除失败";
+              remove.disabled = false;
+            }
+          });
         });
         editor.append(head, grid, actions);
         profileGoals.appendChild(editor);
@@ -2488,7 +2593,7 @@
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.message || "读取资料失败");
         renderProfileSettings(payload);
-        profileStatus.textContent = "当前为预设数据，可直接修改。";
+        profileStatus.textContent = "资料已加载，可直接修改。";
       } catch (error) {
         profileStatus.textContent = error.message || "读取资料失败";
       }
@@ -2554,6 +2659,65 @@
         avoid: [],
       });
       renderCarePeople(carePeople);
+    });
+
+    addGoalButton.addEventListener("click", () => {
+      newGoalForm.hidden = !newGoalForm.hidden;
+      if (!newGoalForm.hidden) {
+        newGoalForm.querySelector('[data-new-goal="name"]').focus();
+      }
+    });
+
+    function requestGoalDelete(title, releaseHint, onConfirm) {
+      goalDeleteMessage.textContent = `确定删除「${title}」吗？${releaseHint}此操作不可撤销。`;
+      pendingGoalDelete = onConfirm;
+      goalDeleteDialog.showModal();
+    }
+
+    goalDeleteCancel.addEventListener("click", () => {
+      pendingGoalDelete = null;
+      goalDeleteDialog.close();
+    });
+
+    goalDeleteDialog.addEventListener("cancel", () => {
+      pendingGoalDelete = null;
+    });
+
+    goalDeleteConfirm.addEventListener("click", async () => {
+      const action = pendingGoalDelete;
+      pendingGoalDelete = null;
+      goalDeleteDialog.close();
+      if (action) await action();
+    });
+
+    newGoalSubmit.addEventListener("click", async () => {
+      newGoalSubmit.disabled = true;
+      newGoalStatus.textContent = "创建中...";
+      const values = {};
+      newGoalForm.querySelectorAll("[data-new-goal]").forEach((input) => {
+        values[input.dataset.newGoal] = input.value;
+      });
+      values.target_amount = Number(values.target_amount || 0);
+      try {
+        const response = await fetchWithAuth("/v1/goals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, ...values }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "创建失败");
+        newGoalForm.querySelectorAll("input").forEach((input) => {
+          input.value = "";
+        });
+        newGoalForm.querySelector('[data-new-goal="status"]').value = "active";
+        newGoalStatus.textContent = "目标已创建。";
+        await loadProfileSettings();
+        newGoalForm.hidden = true;
+      } catch (error) {
+        newGoalStatus.textContent = error.message || "创建失败";
+      } finally {
+        newGoalSubmit.disabled = false;
+      }
     });
 
     document.querySelectorAll("[data-card-start]").forEach((button) => {
