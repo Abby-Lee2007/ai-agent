@@ -157,9 +157,27 @@ GIFT_OFFER_LABELS = {
     "OFFER000009": "定制饰品",
 }
 
+FRUIT_AVOID_WORDS = (
+    "水果", "芒果", "草莓", "桃", "苹果", "梨", "柑橘", "橙", "柚", "莓",
+    "樱桃", "葡萄", "猕猴桃", "菠萝", "榴莲", "椰", "荔枝", "龙眼", "哈密瓜",
+    "甜瓜",
+)
+SEAFOOD_AVOID_WORDS = (
+    "海鲜", "虾", "蟹", "鱼", "贝", "蛤", "蚝", "鱿鱼", "章鱼",
+)
+DAIRY_EGG_AVOID_WORDS = (
+    "奶", "蛋过敏", "蛋", "麸质", "小麦", "花生", "坚果", "芝麻",
+)
+FLOWER_AVOID_WORDS = ("花粉", "鲜花", "花过敏")
+CAKE_AVOID_WORDS = ("蛋糕", "甜食", "甜品", "奶", "蛋过敏", "麸质", "小麦")
+
 
 def offer_product_label(offer: MerchantOffer) -> str:
     return GIFT_OFFER_LABELS.get(offer.offer_id, f"{offer.merchant}{offer.item}")
+
+
+def offer_risk_text(offer: MerchantOffer) -> str:
+    return f"{offer.merchant} {offer.item} {offer_product_label(offer)}"
 
 
 def ensure_gift_offer_catalog(ctx: ToolContext) -> None:
@@ -456,10 +474,30 @@ class GiftRecommendTool(Tool):
             [item for item in offers if item.item == "礼物"],
             key=lambda item: item.price,
         )
-        if any(word in avoid_text for word in ("花粉", "鲜花", "花过敏")):
+        fruit_risk = any(word in avoid_text for word in FRUIT_AVOID_WORDS)
+        seafood_risk = any(word in avoid_text for word in SEAFOOD_AVOID_WORDS)
+        dairy_egg_risk = any(word in avoid_text for word in DAIRY_EGG_AVOID_WORDS)
+        flower_risk = any(word in avoid_text for word in FLOWER_AVOID_WORDS)
+        cake_risk = fruit_risk or any(word in avoid_text for word in CAKE_AVOID_WORDS)
+        if flower_risk:
             flowers = []
-        if any(word in avoid_text for word in ("蛋糕", "甜食", "奶", "蛋过敏", "麸质")):
+        if cake_risk:
             cakes = []
+        if fruit_risk:
+            gifts = [
+                gift for gift in gifts
+                if not any(word in offer_risk_text(gift) for word in FRUIT_AVOID_WORDS)
+            ]
+        if seafood_risk:
+            gifts = [
+                gift for gift in gifts
+                if not any(word in offer_risk_text(gift) for word in SEAFOOD_AVOID_WORDS)
+            ]
+        if dairy_egg_risk:
+            gifts = [
+                gift for gift in gifts
+                if not any(word in offer_risk_text(gift) for word in DAIRY_EGG_AVOID_WORDS)
+            ]
 
         options: List[Dict[str, Any]] = []
 
@@ -487,6 +525,39 @@ class GiftRecommendTool(Tool):
                 "reason": reason,
             })
 
+        prefer_safe_gifts = fruit_risk or dairy_egg_risk or flower_risk or cake_risk
+
+        def add_gift_options() -> None:
+            gift_reasons = [
+                "已避开当前食物与气味禁忌，适合长期留存",
+                "预算内提升质感和纪念意义",
+                "适合记录共同经历，实用性较强",
+            ]
+            for index, gift in enumerate(gifts[:3]):
+                add_option(
+                    offer_product_label(gift),
+                    [gift],
+                    gift_reasons[index],
+                )
+            if len(gifts) >= 2:
+                first_gift = gifts[0]
+                second_gift = gifts[2] if len(gifts) >= 3 else gifts[1]
+                add_option(
+                    f"{offer_product_label(first_gift)} + {offer_product_label(second_gift)}",
+                    [first_gift, second_gift],
+                    "两份已避忌礼物组合，兼顾实用与纪念",
+                )
+            if len(gifts) >= 4:
+                first_gift = gifts[1]
+                second_gift = gifts[3]
+                add_option(
+                    f"{offer_product_label(first_gift)} + {offer_product_label(second_gift)}",
+                    [first_gift, second_gift],
+                    "兼顾纪念意义和实用体验",
+                )
+
+        if prefer_safe_gifts:
+            add_gift_options()
         if flowers and cakes:
             flower_label = offer_product_label(flowers[0])
             cake_label = offer_product_label(cakes[0])
@@ -526,34 +597,8 @@ class GiftRecommendTool(Tool):
                     [cakes[-1]],
                     "预算内提升口味和造型",
                 )
-        if gifts:
-            gift_reasons = [
-                "避开鲜花和食物禁忌，适合长期留存",
-                "预算内提升质感和纪念意义",
-                "适合记录共同经历，实用性较强",
-            ]
-            for index, gift in enumerate(gifts[:3]):
-                add_option(
-                    offer_product_label(gift),
-                    [gift],
-                    gift_reasons[index],
-                )
-            if len(gifts) >= 2:
-                first_gift = gifts[0]
-                second_gift = gifts[2] if len(gifts) >= 3 else gifts[1]
-                add_option(
-                    f"{offer_product_label(first_gift)} + {offer_product_label(second_gift)}",
-                    [first_gift, second_gift],
-                    "两份无花粉、无食物风险的礼物组合",
-                )
-            if len(gifts) >= 4:
-                first_gift = gifts[1]
-                second_gift = gifts[3]
-                add_option(
-                    f"{offer_product_label(first_gift)} + {offer_product_label(second_gift)}",
-                    [first_gift, second_gift],
-                    "兼顾纪念意义和实用体验",
-                )
+        if not prefer_safe_gifts:
+            add_gift_options()
         if not options:
             return ToolResult(
                 False,
@@ -601,9 +646,12 @@ class GiftRecommendTool(Tool):
             "person": person,
             "display_name": display_name,
             "birthday": birthday_day.isoformat(),
+            "delivery_date": delivery_day.isoformat(),
             "budget": max_budget,
             "preferences": preferences,
             "avoid": avoid,
+            "known_preferences": list(profile.get("favorite_gift") or []),
+            "known_avoid": list(profile.get("avoid") or []),
             "offset": (start + len(visible)) % len(options),
             "options": visible,
         }
@@ -618,6 +666,7 @@ class GiftRecommendTool(Tool):
                         "name": option["name"],
                         "total": option["total"],
                         "items": option["items"],
+                        "reason": option["reason"],
                     }
                     for option in visible
                 ],

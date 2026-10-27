@@ -163,6 +163,31 @@ class TestCrossScene(unittest.TestCase):
         self.assertEqual(self.agent.session.pending.kind, "gift_choice")
         self.assertTrue(switched.data["options"])
 
+    def test_fruit_allergy_excludes_cakes_and_prioritizes_safe_gifts(self):
+        recommendation = begin_birthday_recommendation(
+            self.agent,
+            budget="90000",
+            preferences="沿用资料",
+            avoid="大部分水果都过敏",
+        )
+
+        self.assertEqual(recommendation.kind, "question")
+        self.assertEqual(self.agent.session.pending.kind, "gift_choice")
+        options = recommendation.data["options"]
+        self.assertEqual(len(options), 3)
+        all_items = [
+            item
+            for option in options
+            for item in option["items"]
+        ]
+        self.assertFalse(any(item["item"] == "蛋糕" for item in all_items))
+        self.assertFalse(any(
+            word in f"{item['label']} {item['merchant']}"
+            for item in all_items
+            for word in ("蛋糕", "水果", "芒果", "草莓", "甜品")
+        ))
+        self.assertTrue(any(item["item"] == "礼物" for item in options[0]["items"]))
+
     def test_gift_choice_can_switch_to_another_shortcut(self):
         begin_birthday_recommendation(self.agent)
         self.assertEqual(self.agent.session.pending.kind, "gift_choice")

@@ -267,7 +267,29 @@ try {
   await sendPrompt(cdp, "沿用资料", "过敏");
   await sendPrompt(cdp, "对花粉和奶制品过敏", "预算");
   await sendPrompt(cdp, "70", "没有可预约礼物");
-  await sendPrompt(cdp, "预算1000，没有禁忌", "第1个");
+  await sendPrompt(cdp, "预算1000，没有禁忌", "选择方案 1");
+  const giftLayout = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const grid = bubble?.querySelector(".gift-option-grid");
+    const cards = [...(bubble?.querySelectorAll(".gift-option-card") || [])];
+    const bubbleRect = bubble?.getBoundingClientRect();
+    return {
+      count: cards.length,
+      hasSummary: Boolean(bubble?.querySelector(".gift-summary")),
+      hasSelectButtons: cards.every((card) => Boolean(card.querySelector(".gift-option-select"))),
+      columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").length : 0,
+      allInside: Boolean(bubbleRect) && cards.every((card) => {
+        const rect = card.getBoundingClientRect();
+        return rect.left >= bubbleRect.left - 1 && rect.right <= bubbleRect.right + 1;
+      })
+    };
+  })()`);
+  assert(giftLayout.count === 3, "生日礼物候选没有渲染 3 张方案卡");
+  assert(giftLayout.hasSummary, "生日礼物候选缺少条件摘要");
+  assert(giftLayout.hasSelectButtons, "生日礼物方案缺少选择按钮");
+  assert(giftLayout.columns === 3, "桌面端礼物方案没有按三列排版");
+  assert(giftLayout.allInside, "礼物方案卡超出消息气泡");
+  await screenshot(cdp, "gift-options.png");
   await waitFor(
     cdp,
     `document.querySelector("#service-status")?.textContent === "接口就绪"

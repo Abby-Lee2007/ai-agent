@@ -597,6 +597,136 @@
       font-weight: 700;
     }
     .wealth-filter:hover { background: var(--accent-soft); border-color: #9ec7bd; }
+    .gift-recommendation { display: grid; gap: 14px; }
+    .gift-summary {
+      padding: 14px 16px;
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      background: var(--surface-soft);
+    }
+    .gift-summary-title {
+      margin: 0;
+      color: var(--ink);
+      font-size: 16px;
+      font-weight: 750;
+    }
+    .gift-summary-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 10px;
+    }
+    .gift-summary-meta span {
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      color: var(--accent-strong);
+      background: var(--surface);
+      font-size: 11.5px;
+      font-weight: 650;
+    }
+    .gift-constraints {
+      display: grid;
+      gap: 4px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .gift-constraints strong { color: var(--ink); }
+    .gift-option-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .gift-option-card {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+    }
+    .gift-option-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .gift-option-rank {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: .08em;
+    }
+    .gift-option-price {
+      color: var(--accent-strong);
+      font-size: 14px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .gift-option-name {
+      margin: 8px 0 0;
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .gift-option-items {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .gift-option-item {
+      min-width: 0;
+      padding: 7px 8px;
+      border-radius: 5px;
+      color: var(--ink);
+      background: var(--surface-soft);
+      font-size: 11.5px;
+      line-height: 1.4;
+    }
+    .gift-option-item strong { display: block; }
+    .gift-option-item span { color: var(--muted); }
+    .gift-option-reason {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+    .gift-option-select {
+      width: 100%;
+      margin-top: auto;
+      padding: 8px 10px;
+      border: 1px solid #b9d6cf;
+      border-radius: 6px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .gift-option-card .gift-option-select { margin-top: 14px; }
+    .gift-option-select:hover,
+    .gift-option-select:focus-visible {
+      border-color: var(--accent);
+      outline: none;
+    }
+    .gift-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 11.5px;
+    }
+    .gift-refresh {
+      flex: 0 0 auto;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: var(--surface-soft);
+      font-weight: 700;
+    }
     .anomaly-intro {
       margin-bottom: 10px;
       font-weight: 650;
@@ -1204,6 +1334,8 @@
       .history-item { align-items: flex-start; }
       .settings-grid { grid-template-columns: 1fr; }
       .settings-field.wide { grid-column: auto; }
+      .gift-option-grid { grid-template-columns: 1fr; }
+      .gift-footer { align-items: flex-start; flex-direction: column; }
       .anomaly-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .anomaly-summary-item:nth-child(odd) { border-left: 0; }
       .anomaly-summary-item:nth-child(n + 3) { border-top: 1px solid var(--line); }
@@ -2044,6 +2176,113 @@
       container.appendChild(footer);
     }
 
+    function renderGiftRecommendation(container, text, reply) {
+      const choice = reply?.data?.gift_choice || {};
+      const options = Array.isArray(reply?.data?.options) ? reply.data.options : [];
+      const money = (value) => Number(value || 0).toLocaleString("zh-CN", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+      const knownPreferences = Array.isArray(choice.known_preferences)
+        ? choice.known_preferences
+        : [];
+      const knownAvoid = Array.isArray(choice.known_avoid) ? choice.known_avoid : [];
+
+      const root = document.createElement("div");
+      root.className = "gift-recommendation";
+
+      const summary = document.createElement("section");
+      summary.className = "gift-summary";
+      const title = document.createElement("h3");
+      title.className = "gift-summary-title";
+      title.textContent = `为「${choice.display_name || choice.person || "收礼人"}」准备的生日礼物`;
+      const meta = document.createElement("div");
+      meta.className = "gift-summary-meta";
+      [
+        `预算 ¥${money(choice.budget)}`,
+        `生日 ${choice.birthday || "-"}`,
+        `配送 ${choice.delivery_date || "-"}`,
+      ].forEach((label) => {
+        const item = document.createElement("span");
+        item.textContent = label;
+        meta.appendChild(item);
+      });
+      const constraints = document.createElement("div");
+      constraints.className = "gift-constraints";
+      [
+        ["已知偏好", knownPreferences.join("、") || "未记录"],
+        ["已知禁忌", knownAvoid.join("、") || "无"],
+        ["本次补充偏好", choice.preferences || "无"],
+        ["本次补充禁忌", choice.avoid || "无"],
+      ].forEach(([label, value]) => {
+        const row = document.createElement("div");
+        const strong = document.createElement("strong");
+        strong.textContent = `${label}：`;
+        row.append(strong, document.createTextNode(value));
+        constraints.appendChild(row);
+      });
+      summary.append(title, meta, constraints);
+
+      const grid = document.createElement("div");
+      grid.className = "gift-option-grid";
+      options.forEach((option) => {
+        const card = document.createElement("section");
+        card.className = "gift-option-card";
+        const top = document.createElement("div");
+        top.className = "gift-option-top";
+        const rank = document.createElement("span");
+        rank.className = "gift-option-rank";
+        rank.textContent = `方案 ${option.index}`;
+        const price = document.createElement("strong");
+        price.className = "gift-option-price";
+        price.textContent = `¥${money(option.total)}`;
+        top.append(rank, price);
+
+        const name = document.createElement("h4");
+        name.className = "gift-option-name";
+        name.textContent = option.name;
+        const items = document.createElement("div");
+        items.className = "gift-option-items";
+        (option.items || []).forEach((item) => {
+          const row = document.createElement("div");
+          row.className = "gift-option-item";
+          const label = document.createElement("strong");
+          label.textContent = item.label || item.item || "礼物";
+          const merchant = document.createElement("span");
+          merchant.textContent = item.merchant || "";
+          row.append(label, merchant);
+          items.appendChild(row);
+        });
+        const reason = document.createElement("p");
+        reason.className = "gift-option-reason";
+        reason.textContent = option.reason || "";
+        const select = document.createElement("button");
+        select.type = "button";
+        select.className = "gift-option-select";
+        select.textContent = `选择方案 ${option.index}`;
+        select.addEventListener("click", () => {
+          if (!busy) sendMessage(`第${option.index}个`);
+        });
+        card.append(top, name, items, reason, select);
+        grid.appendChild(card);
+      });
+
+      const footer = document.createElement("div");
+      footer.className = "gift-footer";
+      const note = document.createElement("span");
+      note.textContent = "选择前不会锁定资金，也不会创建礼物预约。";
+      const refresh = document.createElement("button");
+      refresh.type = "button";
+      refresh.className = "gift-refresh";
+      refresh.textContent = "换一批";
+      refresh.addEventListener("click", () => {
+        if (!busy) sendMessage("换一批");
+      });
+      footer.append(note, refresh);
+      root.append(summary, grid, footer);
+      container.appendChild(root);
+    }
+
 
     function appendMessage(role, text, reply = null) {
       const article = document.createElement("article");
@@ -2081,6 +2320,9 @@
       const wealthProducts = reply?.intent === "wealth.recommend"
         ? (reply.data?.product_details || [])
         : [];
+      const giftOptions = Array.isArray(reply?.data?.options)
+        ? reply.data.options
+        : [];
       if (Array.isArray(subscriptionItems) && subscriptionItems.length) {
         content.className = "bubble-content";
         bubble.classList.add("wide", "subscription-bubble");
@@ -2089,6 +2331,10 @@
         content.className = "bubble-content";
         bubble.classList.add("wide");
         renderWealthRecommendation(content, text, reply);
+      } else if (giftOptions.length) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide", "gift-bubble");
+        renderGiftRecommendation(content, text, reply);
       } else if (Array.isArray(anomalyItems) && anomalyItems.length) {
         content.className = "bubble-content";
         bubble.classList.add("wide");
