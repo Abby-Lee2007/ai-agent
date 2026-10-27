@@ -191,6 +191,9 @@
       display: grid;
       gap: 5px;
     }
+    .capability-group {
+      min-width: 0;
+    }
     .capability-category {
       display: flex;
       align-items: center;
@@ -235,6 +238,7 @@
       padding-top: 8px;
       border-top: 1px solid var(--line);
     }
+    .capability-actions[hidden] { display: none; }
     .capability-action {
       width: 100%;
       min-width: 0;
@@ -1004,9 +1008,16 @@
       .capability-categories {
         width: 100%;
         display: flex;
+        align-items: flex-start;
         gap: 7px;
         overflow-x: auto;
         padding-bottom: 2px;
+      }
+      .capability-group {
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
       }
       .capability-category {
         width: auto;
@@ -1016,17 +1027,21 @@
       .capability-category-label { overflow: visible; }
       .capability-arrow { display: none; }
       .capability-actions {
-        width: 100%;
-        display: flex;
-        gap: 6px;
-        overflow-x: auto;
-        margin-top: 7px;
-        padding-top: 7px;
+        width: min(220px, calc(100vw - 32px));
+        max-height: 210px;
+        display: grid;
+        gap: 5px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        margin-top: 0;
+        padding: 7px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
       }
       .capability-action {
-        width: auto;
-        flex: 0 0 auto;
-        white-space: nowrap;
+        width: 100%;
+        white-space: normal;
       }
       .messages { padding: 16px 12px; }
       .bubble { max-width: 88%; }
@@ -1088,7 +1103,6 @@
           <div class="capability-categories" id="capability-categories">
             <div class="capability-loading">正在加载业务分类...</div>
           </div>
-          <div class="capability-actions" id="capability-actions"></div>
         </section>
 
         <section class="side-section guide-section">
@@ -1270,7 +1284,6 @@
     const customerSubtitle = document.getElementById("customer-subtitle");
     const capabilityGlobalActions = document.getElementById("capability-global-actions");
     const capabilityCategories = document.getElementById("capability-categories");
-    const capabilityActions = document.getElementById("capability-actions");
     let carePeople = [];
     let sessionId = localStorage.getItem("finagent_session_id") || "";
     let accessToken = sessionStorage.getItem("finagent_access_token") || "";
@@ -1360,14 +1373,27 @@
       const category = capabilityCatalog.categories.find((item) => item.id === categoryId);
       if (!category) return;
       activeCapabilityId = category.id;
-      capabilityCategories.querySelectorAll(".capability-category").forEach((button) => {
-        const active = button.dataset.categoryId === category.id;
+      capabilityCategories.querySelectorAll(".capability-group").forEach((group) => {
+        const active = group.dataset.categoryId === category.id;
+        const button = group.querySelector(".capability-category");
+        const actions = group.querySelector(".capability-actions");
         button.classList.toggle("is-active", active);
         button.setAttribute("aria-expanded", active ? "true" : "false");
+        actions.hidden = !active;
+        if (active) {
+          actions.replaceChildren(
+            ...category.actions.map((action) => makeCapabilityActionButton(action)),
+          );
+        } else {
+          actions.replaceChildren();
+        }
+        group.classList.toggle("is-active", active);
       });
-      capabilityActions.replaceChildren(
-        ...category.actions.map((action) => makeCapabilityActionButton(action)),
-      );
+      if (window.matchMedia("(max-width: 760px)").matches) {
+        capabilityCategories
+          .querySelector(`.capability-group[data-category-id="${category.id}"]`)
+          ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
     }
 
     function renderCapabilityCatalog(catalog) {
@@ -1379,6 +1405,9 @@
       );
       capabilityCategories.replaceChildren(
         ...catalog.categories.map((category) => {
+          const group = document.createElement("div");
+          group.className = "capability-group";
+          group.dataset.categoryId = category.id;
           const button = document.createElement("button");
           button.type = "button";
           button.className = "capability-category";
@@ -1393,7 +1422,11 @@
           arrow.textContent = "›";
           button.append(label, arrow);
           button.addEventListener("click", () => selectCapabilityCategory(category.id));
-          return button;
+          const actions = document.createElement("div");
+          actions.className = "capability-actions";
+          actions.hidden = true;
+          group.append(button, actions);
+          return group;
         }),
       );
       const initial = catalog.categories.find((item) => item.id === activeCapabilityId)

@@ -195,6 +195,22 @@ try {
     cdp,
     `[...document.querySelectorAll(".capability-action")].some((button) => button.textContent.includes("自动续费检测"))`,
   );
+  const categoryExpansion = await evaluate(cdp, `(() => {
+    const category = [...document.querySelectorAll(".capability-category")]
+      .find((button) => button.textContent.includes("订阅管理"));
+    const group = category?.closest(".capability-group");
+    const panel = group?.querySelector(".capability-actions");
+    const categoryRect = category?.getBoundingClientRect();
+    const panelRect = panel?.getBoundingClientRect();
+    return {
+      nested: Boolean(group && panel && group.contains(panel)),
+      directlyBelow: Boolean(categoryRect && panelRect)
+        && panelRect.top >= categoryRect.bottom
+        && panelRect.top - categoryRect.bottom <= 14
+    };
+  })()`);
+  assert(categoryExpansion.nested, "分类操作没有嵌套在对应分类中");
+  assert(categoryExpansion.directlyBelow, "分类操作没有在对应分类下方展开");
   const subscriptionActions = await evaluate(cdp, `[...document.querySelectorAll(".capability-action")].map((button) => button.textContent.trim())`);
   assert(subscriptionActions.includes("自动续费检测"), "订阅分类缺少自动续费检测");
   assert(subscriptionActions.includes("会员办理/充值"), "订阅分类缺少会员办理");
