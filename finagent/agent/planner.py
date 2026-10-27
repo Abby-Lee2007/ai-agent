@@ -344,7 +344,14 @@ class Planner:
     def _birthday_plan(self, intent: Intent, ctx: ToolContext) -> Plan:
         """跨场景示例：生日惊喜（锁定资金 + 生日前 2 天订花和蛋糕）。"""
         slots = dict(intent.slots)
-        person = slots.get("person") or "爱人"
+        person = str(slots.get("person") or "").strip()
+        if not person:
+            return Plan(
+                intent=intent.name,
+                slots=slots,
+                missing=["person"],
+                question="这份生日惊喜要送给谁？可以填写姓名或关系，例如「老师」「妈妈」。",
+            )
         target_person, birthday = lookup_person(ctx, person)
         display_name = target_person.name if target_person else person
         given = slots.get("birthday")

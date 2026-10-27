@@ -40,8 +40,22 @@ class TestCrossScene(unittest.TestCase):
         self.assertEqual({t.run_date for t in tasks}, {"2026-11-18"})
 
     def test_birthday_plan_with_custom_budget(self):
-        reply = begin_birthday_plan(self.agent, "帮我准备生日惊喜，预算2000")
+        reply = begin_birthday_plan(self.agent, "帮我给老师准备生日惊喜，预算2000")
         self.assertIn("2,000.00", reply.text)
+
+    def test_generic_birthday_shortcut_asks_for_recipient(self):
+        reply = self.agent.handle("生日惊喜")
+
+        self.assertEqual(reply.intent, "crossscene.birthday_plan")
+        self.assertEqual(reply.kind, "question")
+        self.assertEqual(self.agent.session.pending.missing, ["person"])
+        self.assertNotIn("老婆", reply.text)
+        self.assertNotIn("爱人", reply.text)
+
+        reply = self.agent.handle("老师")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("生日", reply.text)
+        self.assertEqual(self.agent.session.pending.missing, ["birthday"])
 
     def test_birthday_plan_asks_for_unknown_birthday(self):
         self.agent.store.get_user("u_003").birthday = ""

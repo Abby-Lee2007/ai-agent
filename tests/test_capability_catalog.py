@@ -97,6 +97,41 @@ class TestCapabilityCatalog(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(parser.parse(text).name, expected)
 
+    def test_prompt_actions_use_card_labels_without_example_entities(self):
+        prompt_actions = [
+            action
+            for category in self.payload["categories"]
+            for action in category["actions"]
+            if action["input_mode"] == "prompt"
+        ] + [
+            action
+            for action in self.payload["global_actions"]
+            if action["input_mode"] == "prompt"
+        ]
+        self.assertTrue(prompt_actions)
+        for action in prompt_actions:
+            with self.subTest(action=action["id"]):
+                self.assertEqual(action["prompt"], action["label"])
+
+    def test_prompt_action_labels_route_to_declared_intent(self):
+        parser = IntentParser(store=make_store(), user_id="u_001", mode="off")
+        prompt_actions = [
+            action
+            for category in self.payload["categories"]
+            for action in category["actions"]
+            if action["input_mode"] == "prompt"
+        ] + [
+            action
+            for action in self.payload["global_actions"]
+            if action["input_mode"] == "prompt"
+        ]
+        for action in prompt_actions:
+            with self.subTest(action=action["id"], prompt=action["prompt"]):
+                self.assertEqual(
+                    parser.parse(action["prompt"]).name,
+                    action["intent"],
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

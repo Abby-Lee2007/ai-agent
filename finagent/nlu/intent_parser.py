@@ -13,7 +13,10 @@ from typing import Any, Dict, List, Optional
 
 from finagent.nlu.intent_schema import INTENTS, Intent, catalog_text, slot_dictionary_text
 from finagent.nlu.llm_client import LLMClient
-from finagent.nlu.capability_catalog import resolve_capability_intent
+from finagent.nlu.capability_catalog import (
+    resolve_capability_intent,
+    resolve_capability_label,
+)
 from finagent.nlu.membership_parser import (
     PRICE_RE,
     RENEWAL_RE,
@@ -165,9 +168,19 @@ class RuleIntentParser:
         self.user_id = user_id
 
     def parse(self, text: str) -> Intent:
-        cleaned = normalize_synonyms((text or "").strip())
+        raw = (text or "").strip()
+        label_intent = resolve_capability_label(raw)
+        cleaned = normalize_synonyms(raw)
         if not cleaned:
             return Intent("unknown", {}, 0.0, "rule", cleaned)
+        if label_intent:
+            return Intent(
+                label_intent,
+                self._slots(label_intent, cleaned),
+                0.95,
+                "rule-label",
+                cleaned,
+            )
         for name in self.RULES:
             matcher = getattr(self, "_match_" + name.replace(".", "_"))
             if matcher(cleaned):

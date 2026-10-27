@@ -16,10 +16,11 @@ class CapabilityAction:
     aliases: Tuple[str, ...] = field(default_factory=tuple)
 
     def payload(self) -> Dict[str, str]:
+        shortcut_text = self.label if self.input_mode == "prompt" else self.prompt
         return {
             "id": self.action_id,
             "label": self.label,
-            "prompt": self.prompt,
+            "prompt": shortcut_text,
             "intent": self.intent,
             "input_mode": self.input_mode,
             "panel_id": self.panel_id,
@@ -321,3 +322,14 @@ def resolve_capability_intent(text: str) -> Optional[str]:
             if key and key in normalized:
                 scores[action.intent] = max(scores.get(action.intent, 0), len(key))
     return max(scores, key=scores.get) if scores else None
+
+
+def resolve_capability_label(text: str) -> Optional[str]:
+    """Resolve an exact card label before broader rule matching."""
+    normalized = "".join((text or "").lower().split())
+    if not normalized:
+        return None
+    for action in (*GLOBAL_ACTIONS, *(a for c in CATEGORIES for a in c.actions)):
+        if "".join(action.label.lower().split()) == normalized:
+            return action.intent
+    return None

@@ -185,6 +185,78 @@ try {
   assert(desktop.capabilityLabels[0].includes("智能转账"), "缺少智能转账分类");
   assert(desktop.capabilityLabels[5].includes("人际礼物"), "缺少人际礼物分类");
   assert(desktop.globalActions.includes("每日简报"), "缺少全局每日简报入口");
+  const shortcutPrompts = await evaluate(cdp, `(async () => {
+    const response = await fetchWithAuth("/v1/capabilities");
+    const payload = await response.json();
+    return [
+      ...payload.categories.flatMap((category) => category.actions),
+      ...payload.global_actions
+    ]
+      .filter((action) => action.input_mode === "prompt")
+      .map((action) => ({
+        id: action.id,
+        label: action.label,
+        prompt: action.prompt
+      }));
+  })()`);
+  assert(shortcutPrompts.length > 0, "没有加载可发送的快捷指令");
+  assert(
+    shortcutPrompts.every((action) => action.prompt === action.label),
+    "快捷指令仍带有具体人、金额或平台示例",
+  );
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-category")]
+      .find((item) => item.textContent.includes("人际礼物"));
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll(".capability-action")].some(
+      (button) => button.textContent.trim() === "生日惊喜"
+    )`,
+  );
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-action")]
+      .find((item) => item.textContent.trim() === "生日惊喜");
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent.includes("生日惊喜要送给谁")`,
+  );
+  const birthdayShortcut = await evaluate(cdp, `(() => ({
+    userText: [...document.querySelectorAll(".message.user .bubble")].at(-1)?.textContent.trim(),
+    agentText: [...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent || ""
+  }))()`);
+  assert(birthdayShortcut.userText === "生日惊喜", "生日惊喜快捷指令没有只发送卡片简称");
+  assert(!birthdayShortcut.agentText.includes("老婆"), "生日惊喜仍预设了妻子");
+  assert(!birthdayShortcut.agentText.includes("对象"), "生日惊喜仍预设了对象");
+  await sendPrompt(cdp, "取消", "本次操作已取消");
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll(".capability-action")].some(
+      (button) => button.textContent.trim() === "伴手礼/礼物预约"
+    )`,
+  );
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-action")]
+      .find((item) => item.textContent.trim() === "伴手礼/礼物预约");
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent.includes("这份礼物要送给谁")`,
+  );
+  const souvenirShortcut = await evaluate(cdp, `(() => ({
+    userText: [...document.querySelectorAll(".message.user .bubble")].at(-1)?.textContent.trim(),
+    agentText: [...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent || ""
+  }))()`);
+  assert(souvenirShortcut.userText === "伴手礼/礼物预约", "伴手礼快捷指令没有只发送卡片简称");
+  assert(!souvenirShortcut.agentText.includes("对象"), "伴手礼仍预设了对象");
+  await sendPrompt(cdp, "取消", "本次操作已取消");
   await evaluate(cdp, `(() => {
     const button = [...document.querySelectorAll(".capability-category")]
       .find((item) => item.textContent.includes("订阅管理"));
