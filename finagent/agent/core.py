@@ -1544,10 +1544,21 @@ class BankingAgent:
         candidate_interrupt = self._interrupt_intent(text)
         if pending.intent == "card.apply" and current_slot_answer is not None:
             interrupt = None
-        elif pending.intent in {
-            "crossscene.birthday_plan",
-            "crossscene.gift_plan",
-        } and current_slot_answer is not None:
+        elif pending.intent == "crossscene.gift_plan" and current_slot_answer is not None:
+            current_slot = pending.missing[0]
+            interrupt = (
+                None
+                if (
+                    candidate_interrupt is None
+                    or candidate_interrupt.name == pending.intent
+                    or (
+                        current_slot == "item"
+                        and candidate_interrupt.name == "crossscene.birthday_plan"
+                    )
+                )
+                else candidate_interrupt
+            )
+        elif pending.intent == "crossscene.birthday_plan" and current_slot_answer is not None:
             interrupt = (
                 None
                 if candidate_interrupt is None or candidate_interrupt.name == pending.intent
@@ -1774,7 +1785,13 @@ class BankingAgent:
             names = [p for p in parts if p]
             return names if len(names) >= 2 else None
         if slot == "item":
-            return self.parser.rule._gift_item(text) or None
+            item = self.parser.rule._gift_item(text)
+            if item:
+                return item
+            cleaned = self._coerce_text(text)
+            if cleaned and len(cleaned) <= 30 and not NOISE_VALUE_RE.search(cleaned):
+                return cleaned
+            return None
         if slot in NUMERIC_SLOTS:
             if slot == "existing_debt" and any(
                     word in text for word in ("没有", "无负债", "没负债", "零", "0元")):

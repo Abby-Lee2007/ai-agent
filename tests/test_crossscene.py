@@ -222,6 +222,24 @@ class TestCrossScene(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0].kind, "gift_order")
 
+    def test_gift_item_is_not_misread_as_birthday_intent(self):
+        for item in ("鲜花饼", "生日蛋糕", "鲜花礼盒"):
+            with self.subTest(item=item):
+                agent = make_agent()
+                reply = agent.handle("伴手礼/礼物预约")
+                self.assertEqual(agent.session.pending.missing, ["person"])
+
+                reply = agent.handle("妹妹")
+                self.assertEqual(agent.session.pending.missing, ["item"])
+
+                reply = agent.handle(item)
+
+                self.assertEqual(reply.intent, "crossscene.gift_plan")
+                self.assertEqual(reply.kind, "question")
+                self.assertEqual(agent.session.pending.intent, "crossscene.gift_plan")
+                self.assertEqual(agent.session.pending.slots.get("item"), item)
+                self.assertEqual(agent.session.pending.missing, ["date"])
+
     def test_generic_graduation_gift_asks_for_item_and_custom_price(self):
         reply = self.agent.handle("明天毕业了我想给老师送个毕业礼物")
         self.assertEqual(reply.intent, "crossscene.gift_plan")

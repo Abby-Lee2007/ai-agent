@@ -329,6 +329,15 @@ try {
   }))()`);
   assert(souvenirShortcut.userText === "伴手礼/礼物预约", "伴手礼快捷指令没有只发送卡片简称");
   assert(!souvenirShortcut.agentText.includes("对象"), "伴手礼仍预设了对象");
+  await sendPrompt(cdp, "妹妹", "什么礼物");
+  await sendPrompt(cdp, "鲜花饼", "日期");
+  const giftItemState = await evaluate(cdp, `(() => ({
+    agentText: [...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent || "",
+    interfaceText: document.querySelector("#service-status")?.textContent
+  }))()`);
+  assert(giftItemState.agentText.includes("日期"), "礼物名称没有进入日期询问");
+  assert(!giftItemState.agentText.includes("生日惊喜要送给谁"), "礼物名称被误判为生日意图");
+  assert(giftItemState.interfaceText === "接口就绪", "礼物名称提交后界面仍处于忙碌状态");
   await sendPrompt(cdp, "取消", "本次操作已取消");
   await evaluate(cdp, `(() => {
     const button = [...document.querySelectorAll(".capability-category")]
