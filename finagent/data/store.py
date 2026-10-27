@@ -25,6 +25,8 @@ from finagent.data.models import (
     Card,
     Goal,
     Holding,
+    MembershipOrder,
+    MembershipOrderItem,
     MerchantOffer,
     Payee,
     ScheduledTask,
@@ -81,6 +83,8 @@ class DataStore:
         "payees",
         "cards",
         "subscriptions",
+        "membership_orders",
+        "membership_order_items",
         "products",
         "holdings",
         "merchant_offers",
@@ -98,6 +102,8 @@ class DataStore:
         "payees": Payee,
         "cards": Card,
         "subscriptions": Subscription,
+        "membership_orders": MembershipOrder,
+        "membership_order_items": MembershipOrderItem,
         "products": WealthProduct,
         "holdings": Holding,
         "merchant_offers": MerchantOffer,
@@ -114,6 +120,8 @@ class DataStore:
         "payees": "PAY",
         "cards": "CARD",
         "subscriptions": "SUB",
+        "membership_orders": "MORD",
+        "membership_order_items": "MITEM",
         "holdings": "HLD",
         "merchant_offers": "OFFER",
         "upload_batches": "UPL",
@@ -382,6 +390,67 @@ class DataStore:
         return round(total, 2)
 
     # ------------------------------------------------------------------
+    # 会员订单
+    # ------------------------------------------------------------------
+    def membership_orders_of(self, user_id: str) -> List[MembershipOrder]:
+        rows = [o for o in self.membership_orders.values() if o.user_id == user_id]
+        return sorted(rows, key=lambda o: o.created_at, reverse=True)
+
+    def membership_order_items_of(self, order_id: str) -> List[MembershipOrderItem]:
+        rows = [i for i in self.membership_order_items.values() if i.order_id == order_id]
+        return sorted(rows, key=lambda i: i.item_id)
+
+    def add_membership_order(
+        self,
+        user_id: str,
+        account_id: str,
+        total_amount: float,
+        status: str = "completed",
+        transaction_id: str = "",
+    ) -> MembershipOrder:
+        now = self.clock.iso()
+        order = MembershipOrder(
+            order_id=self.next_id("membership_orders"),
+            user_id=user_id,
+            account_id=account_id,
+            total_amount=round(total_amount, 2),
+            status=status,
+            created_at=now,
+            confirmed_at=now,
+            executed_at=now,
+            transaction_id=transaction_id,
+            updated_at=now,
+        )
+        self.membership_orders[order.order_id] = order
+        return order
+
+    def add_membership_order_item(
+        self,
+        order_id: str,
+        user_id: str,
+        platform: str,
+        term_months: int,
+        purchase_price: float,
+        auto_renew: bool,
+        renewal_price: float,
+        status: str = "pending",
+    ) -> MembershipOrderItem:
+        item = MembershipOrderItem(
+            item_id=self.next_id("membership_order_items"),
+            order_id=order_id,
+            user_id=user_id,
+            platform=platform,
+            term_months=int(term_months),
+            purchase_price=round(float(purchase_price), 2),
+            auto_renew=bool(auto_renew),
+            renewal_price=round(float(renewal_price), 2),
+            status=status,
+            updated_at=self.clock.iso(),
+        )
+        self.membership_order_items[item.item_id] = item
+        return item
+
+    # ------------------------------------------------------------------
     # 理财
     # ------------------------------------------------------------------
     def products_by_risk(self, max_risk: int) -> List[WealthProduct]:
@@ -648,8 +717,28 @@ class DataStore:
     def load_snapshot(self, data: Dict[str, Any]) -> "DataStore":
         for table in self.TABLES:
             model = self.MODEL_MAP[table]
-            raw = data.get(table, {}) or {}
-            setattr(self, table, {k: build(model, v) for k, v in raw.items()})
+            raw_rows = data.get(table, {}) or {}
+            records = {key: build(model, value) for key, value in raw_rows.items()}
+            if table == "subscriptions":
+                for key, subscription in records.items():
+                    raw = raw_rows.get(key) or {}
+                    if not subscription.expires_at:
+                        subscription.expires_at = subscription.next_charge_date
+                    if "auto_renew" not in raw:
+                        subscription.auto_renew = subscription.status not in {
+                            "cancelled",
+                            "paused",
+                            "expired",
+                        }
+                    if "term_months" not in raw:
+                        subscription.term_months = {
+                            "yearly": 12,
+                            "monthly": 1,
+                        }.get(
+                            subscription.cycle,
+                            0 if subscription.cycle == "weekly" else 1,
+                        )
+            setattr(self, table, records)
         self.counters = data.get("counters", {}) or {}
         self.audit = data.get("audit", []) or []
         return self

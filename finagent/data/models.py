@@ -177,12 +177,60 @@ class Subscription:
     category: str = "会员服务"
     account_id: str = ""
     next_charge_date: str = ""
+    expires_at: str = ""
     last_charge_date: str = ""
     status: str = "active"      # active / cancelled / paused / trial
+    auto_renew: bool = True
+    term_months: int = 1
+    pending_term_months: int = 0
+    pending_amount: float = 0.0
+    pending_auto_renew: bool = False
+    pending_effective_at: str = ""
     free_trial_end: str = ""
     auto_detected: bool = True
     price_history: List[float] = field(default_factory=list)
     source: str = "agent:simulation"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
+
+
+@dataclass
+class MembershipOrder:
+    """One confirmed batch membership purchase."""
+
+    order_id: str
+    user_id: str
+    account_id: str
+    total_amount: float
+    status: str = "completed"
+    created_at: str = ""
+    confirmed_at: str = ""
+    executed_at: str = ""
+    transaction_id: str = ""
+    failure_reason: str = ""
+    source: str = "user:quote"
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
+
+
+@dataclass
+class MembershipOrderItem:
+    """One platform/term line in a membership order."""
+
+    item_id: str
+    order_id: str
+    user_id: str
+    platform: str
+    term_months: int
+    purchase_price: float
+    auto_renew: bool = False
+    renewal_price: float = 0.0
+    status: str = "pending"       # pending / fulfilled / failed
+    subscription_id: str = ""
+    result: str = ""
+    source: str = "user:quote"
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     is_live: bool = False
     is_demo: bool = True

@@ -15,6 +15,8 @@ PROJECTION_TABLES = {
     "payees": ("payee_id", "payees"),
     "cards": ("card_id", "cards"),
     "subscriptions": ("sub_id", "subscriptions"),
+    "membership_orders": ("order_id", "membership_orders"),
+    "membership_order_items": ("item_id", "membership_order_items"),
     "products": ("product_id", "products"),
     "holdings": ("holding_id", "holdings"),
     "merchant_offers": ("offer_id", "merchant_offers"),
