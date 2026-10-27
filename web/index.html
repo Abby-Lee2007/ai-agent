@@ -797,6 +797,8 @@
             <button class="quick" data-prompt="分析我这个月的账单">分析本月账单</button>
             <button class="quick" data-prompt="推荐几个稳健的理财产品">筛选理财产品</button>
             <button class="quick" data-prompt="我有哪些卡">管理银行卡</button>
+            <button class="quick" data-prompt="我想开一张储蓄卡">储蓄卡开户</button>
+            <button class="quick" data-prompt="我想申请一张信用卡">信用卡申请</button>
             <button class="quick" data-prompt="帮我看看有哪些自动续费">检查自动续费</button>
             <button class="quick" data-prompt="我老婆快生日了，帮我准备一下">准备生日惊喜</button>
           </div>
@@ -807,6 +809,8 @@
           <ul class="guide">
             <li>涉及资金变动时会先要求确认。</li>
             <li>大额操作需要输入演示验证码。</li>
+            <li>储蓄卡开户与信用卡申请使用不同资料和审核流程。</li>
+            <li>信用卡申请会核验已上传流水，或明确使用演示流水。</li>
             <li>直接输入“确认”或“取消”继续流程。</li>
           </ul>
         </section>
@@ -913,7 +917,18 @@
         </section>
 
         <section class="settings-section">
-          <h3>添加演示银行卡</h3>
+          <h3>卡片业务</h3>
+          <p class="settings-note">绑定已有卡、储蓄卡开户和信用卡申请使用不同资料与审核流程，可从这里进入对应对话。</p>
+          <div class="settings-actions">
+            <button class="settings-save" type="button" data-card-start="绑定一张银行卡">绑定已有卡</button>
+            <button class="settings-save" type="button" data-card-start="我想开一张储蓄卡">储蓄卡开户</button>
+            <button class="settings-save" type="button" data-card-start="我想申请一张信用卡">信用卡申请</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>手工添加测试卡</h3>
+          <p class="settings-note">仅供资料页测试，不经过绑卡校验或信用卡审批，不应作为正式开卡结果。</p>
           <form id="new-card-form">
             <div class="settings-grid">
               <label class="settings-field">卡类型
@@ -970,6 +985,7 @@
     let sessionId = localStorage.getItem("finagent_session_id") || "";
     let accessToken = sessionStorage.getItem("finagent_access_token") || "";
     let busy = false;
+    let awaitingSecret = false;
 
     function newRequestId() {
       if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -1312,7 +1328,8 @@
       busy = true;
       sendButton.disabled = true;
       serviceStatus.textContent = "正在处理";
-      appendMessage("user", content);
+      const shownContent = awaitingSecret && /^\d{6}$/.test(content) ? "******" : content;
+      appendMessage("user", shownContent);
       appendTyping();
 
       try {
@@ -1330,6 +1347,9 @@
           appendMessage("agent", result.error, { kind: "error", intent: "session" });
         } else if (result.reply) {
           appendMessage("agent", result.reply.text, result.reply);
+          awaitingSecret = /(请(?:重新)?设置[^。\n]*6 位数字[^。\n]*密码|请再次输入同一密码|请再次输入取款密码|请输入该卡的取款密码)/.test(
+            result.reply.text || ""
+          );
         } else {
           appendMessage("agent", "服务没有返回可显示的结果。", { kind: "error", intent: "stream" });
         }
@@ -1861,6 +1881,13 @@
         avoid: [],
       });
       renderCarePeople(carePeople);
+    });
+
+    document.querySelectorAll("[data-card-start]").forEach((button) => {
+      button.addEventListener("click", () => {
+        closeProfileSettings();
+        sendMessage(button.dataset.cardStart);
+      });
     });
 
     newCardForm.addEventListener("submit", async (event) => {

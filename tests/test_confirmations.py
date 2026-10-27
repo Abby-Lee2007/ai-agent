@@ -125,26 +125,29 @@ class TestActionDataConfirmation(unittest.TestCase):
 
         reply = agent.handle("我想申请一张信用卡")
 
-        self.assertEqual(reply.kind, "confirm")
-        self.assertEqual(agent.session.pending.kind, "data_confirm")
+        self.assertEqual(reply.kind, "question")
+        self.assertEqual(agent.session.pending.kind, "slot")
         self.assertIn("信用卡", reply.text)
-        self.assertIn("20,000", reply.text)
-        self.assertIn("银联", reply.text)
+        self.assertIn("税后月收入", reply.text)
+        self.assertIn("模拟信用评估授权", reply.text)
         self.assertEqual(len(agent.store.cards_of("u_001")), before)
 
     def test_card_bind_review_masks_sensitive_values(self):
         agent = make_agent()
         agent.handle("绑定一张工商银行的储蓄卡")
         agent.handle("6222020000000007")
+        agent.handle("123456")
 
-        reply = agent.handle("123456")
+        reply = agent.handle("13800138000")
 
         self.assertEqual(reply.kind, "confirm")
         self.assertEqual(agent.session.pending.kind, "data_confirm")
         self.assertIn("工商银行", reply.text)
         self.assertIn("0007", reply.text)
+        self.assertIn("138****8000", reply.text)
         self.assertNotIn("6222020000000007", reply.text)
         self.assertNotIn("123456", reply.text)
+        self.assertNotIn("13800138000", reply.text)
 
     def test_subscribe_review_shows_exact_product_and_payer(self):
         agent = make_agent()

@@ -11,6 +11,31 @@ from tests.support import make_store
 
 
 class TestProfileSettings(unittest.TestCase):
+    def test_bound_card_appears_in_profile_settings(self):
+        service = AgentSessionService(make_store(), llm_mode="off")
+        session_id = service.create_session(user_id="u_001", channel="h5")["session_id"]
+
+        turns = [
+            "绑定一张中国银行的银行卡",
+            "6216610000000000008",
+            "123456",
+            "13800138000",
+            "确认",
+        ]
+        reply = None
+        for text in turns:
+            reply = service.send_message(session_id, text)["reply"]
+
+        self.assertEqual(reply["kind"], "executed")
+        self.assertTrue(reply["ok"])
+        profile = service.get_profile_settings(session_id)
+        bound = [
+            card for card in profile["cards"]
+            if card["brand"] == "中国银行" and card["tail"] == "0008"
+        ]
+        self.assertEqual(len(bound), 1)
+        self.assertEqual(bound[0]["status"], "active")
+
     def test_profile_and_birthday_settings_persist(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             db_path = Path(temp_dir) / "agent.db"

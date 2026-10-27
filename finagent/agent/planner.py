@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Tuple
 from finagent.agent.registry import ToolRegistry
 from finagent.nlu.intent_schema import Intent
 from finagent.tools.base import ToolContext
-from finagent.tools.card_tools import BANK_BINS
+from finagent.tools.card_tools import BANK_BINS, evaluate_card_password
 from finagent.tools.crossscene_tools import lookup_person
 from finagent.data.providers import MerchantOfferProvider
 from finagent.tools.transfer_tools import channel_account, resolve_account
@@ -112,6 +112,26 @@ DEFAULT_QUESTIONS = {
     "card": "请问是哪张卡？可以说「信用卡」「虚拟卡」或卡号后四位。",
     "card_no": "请把要绑定的银行卡号发给我（16-19 位）。",
     "password": "请输入该卡的取款密码（演示环境固定 123456）。",
+    "phone": "请提供这张卡在银行预留的 11 位手机号。",
+    "kind": "您要申请储蓄卡、信用卡、虚拟卡还是附属卡？",
+    "bank": "请选择发卡行，例如工商银行、农业银行、中国银行、建设银行、招商银行或交通银行。",
+    "account_class": "请选择储蓄卡账户类型：一类户（I 类）或二类户（II 类）。",
+    "branch": "请提供开户城市或网点，例如「深圳」。",
+    "employment": "请说明您的就业情况，例如「互联网公司产品经理」「个体经营」「学生」。",
+    "monthly_income": "请提供税后月收入，例如「25000」或「2.5万」。",
+    "existing_debt": "请提供每月现有负债还款额；没有负债可回复「0」。",
+    "limit_request": "请填写期望信用额度，例如「30000」元。",
+    "credit_purpose": "请说明信用卡主要用途，例如「日常消费」「旅行」「装修」。",
+    "statement_mode": (
+        "请先在回形针上传消费流水并确认导入，完成后回复「已上传」；"
+        "也可以回复「使用演示流水」进行模拟核验。"
+    ),
+    "card_password": (
+        "请设置 6 位数字取款密码（仅用于原型开户演示，请勿填写真实密码）。"
+        "不要使用 123456、生日或连续数字。"
+    ),
+    "card_password_confirm": "请再次输入同一密码进行确认。",
+    "consent": "是否同意本次演示进行模拟信用评估？请回复「同意」或「不同意」。",
     "new_limit": "请问要调整到多少额度？",
     "merchant": "请问要取消哪个订阅？例如「腾讯视频VIP」。",
     "person": "请问是要为谁准备？例如「老婆」「妈妈」。",
@@ -121,7 +141,10 @@ DEFAULT_QUESTIONS = {
     "birthday": "请问 ta 的生日是哪一天？例如「11月20日」。",
 }
 
-NUMERIC_SLOTS = {"amount", "total", "target_amount", "new_limit", "budget", "limit_request", "days", "risk_level"}
+NUMERIC_SLOTS = {
+    "amount", "total", "target_amount", "new_limit", "budget", "limit_request",
+    "days", "risk_level", "monthly_income", "existing_debt",
+}
 DATE_SLOTS = {"when", "deadline", "date", "birthday"}
 CHANNEL_LABELS = {
     "phone": "手机号（数字人民币）",
@@ -134,6 +157,36 @@ CARD_KIND_LABELS = {
     "debit": "借记卡",
     "virtual": "虚拟卡",
     "supplementary": "附属卡",
+}
+
+CARD_APPLY_REQUIREMENTS = {
+    "debit": (
+        "bank", "phone", "account_class", "branch",
+        "card_password", "card_password_confirm",
+    ),
+    "credit": (
+        "bank", "phone", "employment", "monthly_income", "existing_debt",
+        "limit_request", "credit_purpose", "statement_mode", "consent",
+    ),
+    "virtual": ("bank",),
+    "supplementary": ("bank", "person", "limit_request"),
+}
+
+CARD_APPLY_FIELD_LABELS = {
+    "bank": "发卡行",
+    "phone": "预留手机号",
+    "account_class": "账户类型",
+    "branch": "开户城市/网点",
+    "employment": "就业情况",
+    "monthly_income": "税后月收入",
+    "existing_debt": "每月负债",
+    "limit_request": "期望额度",
+    "credit_purpose": "主要用途",
+    "statement_mode": "消费流水核验",
+    "card_password": "取款密码",
+    "card_password_confirm": "密码二次确认",
+    "consent": "模拟信用评估授权",
+    "person": "附属卡使用人",
 }
 
 # Writes that depend on inferred, resolved, or defaulted business data must be
@@ -166,6 +219,8 @@ class Planner:
     def plan(self, intent: Intent, ctx: ToolContext) -> Plan:
         if intent.name == "crossscene.birthday_plan":
             return self._birthday_plan(intent, ctx)
+        if intent.name == "card.apply":
+            return self._card_apply_plan(intent, ctx)
         if intent.name not in SIMPLE_PLANS:
             return Plan(intent=intent.name, slots=dict(intent.slots))
         template = SIMPLE_PLANS[intent.name]
@@ -212,6 +267,53 @@ class Planner:
     @staticmethod
     def _question(slot: str) -> str:
         return DEFAULT_QUESTIONS.get(slot, f"请补充一下「{slot}」。")
+
+    def _card_apply_plan(self, intent: Intent, ctx: ToolContext) -> Plan:
+        """Build distinct intake flows for debit, credit, and other card types."""
+        slots = dict(intent.slots)
+        kind = str(slots.get("kind") or "")
+        if kind not in CARD_APPLY_REQUIREMENTS:
+            plan = Plan(intent=intent.name, slots=slots, missing=["kind"])
+            plan.question = "【开卡申请】请先选择卡种：储蓄卡、信用卡、虚拟卡或附属卡。"
+            return plan
+
+        missing = [
+            slot
+            for slot in CARD_APPLY_REQUIREMENTS[kind]
+            if slots.get(slot) in (None, "")
+        ]
+        if missing:
+            plan = Plan(intent=intent.name, slots=slots, missing=missing)
+            label = "储蓄卡" if kind == "debit" else CARD_KIND_LABELS.get(kind, kind)
+            mode = "开户" if kind == "debit" else "申请"
+            remaining = "、".join(
+                CARD_APPLY_FIELD_LABELS.get(slot, slot)
+                for slot in missing
+            )
+            first_question = (
+                "请提供申请该卡使用的 11 位本人手机号。"
+                if missing[0] == "phone"
+                else self._question(missing[0])
+            )
+            if missing[0] == "card_password_confirm" and slots.get("card_password"):
+                password_check = evaluate_card_password(slots["card_password"])
+                first_question = (
+                    f"首次输入完成，{password_check['message']}\n"
+                    "请再次输入同一密码进行确认。"
+                )
+            plan.question = (
+                f"【{label}{mode}】请继续补充：{remaining}。\n"
+                f"{first_question}"
+            )
+            return plan
+
+        args = {key: value for key, value in slots.items() if key != "note"}
+        if slots.get("note"):
+            args["note"] = slots["note"]
+        step = PlanStep(tool="card.apply", args=args)
+        plan = Plan(intent=intent.name, slots=slots, steps=[step])
+        plan.description = self._describe_step(step, ctx)
+        return plan
 
     def _birthday_plan(self, intent: Intent, ctx: ToolContext) -> Plan:
         """跨场景示例：生日惊喜（锁定资金 + 生日前 2 天订花和蛋糕）。"""
@@ -362,17 +464,45 @@ class Planner:
                                if args.get("amount") else "（全部可赎回份额）")
                 return f"赎回{scope}{amount_text}；涉及：{'、'.join(names) or '无持仓'}"
             if tool == "card.apply":
-                kind = str(args.get("kind") or "virtual")
-                defaults = {"credit": 20_000.0, "virtual": 5_000.0, "supplementary": 10_000.0}
-                limit = args.get("limit_request")
-                limit = float(limit) if limit is not None else defaults.get(kind, 5_000.0)
-                return (f"申请{CARD_KIND_LABELS.get(kind, kind)}；"
-                        f"发卡行：{args.get('bank') or '银联'}；"
-                        f"期望额度：{limit:,.0f} 元")
+                kind = str(args.get("kind") or "")
+                label = "储蓄卡" if kind == "debit" else CARD_KIND_LABELS.get(kind, kind)
+                bank = str(args.get("bank") or "未提供")
+                phone = "".join(ch for ch in str(args.get("phone") or "") if ch.isdigit())
+                masked_phone = (f"{phone[:3]}****{phone[-4:]}"
+                                if len(phone) == 11 else "未提供")
+                if kind == "debit":
+                    password_check = evaluate_card_password(args.get("card_password"))
+                    return (
+                        f"开立{label}；发卡行：{bank}；"
+                        f"账户类型：{args.get('account_class')}；"
+                        f"开户城市/网点：{args.get('branch')}；"
+                        f"预留手机号：{masked_phone}；"
+                        f"取款密码：已二次确认（强度 {password_check['strength']}，"
+                        f"{password_check['score']}/100）"
+                    )
+                if kind == "credit":
+                    statement_label = {
+                        "uploaded": "已上传流水",
+                        "demo": "演示流水",
+                    }.get(str(args.get("statement_mode")), "未选择")
+                    return (
+                        f"申请{label}；发卡行：{bank}；"
+                        f"预留手机号：{masked_phone}；"
+                        f"就业情况：{args.get('employment')}；"
+                        f"月收入：{float(args.get('monthly_income', 0)):,.0f} 元；"
+                        f"每月负债：{float(args.get('existing_debt', 0)):,.0f} 元；"
+                        f"期望额度：{float(args.get('limit_request', 0)):,.0f} 元；"
+                        f"用途：{args.get('credit_purpose')}；"
+                        f"流水核验：{statement_label}；"
+                        "模拟信用评估授权：已同意"
+                    )
+                return f"申请{label}；发卡行：{bank}"
             if tool == "card.bind":
                 number = "".join(ch for ch in str(args.get("card_no") or "") if ch.isdigit())
                 bank = str(args.get("bank") or BANK_BINS.get(number[:6], "未识别银行"))
-                phone = str(args.get("phone") or "未提供")
+                phone_digits = "".join(ch for ch in str(args.get("phone") or "") if ch.isdigit())
+                phone = (f"{phone_digits[:3]}****{phone_digits[-4:]}"
+                         if len(phone_digits) == 11 else "未提供")
                 return (f"绑定{bank}储蓄卡（尾号{number[-4:]}）；"
                         f"预留手机号：{phone}")
             if tool in {"card.freeze", "card.unlock", "card.report_lost"}:

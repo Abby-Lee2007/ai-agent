@@ -45,6 +45,11 @@ from finagent.risk.questionnaire import (
     infer_basic_answers_detailed,
 )
 from finagent.tools.base import ToolContext, ToolResult
+from finagent.tools.card_tools import (
+    evaluate_card_password,
+    validate_card_number,
+    validate_phone_number,
+)
 from finagent.tools.transfer_tools import resolve_account
 from finagent.utils import parse_amount, parse_date
 from finagent.vision.receipt_parser import looks_like_pasted_bill
@@ -233,7 +238,8 @@ class BankingAgent:
             return AgentReply("请说点什么吧，例如「给老婆转2000块」。", kind="question", needs_input=True)
 
         self.session.turn += 1
-        self.session.remember_user(raw)
+        remembered_text = "******" if self._input_is_secret(raw) else raw
+        self.session.remember_user(remembered_text)
         try:
             reply = self._route(raw)
         except Exception as exc:  # 原型阶段：任何异常都转成可读提示，避免中断对话
@@ -244,13 +250,24 @@ class BankingAgent:
             )
         self.session.remember_assistant(reply.text)
         self.session.transcript.append(
-            {"turn": self.session.turn, "user": raw, "agent": reply.text,
+            {"turn": self.session.turn, "user": remembered_text, "agent": reply.text,
              "intent": reply.intent, "tools": [t.get("tool") for t in reply.trace]}
         )
         self.last_reply = reply
         if not self._is_why_question(raw):
             self.remember_reply(raw, reply)
         return reply
+
+    def _input_is_secret(self, text: str) -> bool:
+        pending = self.session.pending
+        if pending is None or not pending.missing:
+            return False
+        current = pending.missing[0]
+        if pending.intent == "card.apply":
+            return current in {"card_password", "card_password_confirm"}
+        if pending.intent == "card.bind":
+            return current == "password"
+        return False
 
     # ==================================================================
     # 主路由
@@ -1168,13 +1185,35 @@ class BankingAgent:
         if control == "deny":
             self.session.clear_pending()
             return AgentReply("好的，本次操作已取消，没有执行任何业务动作。")
-        interrupt = self._interrupt_intent(text)
+        ctx = self.context()
+        current_slot_answer = None
+        if pending.intent == "card.apply" and pending.missing:
+            current_slot = pending.missing[0]
+            current_slot_answer = self._extract_slot(current_slot, text, ctx)
+        interrupt = (
+            None
+            if current_slot_answer is not None
+            else self._interrupt_intent(text)
+        )
         if interrupt is not None:
             self.session.clear_pending()
             return self._continue_with_intent(interrupt)
-        ctx = self.context()
         self._fill_missing(pending, text, ctx)
+        validation_error = self._validate_pending_slots(pending)
+        if validation_error is not None:
+            return validation_error
         if pending.missing:
+            if pending.intent == "card.apply":
+                intent = Intent(pending.intent, pending.slots, 0.9, "system")
+                plan = self.planner.plan(intent, ctx)
+                if plan.missing:
+                    pending.missing = list(plan.missing)
+                    return AgentReply(
+                        plan.question,
+                        intent=pending.intent,
+                        kind="question",
+                        needs_input=True,
+                    )
             next_slot = pending.missing[0]
             return AgentReply(self.planner._question(next_slot), intent=pending.intent,
                               kind="question", needs_input=True)
@@ -1186,8 +1225,127 @@ class BankingAgent:
         self.session.clear_pending()
         return self._gate_and_execute(plan)
 
+    def _validate_pending_slots(self, pending: Pending) -> Optional[AgentReply]:
+        """Run deterministic checks before asking for more sensitive card data."""
+        if pending.intent not in {"card.bind", "card.apply"}:
+            return None
+        if pending.intent == "card.apply":
+            account_class = pending.slots.get("account_class")
+            if account_class and account_class not in {"I类户", "II类户"}:
+                pending.slots.pop("account_class", None)
+                pending.missing = ["account_class"]
+                return AgentReply(
+                    "账户类型不符合要求，请选择一类户（I 类）或二类户（II 类）。",
+                    intent=pending.intent,
+                    kind="question",
+                    needs_input=True,
+                )
+            password = pending.slots.get("card_password")
+            password_confirm = pending.slots.get("card_password_confirm")
+            if password:
+                password_check = evaluate_card_password(password)
+                if not password_check["ok"] or not password_check["acceptable"]:
+                    pending.slots.pop("card_password", None)
+                    pending.slots.pop("card_password_confirm", None)
+                    pending.missing = ["card_password", "card_password_confirm"]
+                    return AgentReply(
+                        password_check["message"]
+                        + "\n密码强度不足，请重新设置一个 6 位数字密码；"
+                          "不要使用连续数字、重复数字或常见弱密码。",
+                        intent=pending.intent,
+                        kind="question",
+                        needs_input=True,
+                    )
+            if password_confirm:
+                if str(password) != str(password_confirm):
+                    pending.slots.pop("card_password", None)
+                    pending.slots.pop("card_password_confirm", None)
+                    pending.missing = ["card_password", "card_password_confirm"]
+                    return AgentReply(
+                        "两次输入的密码不一致，密码未保存。请重新设置 6 位数字密码。",
+                        intent=pending.intent,
+                        kind="question",
+                        needs_input=True,
+                    )
+            statement_mode = pending.slots.get("statement_mode")
+            if statement_mode and statement_mode not in {"uploaded", "demo"}:
+                pending.slots.pop("statement_mode", None)
+                pending.missing = ["statement_mode"]
+                return AgentReply(
+                    "请选择流水核验方式：回复「已上传」使用当前会话的上传流水，"
+                    "或回复「使用演示流水」进行模拟核验。",
+                    intent=pending.intent,
+                    kind="question",
+                    needs_input=True,
+                )
+            if statement_mode == "uploaded":
+                uploaded = [
+                    txn for txn in self.store.transactions_of(self.user_id)
+                    if "receipt_import" in txn.tags or txn.source.startswith("upload:")
+                ]
+                if not uploaded:
+                    pending.slots.pop("statement_mode", None)
+                    pending.missing = ["statement_mode"]
+                    return AgentReply(
+                        "当前会话没有已确认导入的消费流水。请先用回形针上传账单并完成导入，"
+                        "再回复「已上传」；也可以回复「使用演示流水」。",
+                        intent=pending.intent,
+                        kind="question",
+                        needs_input=True,
+                    )
+            if pending.slots.get("consent") is False:
+                self.session.clear_pending()
+                return AgentReply(
+                    "您未同意模拟信用评估授权，本次信用卡申请未提交，也没有创建卡片。",
+                    intent=pending.intent,
+                    ok=False,
+                    kind="reply",
+                )
+        if pending.intent == "card.bind" and pending.slots.get("card_no"):
+            card_check = validate_card_number(
+                pending.slots["card_no"],
+                str(pending.slots.get("bank") or ""),
+            )
+            if not card_check["ok"]:
+                for slot in ("card_no", "password", "phone"):
+                    pending.slots.pop(slot, None)
+                pending.missing = ["card_no", "password", "phone"]
+                return AgentReply(
+                    card_check["message"] + "\n请重新输入卡号，随后再填写密码和预留手机号。",
+                    intent=pending.intent,
+                    kind="question",
+                    needs_input=True,
+                )
+        if pending.slots.get("phone"):
+            phone_check = validate_phone_number(pending.slots["phone"])
+            if not phone_check["ok"]:
+                pending.slots.pop("phone", None)
+                pending.missing = ["phone"]
+                return AgentReply(
+                    phone_check["message"] + "\n请重新输入银行预留的 11 位手机号。",
+                    intent=pending.intent,
+                    kind="question",
+                    needs_input=True,
+                )
+        return None
+
     def _fill_missing(self, pending: Pending, text: str, ctx: ToolContext) -> None:
         missing = list(pending.missing)
+        if pending.intent == "card.apply":
+            if not missing:
+                return
+            slot = missing.pop(0)
+            value = self._extract_slot(slot, text, ctx)
+            if value is None or not self._is_valid_slot_value(slot, value):
+                # Keep the answer so the card-specific validator can explain
+                # whether the phone, account type, or another field is invalid.
+                value = self._coerce_text(text)
+            if self._is_valid_slot_value(slot, value):
+                pending.slots[slot] = value
+            else:
+                missing.insert(0, slot)
+            pending.missing = missing
+            return
         remaining: List[str] = []
         filled_any = False
         for slot in missing:
@@ -1231,6 +1389,9 @@ class BankingAgent:
             names = [p for p in parts if p]
             return names if len(names) >= 2 else None
         if slot in NUMERIC_SLOTS:
+            if slot == "existing_debt" and any(
+                    word in text for word in ("没有", "无负债", "没负债", "零", "0元")):
+                return 0.0
             amount = parse_amount(text)
             if amount is None:
                 return None
@@ -1258,6 +1419,37 @@ class BankingAgent:
             if "每周" in text:
                 return "weekly"
             return "once"
+        if slot == "kind":
+            if any(word in text for word in ("储蓄卡", "借记卡", "储蓄账户", "借记账户")):
+                return "debit"
+            if any(word in text for word in ("虚拟卡", "虚拟")):
+                return "virtual"
+            if "附属" in text:
+                return "supplementary"
+            if any(word in text for word in ("信用卡", "贷记卡")):
+                return "credit"
+            return None
+        if slot == "account_class":
+            normalized = text.upper().replace(" ", "")
+            if any(word in normalized for word in ("一类", "I类", "Ⅰ类")):
+                return "I类户"
+            if any(word in normalized for word in ("二类", "II类", "Ⅱ类")):
+                return "II类户"
+            return None
+        if slot == "consent":
+            if any(word in text for word in ("不同意", "拒绝", "否", "不授权")):
+                return False
+            if any(word in text for word in ("同意", "授权", "可以", "是")):
+                return True
+            return None
+        if slot == "statement_mode":
+            if any(word in text for word in ("已上传", "上传", "导入", "已有流水", "使用已上传")):
+                return "uploaded"
+            if any(word in text for word in ("演示", "模拟", "示例", "没有流水", "无流水")):
+                return "demo"
+            return None
+        if slot in {"employment", "credit_purpose", "branch"}:
+            return self._coerce_text(text) or None
         if slot == "channel":
             if "微信" in text:
                 return "wechat"
@@ -1269,13 +1461,15 @@ class BankingAgent:
                 return "phone"
             return None
         if slot == "card_no":
-            digits = re.findall(r"\d{16,19}", text)
+            compact = re.sub(r"[\s-]", "", text)
+            digits = re.findall(r"\d{16,19}", compact)
             return digits[0] if digits else None
-        if slot == "password":
+        if slot in {"password", "card_password", "card_password_confirm"}:
             match = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
             return match.group(1) if match else None
         if slot == "phone":
-            match = re.search(r"1[3-9]\d{9}", text)
+            # 前后都不能再是数字，避免从 16-19 位卡号里截出"手机号"
+            match = re.search(r"(?<!\d)(1[3-9]\d{9})(?!\d)", text)
             return match.group(0) if match else None
         if slot in {"payee", "person"}:
             person = self.parser.rule._person(text)
@@ -1574,7 +1768,12 @@ class BankingAgent:
             trace.append({
                 "step": index,
                 "tool": step.tool,
-                "args": step.args,
+                "args": {
+                    key: ("******" if key in {
+                        "password", "card_password", "card_password_confirm",
+                    } else value)
+                    for key, value in step.args.items()
+                },
                 "ok": result.ok,
                 "summary": result.summary,
             })

@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import re
+from datetime import timedelta
 from typing import Any
 
 from finagent.data.models import Card
@@ -91,10 +93,60 @@ class CardListTool(Tool):
         return ToolResult(True, "\n".join(lines), data={"count": len(cards)}, summary=f"共 {len(cards)} 张卡片")
 
 
-BANK_BINS = {
-    "622202": "工商银行", "622848": "农业银行", "621661": "中国银行",
-    "621700": "建设银行", "622588": "招商银行", "622262": "交通银行",
+# 演示用 BIN 样本。真实银行的 BIN 会持续新增，生产系统应接入银行或卡组织
+# 的实时 BIN 数据库；这里覆盖常见储蓄卡前缀，用于展示格式与发卡行校验。
+BANK_CARD_RULES = {
+    "工商银行": {
+        "prefixes": (
+            "621226", "621281", "621558", "621559", "621618", "621722",
+            "621723", "622200", "622202", "622203", "622208",
+        ),
+        "lengths": (16, 17, 18, 19),
+    },
+    "农业银行": {
+        "prefixes": (
+            "621282", "621336", "621671", "622821", "622822", "622823",
+            "622824", "622825", "622826", "622827", "622828", "622841",
+            "622845", "622846", "622848",
+        ),
+        "lengths": (16, 17, 18, 19),
+    },
+    "中国银行": {
+        "prefixes": (
+            "621660", "621661", "621663", "621665", "621666", "621667",
+            "621668", "621669", "621672", "621725", "623573",
+        ),
+        "lengths": (16, 17, 18, 19),
+    },
+    "建设银行": {
+        "prefixes": (
+            "621081", "621082", "621466", "621467", "621488", "621700",
+            "622280", "622700", "622707", "623211", "623668",
+        ),
+        "lengths": (16, 17, 18, 19),
+    },
+    "招商银行": {
+        "prefixes": (
+            "621483", "621485", "621486", "622575", "622576", "622577",
+            "622579", "622580", "622581", "622582", "622588",
+        ),
+        "lengths": (16, 17, 18, 19),
+    },
+    "交通银行": {
+        "prefixes": (
+            "621002", "621069", "621436", "622260", "622261", "622262",
+            "622269", "622272", "622273",
+        ),
+        "lengths": (16, 17, 18, 19),
+    },
 }
+
+BANK_BINS = {
+    prefix: bank
+    for bank, rule in BANK_CARD_RULES.items()
+    for prefix in rule["prefixes"]
+}
+SUPPORTED_BANKS = tuple(BANK_CARD_RULES)
 
 
 def luhn_ok(number: str) -> bool:
@@ -112,6 +164,195 @@ def luhn_ok(number: str) -> bool:
     return checksum % 10 == 0
 
 
+def detect_bank_by_bin(number: str) -> str:
+    """Return the bank for the longest matching BIN sample."""
+    matches = [
+        (prefix, bank)
+        for prefix, bank in BANK_BINS.items()
+        if number.startswith(prefix)
+    ]
+    if not matches:
+        return ""
+    return max(matches, key=lambda item: len(item[0]))[1]
+
+
+def validate_phone_number(value: Any) -> dict[str, Any]:
+    """Validate a mainland China mobile number in local 11-digit format."""
+    raw = str(value or "").strip()
+    if not raw:
+        return {"ok": False, "code": "empty", "message": "手机号不能为空。"}
+    if re.search(r"[^\d\s-]", raw):
+        return {
+            "ok": False,
+            "code": "phone_format",
+            "message": "手机号格式不符：只能输入数字，可保留空格或短横线，不要填写 +86 或其他文字。",
+        }
+    digits = re.sub(r"[\s-]", "", raw)
+    if len(digits) != 11:
+        return {
+            "ok": False,
+            "code": "phone_length",
+            "message": f"手机号格式不符：当前为 {len(digits)} 位，应为 11 位数字。",
+        }
+    if not re.fullmatch(r"1[3-9]\d{9}", digits):
+        return {
+            "ok": False,
+            "code": "phone_prefix",
+            "message": "手机号格式不符：11 位手机号应以 13-19 开头，请检查首位数字。",
+        }
+    return {"ok": True, "phone": digits}
+
+
+def validate_card_number(value: Any, selected_bank: str = "") -> dict[str, Any]:
+    """Validate card syntax, UnionPay BIN pattern, issuing bank, and Luhn."""
+    raw = str(value or "").strip()
+    if not raw:
+        return {"ok": False, "code": "empty", "message": "银行卡号不能为空。"}
+    if re.search(r"[^\d\s-]", raw):
+        return {
+            "ok": False,
+            "code": "card_format",
+            "message": "卡号格式不符：只能包含数字，可使用空格或短横线分隔。",
+        }
+    number = re.sub(r"[\s-]", "", raw)
+    if not (16 <= len(number) <= 19):
+        return {
+            "ok": False,
+            "code": "card_length",
+            "message": f"卡号格式不符：当前为 {len(number)} 位，境内银联储蓄卡通常应为 16-19 位。",
+        }
+    if not number.startswith("62"):
+        return {
+            "ok": False,
+            "code": "card_prefix",
+            "message": (
+                f"卡号开头格式不符：当前前两位是 {number[:2]}，"
+                "境内银联储蓄卡通常以 62 开头，请检查是否漏输、错输或混淆了卡号。"
+            ),
+        }
+
+    selected = (selected_bank or "").strip()
+    if selected and selected not in BANK_CARD_RULES:
+        return {
+            "ok": False,
+            "code": "bank_unsupported",
+            "message": f"暂不支持「{selected}」，目前支持：{'、'.join(SUPPORTED_BANKS)}。",
+        }
+
+    detected = detect_bank_by_bin(number)
+    if selected and detected and selected != detected:
+        return {
+            "ok": False,
+            "code": "bank_mismatch",
+            "message": (
+                f"卡号与发卡行不匹配：前 6 位 {number[:6]} 属于{detected}，"
+                f"但你选择的是{selected}。请核对卡号或重新选择发卡行。"
+            ),
+        }
+    if selected and not detected:
+        return {
+            "ok": False,
+            "code": "bank_bin_unknown",
+            "message": (
+                f"无法确认发卡行：前 6 位 {number[:6]} 不在{selected}的演示 BIN 样本中。"
+                "请核对卡号开头，或选择正确银行。该 BIN 库不是全量真实银行数据。"
+            ),
+        }
+    if not selected and not detected:
+        return {
+            "ok": False,
+            "code": "bank_unknown",
+            "message": (
+                f"无法从卡号前 6 位 {number[:6]} 识别发卡行。"
+                "请同时告诉我是哪家银行，并检查卡号开头是否正确。"
+            ),
+        }
+    if not luhn_ok(number):
+        return {
+            "ok": False,
+            "code": "luhn",
+            "message": "卡号校验未通过（Luhn 模 10 校验失败），通常是卡号某一位数字输错。",
+        }
+
+    rule = BANK_CARD_RULES[selected or detected]
+    if len(number) not in rule["lengths"]:
+        return {
+            "ok": False,
+            "code": "bank_length",
+            "message": (
+                f"卡号长度与发卡行格式不匹配：{selected or detected}"
+                f"的演示规则支持 {'/'.join(str(x) for x in rule['lengths'])} 位，"
+                f"当前为 {len(number)} 位。"
+            ),
+        }
+    return {"ok": True, "number": number, "bank": selected or detected}
+
+
+def evaluate_card_password(value: Any) -> dict[str, Any]:
+    """Evaluate a six-digit bank PIN without retaining the clear value."""
+    password = str(value or "").strip()
+    if not re.fullmatch(r"[0-9]{6}", password):
+        return {
+            "ok": False,
+            "acceptable": False,
+            "strength": "不合规",
+            "score": 0,
+            "message": "取款密码必须为 6 位数字。",
+            "reasons": ["长度或字符格式不符"],
+        }
+
+    digits = [int(ch) for ch in password]
+    unique_count = len(set(digits))
+    reasons = []
+    score = 40
+    common = {
+        "000000", "111111", "222222", "333333", "444444", "555555",
+        "666666", "777777", "888888", "999999", "123456", "654321",
+        "112233", "121212", "131313", "888888", "666888",
+    }
+    if password in common:
+        reasons.append("命中常见弱密码")
+        score -= 40
+    if unique_count == 1:
+        reasons.append("六位数字完全相同")
+        score -= 35
+    elif password[:3] * 2 == password or password[:2] * 3 == password:
+        reasons.append("由短数字重复拼接")
+        score -= 25
+
+    differences = [digits[i + 1] - digits[i] for i in range(5)]
+    if all(diff == 1 for diff in differences):
+        reasons.append("连续递增数字")
+        score -= 30
+    elif all(diff == -1 for diff in differences):
+        reasons.append("连续递减数字")
+        score -= 30
+
+    if unique_count >= 4:
+        score += 15
+    if unique_count >= 5:
+        score += 10
+    if len({tuple(digits[i:i + 2]) for i in range(5)}) >= 4:
+        score += 5
+    score = max(0, min(100, score))
+    if score >= 70:
+        strength = "强"
+    elif score >= 50:
+        strength = "中"
+    else:
+        strength = "弱"
+    if not reasons:
+        reasons.append("未命中常见密码、连续数字或简单重复模式")
+    return {
+        "ok": True,
+        "acceptable": strength != "弱",
+        "strength": strength,
+        "score": score,
+        "message": f"密码强度：{strength}（{score}/100）。" + "；".join(reasons),
+        "reasons": reasons,
+    }
+
+
 class CardBindTool(Tool):
     """绑定他行银行卡（模拟四大行等真实银行的绑卡流程）。"""
 
@@ -124,7 +365,7 @@ class CardBindTool(Tool):
         ToolParam("card_no", "string", True, "银行卡号（16-19 位）"),
         ToolParam("password", "string", True, "银行卡取款密码（演示环境固定 123456）"),
         ToolParam("bank", "string", False, "发卡行，可根据卡号自动识别"),
-        ToolParam("phone", "string", False, "银行预留手机号"),
+        ToolParam("phone", "string", True, "银行预留手机号（11 位）"),
     ]
     examples = ["绑定一张工商银行的储蓄卡", "添加银行卡"]
     DEMO_PASSWORD = "123456"
@@ -137,17 +378,23 @@ class CardBindTool(Tool):
         bank: str = "",
         phone: str = "",
     ) -> ToolResult:
-        number = "".join(ch for ch in str(card_no) if ch.isdigit())
-        if not (16 <= len(number) <= 19):
-            return ToolResult(False, "卡号应为 16-19 位数字，请核对后重新输入。")
-        if not luhn_ok(number):
-            return ToolResult(False, "卡号校验未通过（Luhn 校验失败），请确认没有输错。")
-        bank_name = BANK_BINS.get(number[:6], "")
-        if not bank_name:
+        card_check = validate_card_number(card_no, bank)
+        if not card_check["ok"]:
             return ToolResult(
                 False,
-                "暂不支持该发卡行。目前支持：工商银行、农业银行、中国银行、建设银行、招商银行、交通银行。",
+                card_check["message"],
+                data={"reason": card_check["code"]},
             )
+        phone_check = validate_phone_number(phone)
+        if not phone_check["ok"]:
+            return ToolResult(
+                False,
+                phone_check["message"],
+                data={"reason": phone_check["code"]},
+            )
+        number = card_check["number"]
+        bank_name = card_check["bank"]
+        phone_digits = phone_check["phone"]
         if str(password).strip() != self.DEMO_PASSWORD:
             return ToolResult(False, "取款密码不正确，绑定失败。", data={"reason": "bad_password"})
         tail = number[-4:]
@@ -173,6 +420,7 @@ class CardBindTool(Tool):
         lines = [
             f"绑定成功：{bank_name} 储蓄卡（尾号 {tail}）",
             f"  卡号：**** **** **** {tail}（仅保存后四位，完整卡号与密码不入库）",
+            f"  预留手机号：{phone_digits[:3]}****{phone_digits[-4:]}",
             f"  单笔限额 {card.single_limit:,.0f} 元，日限额 {card.daily_limit:,.0f} 元",
             "  说明：这是模拟绑卡流程；真实绑卡由银行侧完成短信/密码验证，本原型仅做演示。",
         ]
@@ -188,45 +436,96 @@ class CardApplyTool(Tool):
 
     name = "card.apply"
     category = "卡片管理"
-    description = "申请新卡（信用卡/虚拟卡/附属卡），提交后进入审批流程"
-    risk_level = "low"
+    description = "申请储蓄卡、信用卡、虚拟卡或附属卡；不同卡种使用不同资料和审批流程"
+    risk_level = "medium"
     params = [
-        ToolParam("kind", "string", False, "卡类型", enum=["credit", "virtual", "supplementary"], default="virtual"),
+        ToolParam(
+            "kind", "string", False, "卡类型",
+            enum=["debit", "credit", "virtual", "supplementary"],
+        ),
         ToolParam("bank", "string", False, "发卡行，如 中国银行/工商银行"),
+        ToolParam("phone", "string", False, "银行预留手机号（11 位）"),
+        ToolParam("account_class", "string", False, "储蓄卡账户类型：I类户/II类户"),
+        ToolParam("branch", "string", False, "开户城市或网点"),
+        ToolParam("employment", "string", False, "就业情况"),
+        ToolParam("monthly_income", "number", False, "税后月收入"),
+        ToolParam("existing_debt", "number", False, "每月现有负债还款额"),
+        ToolParam("credit_purpose", "string", False, "信用卡主要用途"),
+        ToolParam("statement_mode", "string", False, "流水核验方式：uploaded/demo"),
+        ToolParam("consent", "boolean", False, "是否同意模拟信用评估"),
+        ToolParam("card_password", "string", False, "新储蓄卡 6 位取款密码"),
+        ToolParam("card_password_confirm", "string", False, "再次输入取款密码"),
         ToolParam("limit_request", "number", False, "期望额度（元）"),
         ToolParam("note", "string", False, "备注，如 给老婆办一张附属卡"),
     ]
-    examples = ["我想申请一张信用卡", "办一张虚拟卡网购用"]
+    examples = ["开一张工商银行的储蓄卡", "申请一张中国银行信用卡", "办一张虚拟卡网购用"]
 
     def run(  # type: ignore[override]
         self,
         ctx: ToolContext,
-        kind: str = "virtual",
+        kind: str = "debit",
         bank: str = "",
+        phone: Any = "",
+        account_class: str = "",
+        branch: str = "",
+        employment: str = "",
+        monthly_income: Any = None,
+        existing_debt: Any = None,
+        credit_purpose: str = "",
+        statement_mode: str = "",
+        consent: Any = False,
+        card_password: Any = "",
+        card_password_confirm: Any = "",
         limit_request: Any = None,
         note: str = "",
     ) -> ToolResult:
-        kind = (kind or "virtual").strip().lower()
+        kind = (kind or "debit").strip().lower()
         if kind not in KIND_LABEL:
-            kind = "virtual"
+            return ToolResult(False, f"无法识别卡种「{kind}」，请选择储蓄卡、信用卡、虚拟卡或附属卡。")
         user = ctx.user
         if not user.verified:
             return ToolResult(False, "申请卡片前需要先完成实名认证。")
 
-        defaults = {"credit": 20_000.0, "virtual": 5_000.0, "supplementary": 10_000.0}
+        bank_name = bank or "银联"
+        if kind == "debit":
+            return self._open_debit_card(
+                ctx,
+                bank_name=bank_name,
+                phone=phone,
+                account_class=account_class,
+                branch=branch,
+                card_password=card_password,
+                card_password_confirm=card_password_confirm,
+                note=note,
+            )
+        if kind == "credit":
+            return self._apply_credit_card(
+                ctx,
+                bank_name=bank_name,
+                phone=phone,
+                employment=employment,
+                monthly_income=monthly_income,
+                existing_debt=existing_debt,
+                credit_purpose=credit_purpose,
+                statement_mode=statement_mode,
+                consent=consent,
+                limit_request=limit_request,
+                note=note,
+            )
+
+        defaults = {"virtual": 5_000.0, "supplementary": 10_000.0}
         try:
             limit = float(limit_request) if limit_request is not None else defaults[kind]
         except (TypeError, ValueError):
             limit = defaults[kind]
-
         card = Card(
             card_id=ctx.store.next_id("cards"),
             user_id=user.user_id,
             kind=kind,
-            brand=bank or "银联",
+            brand=bank_name,
             tail="****",
             status="pending",
-            credit_limit=limit if kind in {"credit", "supplementary"} else 0.0,
+            credit_limit=limit if kind == "supplementary" else 0.0,
             daily_limit=min(limit, 50_000.0) if kind != "credit" else limit,
             single_limit=min(limit / 5, 5_000.0),
             overseas_enabled=False,
@@ -244,10 +543,11 @@ class CardApplyTool(Tool):
             payload={"card_id": card.card_id},
         )
         lines = [
-            f"申请已提交：{bank + ' ' if bank else ''}{KIND_LABEL[kind]}"
+            f"申请已提交：{bank_name} {KIND_LABEL[kind]}"
             + (f"（期望额度 {limit:,.0f} 元）" if limit else ""),
             f"  申请编号：{card.card_id}   当前状态：待审批",
-            "  审批通过后可一键激活；虚拟卡通常几分钟内即可使用。",
+            "  预计审批时间：几分钟至 1 个工作日（演示环境）。",
+            "  系统会在状态变化时提醒；审批通过后可一键激活。",
         ]
         if note:
             lines.append(f"  备注：{note}")
@@ -257,6 +557,339 @@ class CardApplyTool(Tool):
             data={"card_id": card.card_id, "task_id": task.task_id, "kind": kind},
             summary=f"已提交{KIND_LABEL[kind]}申请",
         )
+
+    @staticmethod
+    def _open_debit_card(
+        ctx: ToolContext,
+        *,
+        bank_name: str,
+        phone: Any,
+        account_class: str,
+        branch: str,
+        card_password: Any,
+        card_password_confirm: Any,
+        note: str,
+    ) -> ToolResult:
+        phone_check = validate_phone_number(phone)
+        if not phone_check["ok"]:
+            return ToolResult(False, phone_check["message"])
+        if account_class not in {"I类户", "II类户"}:
+            return ToolResult(False, "请选择储蓄卡账户类型：I类户或II类户。")
+        if not branch.strip():
+            return ToolResult(False, "请提供开户城市或网点。")
+        if str(card_password) != str(card_password_confirm):
+            return ToolResult(False, "两次输入的取款密码不一致，开户未执行。")
+        password_check = evaluate_card_password(card_password)
+        if not password_check["ok"] or not password_check["acceptable"]:
+            return ToolResult(
+                False,
+                password_check["message"] + " 密码强度不足，开户未执行。",
+                data={"reason": "weak_password"},
+            )
+
+        card_id = ctx.store.next_id("cards")
+        sequence = re.sub(r"\D", "", card_id)[-4:].zfill(4)
+        card = Card(
+            card_id=card_id,
+            user_id=ctx.user_id,
+            kind="debit",
+            brand=bank_name,
+            tail=sequence,
+            status="active",
+            daily_limit=20_000.0,
+            single_limit=5_000.0,
+            online_enabled=True,
+            overseas_enabled=False,
+            contactless_enabled=True,
+            issued_at=ctx.clock.iso(),
+            note=note or f"{bank_name}{account_class}储蓄卡（开户）",
+        )
+        ctx.store.cards[card.card_id] = card
+        ctx.store.touch(card)
+        ctx.store.log(
+            "card.open_debit",
+            card_id=card.card_id,
+            bank=bank_name,
+            account_class=account_class,
+            branch=branch,
+        )
+        phone_digits = phone_check["phone"]
+        lines = [
+            "【储蓄卡开户成功】",
+            f"  发卡行：{bank_name}",
+            f"  卡种：{account_class}储蓄卡（演示卡，尾号 {card.tail}）",
+            f"  开户城市/网点：{branch}",
+            f"  预留手机号：{phone_digits[:3]}****{phone_digits[-4:]}",
+            f"  取款密码：已设置并二次确认（强度 {password_check['strength']}，"
+            f"{password_check['score']}/100；明文密码未保存）",
+            "  当前状态：正常（仅为本原型生成的模拟卡）",
+            f"  单笔限额 {card.single_limit:,.0f} 元，日限额 {card.daily_limit:,.0f} 元",
+            "  已同步到「资料与卡片设置」。",
+        ]
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            data={
+                "card_id": card.card_id,
+                "bank": bank_name,
+                "tail": card.tail,
+                "kind": "debit",
+                "status": card.status,
+                "password_strength": password_check["strength"],
+                "password_score": password_check["score"],
+            },
+            summary=f"已开立 {bank_name}{account_class}储蓄卡",
+        )
+
+    @staticmethod
+    def _apply_credit_card(
+        ctx: ToolContext,
+        *,
+        bank_name: str,
+        phone: Any,
+        employment: str,
+        monthly_income: Any,
+        existing_debt: Any,
+        credit_purpose: str,
+        statement_mode: str,
+        consent: Any,
+        limit_request: Any,
+        note: str,
+    ) -> ToolResult:
+        phone_check = validate_phone_number(phone)
+        if not phone_check["ok"]:
+            return ToolResult(False, phone_check["message"])
+        if not str(employment or "").strip():
+            return ToolResult(False, "请补充就业情况。")
+        if not str(credit_purpose or "").strip():
+            return ToolResult(False, "请补充信用卡主要用途。")
+        if consent is not True:
+            return ToolResult(False, "未获得模拟信用评估授权，信用卡申请未提交。")
+        try:
+            income = float(monthly_income)
+            debt = float(existing_debt)
+            requested = float(limit_request)
+        except (TypeError, ValueError):
+            return ToolResult(False, "月收入、每月负债和期望额度必须是数字。")
+        if income <= 0:
+            return ToolResult(False, "税后月收入必须大于 0。")
+        if debt < 0:
+            return ToolResult(False, "每月负债不能为负数。")
+        if requested <= 0:
+            return ToolResult(False, "期望额度必须大于 0。")
+
+        statement = CardApplyTool._credit_statement_profile(ctx, statement_mode)
+        if statement is None:
+            return ToolResult(
+                False,
+                "请选择有效的流水核验方式：上传当前会话流水，或明确选择演示流水。",
+            )
+        debt_ratio = debt / income
+        score = 55
+        if income >= 10_000:
+            score += 15
+        if income >= 20_000:
+            score += 10
+        if debt_ratio < 0.3:
+            score += 15
+        elif debt_ratio < 0.5:
+            score += 8
+        else:
+            score -= 20
+        if requested <= income * 0.5:
+            score += 10
+        else:
+            score -= 12
+        score += statement["score_adjust"]
+        score = max(0, min(100, score))
+
+        if score >= 70:
+            decision = "通过"
+            status_text = "模拟预审通过，待激活"
+        elif score >= 50:
+            decision = "转人工复核"
+            status_text = "待人工复核"
+        else:
+            decision = "未通过"
+            status_text = "模拟预审未通过"
+
+        reference_limit = min(requested, max(1_000.0, income * 0.5))
+        if decision == "转人工复核":
+            reference_limit = min(reference_limit, 10_000.0)
+        review_date = (ctx.clock.now() + timedelta(days=1)).date().isoformat()
+        phone_digits = phone_check["phone"]
+
+        card_id = ""
+        if decision != "未通过":
+            card_id = ctx.store.next_id("cards")
+            application_note = (
+                f"{note or '信用卡申请'}｜就业：{employment}｜"
+                f"月收入：{income:,.0f}｜月负债：{debt:,.0f}｜"
+                f"用途：{credit_purpose}｜流水：{statement['label']}｜预审：{decision}"
+            )
+            card = Card(
+                card_id=card_id,
+                user_id=ctx.user_id,
+                kind="credit",
+                brand=bank_name,
+                tail="****",
+                status="pending",
+                credit_limit=reference_limit,
+                daily_limit=reference_limit,
+                single_limit=min(reference_limit / 5, 5_000.0),
+                online_enabled=True,
+                overseas_enabled=False,
+                contactless_enabled=True,
+                issued_at=ctx.clock.iso(),
+                note=application_note,
+            )
+            ctx.store.cards[card.card_id] = card
+            ctx.store.touch(card)
+            task = ctx.store.add_task(
+                user_id=ctx.user_id,
+                kind="reminder",
+                run_date=review_date,
+                title=f"{bank_name}信用卡终审进度（申请单 {card.card_id}）",
+                payload={"card_id": card.card_id, "status": "pending_review"},
+            )
+        else:
+            task = ctx.store.add_task(
+                user_id=ctx.user_id,
+                kind="reminder",
+                run_date=review_date,
+                title=f"{bank_name}信用卡申请结果通知",
+                payload={"status": "preliminary_rejected"},
+            )
+            card_id = ctx.store.next_id("card_applications")
+
+        ctx.store.log(
+            "card.apply_credit",
+            application_id=card_id,
+            bank=bank_name,
+            decision=decision,
+            score=score,
+        )
+        lines = [
+            "【信用卡申请 · 模拟预审完成】",
+            f"  发卡行：{bank_name}",
+            f"  申请编号：{card_id}",
+            f"  模拟预审结果：{decision}（评分 {score}/100）",
+            f"  参考额度：{reference_limit:,.0f} 元（最终结果以模拟终审为准）",
+            f"  当前状态：{status_text}",
+            f"  评估依据：月收入 {income:,.0f} 元、月负债 {debt:,.0f} 元、"
+            f"负债率 {debt_ratio * 100:.1f}%、期望额度 {requested:,.0f} 元",
+            f"  主要用途：{credit_purpose}",
+            f"  流水核验：{statement['label']}，覆盖 {statement['month_count']} 个月、"
+            f"{statement['count']} 笔；月均支出 {statement['avg_monthly_expense']:,.2f} 元",
+            f"  主要消费类别：{statement['top_categories']}",
+            f"  流水风险：命中 {statement['anomaly_count']} 项异常特征；"
+            f"流水质量：{statement['quality']}",
+            f"  预计终审时间：1-3 个工作日；演示环境预计 {review_date} 更新进度",
+            f"  预留手机号：{phone_digits[:3]}****{phone_digits[-4:]}",
+            "  说明：这是模拟评分，不会查询真实征信，也不代表真实银行审批结果。",
+        ]
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            data={
+                "application_id": card_id,
+                "card_id": card_id if decision != "未通过" else "",
+                "task_id": task.task_id,
+                "kind": "credit",
+                "decision": decision,
+                "score": score,
+                "reference_limit": reference_limit,
+                "statement_mode": statement["mode"],
+                "statement_count": statement["count"],
+                "statement_anomaly_count": statement["anomaly_count"],
+                "statement_quality": statement["quality"],
+            },
+            summary=f"信用卡模拟预审结果：{decision}",
+        )
+
+    @staticmethod
+    def _credit_statement_profile(ctx: ToolContext, mode: str) -> dict[str, Any] | None:
+        """Build a credit-review summary from uploaded or explicitly simulated rows."""
+        if mode not in {"uploaded", "demo"}:
+            return None
+        transactions = ctx.store.transactions_of(ctx.user_id)
+        imported = [
+            txn for txn in transactions
+            if "receipt_import" in txn.tags or txn.source.startswith("upload:")
+        ]
+        if mode == "uploaded":
+            rows = imported
+            label = "已上传流水"
+        else:
+            cutoff = (ctx.clock.now() - timedelta(days=183)).isoformat()
+            rows = [
+                txn for txn in transactions
+                if txn.timestamp >= cutoff and txn not in imported
+            ]
+            label = "演示流水（模拟数据）"
+        rows = [txn for txn in rows if txn.status == "success"]
+        if not rows:
+            return None
+
+        expenses = [txn for txn in rows if txn.amount < 0]
+        incomes = [txn for txn in rows if txn.amount > 0]
+        expense_total = sum(abs(txn.amount) for txn in expenses)
+        income_total = sum(txn.amount for txn in incomes)
+        months = {txn.timestamp[:7] for txn in rows if len(txn.timestamp) >= 7}
+        month_count = max(1, len(months))
+        avg_monthly_expense = expense_total / month_count
+        by_category: dict[str, float] = {}
+        for txn in expenses:
+            by_category[txn.category] = by_category.get(txn.category, 0.0) + abs(txn.amount)
+        top = sorted(by_category.items(), key=lambda item: item[1], reverse=True)[:3]
+        top_categories = "、".join(
+            f"{name} {amount:,.0f} 元" for name, amount in top
+        ) or "无支出记录"
+        anomalies = ctx.risk.detect_anomalies(
+            ctx.user_id,
+            txns=expenses,
+            include_subscriptions=False,
+        )
+
+        score_adjust = 0
+        if mode == "uploaded":
+            score_adjust += 5
+        if len(rows) >= 20:
+            score_adjust += 8
+        elif len(rows) >= 5:
+            score_adjust += 3
+        else:
+            score_adjust -= 10
+        if month_count >= 3:
+            score_adjust += 4
+        elif month_count >= 2:
+            score_adjust += 2
+        expense_ratio = expense_total / max(income_total, 1.0)
+        if expense_ratio <= 0.7:
+            score_adjust += 6
+        elif expense_ratio <= 1.0:
+            score_adjust += 2
+        else:
+            score_adjust -= 8
+        if len(anomalies) >= 5:
+            score_adjust -= 12
+        elif anomalies:
+            score_adjust -= 4
+
+        quality = "良好" if score_adjust >= 8 else ("一般" if score_adjust >= 0 else "样本不足")
+        return {
+            "mode": mode,
+            "label": label,
+            "count": len(rows),
+            "month_count": month_count,
+            "expense_total": round(expense_total, 2),
+            "income_total": round(income_total, 2),
+            "avg_monthly_expense": round(avg_monthly_expense, 2),
+            "top_categories": top_categories,
+            "anomaly_count": len(anomalies),
+            "score_adjust": score_adjust,
+            "quality": quality,
+        }
 
 
 class CardLimitAdjustTool(Tool):

@@ -487,11 +487,13 @@ class RuleIntentParser:
                 slots["card"] = card
 
         elif intent == "card.apply":
-            if self._has(text, "虚拟"):
+            if self._has(text, "储蓄卡", "借记卡", "储蓄账户", "借记账户"):
+                slots["kind"] = "debit"
+            elif self._has(text, "虚拟"):
                 slots["kind"] = "virtual"
             elif self._has(text, "附属"):
                 slots["kind"] = "supplementary"
-            else:
+            elif self._has(text, "信用卡", "贷记卡"):
                 slots["kind"] = "credit"
             amount = parse_amount(text)
             if amount is not None:
@@ -508,6 +510,9 @@ class RuleIntentParser:
 
         elif intent == "card.bind":
             digits = re.findall(r"\d{16,19}", text)
+            if not digits:
+                compact = re.sub(r"[\s-]", "", text)
+                digits = re.findall(r"\d{16,19}", compact)
             if digits:
                 slots["card_no"] = digits[0]
             for keyword, name in [
@@ -525,8 +530,7 @@ class RuleIntentParser:
             if pwd:
                 slots["password"] = pwd.group(1)
             remainder = text
-            if digits:
-                remainder = remainder.replace(digits[0], " ")
+            remainder = re.sub(r"(?<!\d)(?:\d[\s-]*){16,19}(?!\d)", " ", remainder)
             phone = RE_PHONE.search(remainder)
             if phone:
                 slots["phone"] = phone.group(0)
