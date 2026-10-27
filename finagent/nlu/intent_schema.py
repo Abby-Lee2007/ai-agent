@@ -272,6 +272,16 @@ INTENTS: Dict[str, IntentSpec] = {
         "crossscene.daily_brief", "跨场景联动", "主动汇总今日待办与风险提醒",
         [], ["今天有什么要注意的", "帮我做个每日简报"],
     ),
+    "crossscene.gift_plan": IntentSpec(
+        "crossscene.gift_plan", "人际礼物", "为关心的人预约伴手礼或礼物配送",
+        [
+            L("person", "收礼人", True),
+            L("item", "礼物类型", True),
+            L("date", "送达日期", True),
+            L("budget", "预算（元）", False, "number"),
+        ],
+        ["给老婆准备一份伴手礼", "纪念日给妈妈送一束花"],
+    ),
     "goal.create": IntentSpec(
         "goal.create", "跨场景联动", "创建资金目标并锁定活期资金",
         [

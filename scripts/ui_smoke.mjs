@@ -122,6 +122,7 @@ async function openChat(cdp, width, height, mobile) {
   await cdp.send("Page.navigate", { url });
   await waitFor(cdp, `document.readyState === "complete"`);
   await waitFor(cdp, `document.querySelector("#session-id")?.textContent !== "正在创建"`);
+  await waitFor(cdp, `document.querySelectorAll(".capability-category").length === 6`);
 }
 
 async function sendPrompt(cdp, prompt, expectedText) {
@@ -169,16 +170,42 @@ try {
       scrollWidth: document.documentElement.scrollWidth,
       app: [app.left, app.top, app.right, app.bottom],
       composerOverlap: !(prompt.right <= send.left || send.right <= prompt.left),
-      membershipQuick: [...document.querySelectorAll(".quick")].some(
-        (button) => button.textContent.trim() === "会员批量充值"
+      capabilityLabels: [...document.querySelectorAll(".capability-category")].map(
+        (button) => button.textContent.replace(/\s+/g, " ").trim()
+      ),
+      globalActions: [...document.querySelectorAll(".capability-global-action")].map(
+        (button) => button.textContent.trim()
       ),
     };
   })()`);
   assert(desktop.title === "AI Banking Agent", "H5 标题不正确");
   assert(desktop.scrollWidth <= desktop.viewport[0], "桌面页面出现横向滚动");
   assert(desktop.composerOverlap === false, "输入框与发送按钮重叠");
-  assert(desktop.membershipQuick, "缺少会员批量充值快捷入口");
-  await sendPrompt(cdp, "帮我看看有哪些自动续费", "到期时间");
+  assert(desktop.capabilityLabels.length === 6, "业务分类数量不是 6 个");
+  assert(desktop.capabilityLabels[0].includes("智能转账"), "缺少智能转账分类");
+  assert(desktop.capabilityLabels[5].includes("人际礼物"), "缺少人际礼物分类");
+  assert(desktop.globalActions.includes("每日简报"), "缺少全局每日简报入口");
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-category")]
+      .find((item) => item.textContent.includes("订阅管理"));
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll(".capability-action")].some((button) => button.textContent.includes("自动续费检测"))`,
+  );
+  const subscriptionActions = await evaluate(cdp, `[...document.querySelectorAll(".capability-action")].map((button) => button.textContent.trim())`);
+  assert(subscriptionActions.includes("自动续费检测"), "订阅分类缺少自动续费检测");
+  assert(subscriptionActions.includes("会员办理/充值"), "订阅分类缺少会员办理");
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-action")]
+      .find((item) => item.textContent.includes("自动续费检测"));
+    button.click();
+    return true;
+  })()`);
+  await waitFor(cdp, `document.querySelectorAll(".subscription-table").length > 0`, 15_000);
+  await waitFor(cdp, `!document.querySelector("#typing-message")`);
   const subscriptionTable = await evaluate(cdp, `(() => {
     const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
     const table = bubble?.querySelector(".subscription-table");
@@ -548,13 +575,17 @@ try {
       scrollWidth: document.documentElement.scrollWidth,
       bubblesInside: bubbles.every((rect) => rect.left >= 0 && rect.right <= innerWidth),
       composerVisible: composer.top < innerHeight && composer.bottom <= innerHeight + 1,
-      quickDisplay: getComputedStyle(document.querySelector(".quick-list")).display,
+      categoryCount: document.querySelectorAll(".capability-category").length,
+      categoryBarDisplay: getComputedStyle(document.querySelector(".capability-categories")).display,
+      categoryBarOverflow: getComputedStyle(document.querySelector(".capability-categories")).overflowX,
     };
   })()`);
   assert(mobile.scrollWidth <= mobile.viewport[0], "移动端页面出现横向滚动");
   assert(mobile.bubblesInside, "移动端消息气泡超出视口");
   assert(mobile.composerVisible, "移动端输入区不在视口内");
-  assert(mobile.quickDisplay === "flex", "移动端快捷指令未切换为横向布局");
+  assert(mobile.categoryCount === 6, "移动端业务分类数量不是 6 个");
+  assert(mobile.categoryBarDisplay === "flex", "移动端业务分类未切换为横向布局");
+  assert(["auto", "scroll"].includes(mobile.categoryBarOverflow), "移动端业务分类不可横向滚动");
   await screenshot(cdp, "mobile.png");
 
   // A server restart invalidates in-memory sessions. The first message after

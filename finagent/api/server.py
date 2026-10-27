@@ -12,6 +12,7 @@ from typing import Any, Optional, Type
 from urllib.parse import parse_qs, unquote, urlparse
 
 from finagent.api.service import AgentSessionService, SessionNotFound
+from finagent.nlu.capability_catalog import capability_catalog_payload
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_ROOT = ROOT / "web"
@@ -46,6 +47,12 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/health":
             self._send_json(200, {"ok": True, "service": "AI Banking Agent"})
+            return
+        if path == "/v1/capabilities":
+            if not self._authorized():
+                self._send_json(401, {"error": "unauthorized", "message": "访问口令无效"})
+                return
+            self._send_json(200, capability_catalog_payload())
             return
         if path == "/favicon.ico":
             self.send_response(204)

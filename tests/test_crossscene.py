@@ -84,6 +84,22 @@ class TestCrossScene(unittest.TestCase):
         self.assertEqual(reply.intent, "goal.list")
         self.assertIn("生日惊喜金", reply.text)
 
+    def test_souvenir_gift_plan_asks_for_date_and_creates_task(self):
+        reply = self.agent.handle("给老婆准备一份伴手礼")
+        self.assertEqual(reply.intent, "crossscene.gift_plan")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("日期", reply.text)
+
+        reply = self.agent.handle("11月20日")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("鲜花", reply.text)
+
+        reply = self.agent.handle("确认")
+        self.assertTrue(reply.ok, reply.text)
+        tasks = self.agent.store.tasks_of("u_001", status="pending")
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].kind, "gift_order")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -127,6 +127,18 @@ class ApiServerTestCase(unittest.TestCase):
         self.assertIn("<title>AI Banking Agent</title>", html)
         self.assertIn("/v1/messages/stream", html)
 
+    def test_capability_catalog_endpoint_returns_business_navigation(self):
+        with self.get_json("/v1/capabilities") as response:
+            body = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(len(body["categories"]), 6)
+        self.assertEqual(body["categories"][0]["label"], "智能转账")
+        self.assertIn(
+            "crossscene.daily_brief",
+            {action["intent"] for action in body["global_actions"]},
+        )
+
     def test_wecom_webhook_returns_reply_and_replays_same_message(self):
         payload = {
             "from_user": "wx-user-001",

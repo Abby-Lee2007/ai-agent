@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from finagent.nlu.intent_schema import INTENTS, Intent, catalog_text, slot_dictionary_text
 from finagent.nlu.llm_client import LLMClient
+from finagent.nlu.capability_catalog import resolve_capability_intent
 from finagent.nlu.membership_parser import (
     PRICE_RE,
     RENEWAL_RE,
@@ -121,6 +122,7 @@ class RuleIntentParser:
         "help",
         "agent.about",
         "crossscene.daily_brief",
+        "crossscene.gift_plan",
         "bill.scan_receipt",
         "transfer.split_aa",
         "transfer.list_scheduled",
@@ -152,6 +154,7 @@ class RuleIntentParser:
         "subscription.detect",
         "subscription.list",
         "crossscene.birthday_plan",
+        "crossscene.gift_plan",
         "goal.list",
         "goal.create",
         "profile.show",
@@ -170,7 +173,7 @@ class RuleIntentParser:
             if matcher(cleaned):
                 return Intent(name, self._slots(name, cleaned), 0.85, "rule", cleaned)
         # 通用兜底：按业务关键词打分，避免"必须用同一个句式"
-        guess = self._keyword_guess(cleaned)
+        guess = resolve_capability_intent(cleaned) or self._keyword_guess(cleaned)
         if guess:
             return Intent(guess, self._slots(guess, cleaned), 0.6, "rule-keyword", cleaned,
                           reason="精确规则未命中，按关键词兜底识别")
@@ -329,7 +332,11 @@ class RuleIntentParser:
         return self._has(t, "我的卡", "有哪些卡", "卡片列表", "卡列表", "我有什么卡", "卡种", "卡的情况")
 
     def _match_subscription_cancel(self, t: str) -> bool:
-        return self._has(t, "取消") and self._has(t, "订阅", "会员", "续费", "自动续费", "扣费")
+        return self._has(
+            t, "取消", "停止", "关掉", "关闭", "不想再", "不用再",
+        ) and self._has(
+            t, "订阅", "会员", "续费", "自动续费", "自动扣", "扣费", "扣款",
+        )
 
     def _match_subscription_resume(self, t: str) -> bool:
         restore_action = self._has(t, "恢复", "重新开通", "续回去", "重新开启")
@@ -359,6 +366,13 @@ class RuleIntentParser:
 
     def _match_crossscene_birthday_plan(self, t: str) -> bool:
         return self._has(t, "生日", "纪念日", "惊喜", "鲜花", "蛋糕", "礼物")
+
+    def _match_crossscene_gift_plan(self, t: str) -> bool:
+        if "生日" in t:
+            return False
+        return self._has(
+            t, "伴手礼", "礼物预约", "准备礼物", "纪念日礼物", "送礼", "礼物",
+        )
 
     def _match_goal_list(self, t: str) -> bool:
         return self._has(t, "我的目标", "攒钱目标", "心愿", "锁了多少钱", "目标进度", "有哪些目标", "资金目标")
@@ -607,6 +621,23 @@ class RuleIntentParser:
                 person = self._person(text) or ""
             if person:
                 slots["person"] = person
+            amount = parse_amount(text)
+            if amount is not None:
+                slots["budget"] = amount
+
+        elif intent == "crossscene.gift_plan":
+            person = self._person(text)
+            if person:
+                slots["person"] = person
+            if self._has(text, "鲜花", "花束", "一束花", "伴手礼"):
+                slots["item"] = "鲜花"
+            elif self._has(text, "蛋糕"):
+                slots["item"] = "蛋糕"
+            else:
+                slots["item"] = "鲜花"
+            when = self._when(text)
+            if when:
+                slots["date"] = when
             amount = parse_amount(text)
             if amount is not None:
                 slots["budget"] = amount

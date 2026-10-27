@@ -254,6 +254,7 @@ class ScheduleGiftTool(Tool):
     category = "跨场景联动"
     description = "在指定日期为指定的人预约下单礼物（鲜花、蛋糕、礼物卡等）"
     risk_level = "medium"
+    requires_confirmation = True
     params = [
         ToolParam("person", "string", True, "收礼人，如 老婆 / 林雅雯"),
         ToolParam("item", "string", True, "礼物类型，如 鲜花 / 蛋糕"),

@@ -107,6 +107,14 @@ SIMPLE_PLANS: Dict[str, List[Tuple[str, Dict[str, str]]]] = {
     "help": [("help", {})],
     "agent.about": [("agent.about", {})],
     "crossscene.daily_brief": [("crossscene.daily_brief", {})],
+    "crossscene.gift_plan": [
+        ("crossscene.schedule_gift", {
+            "person": "person",
+            "item": "item",
+            "date": "date",
+            "budget": "budget",
+        }),
+    ],
 }
 
 DEFAULT_QUESTIONS = {
@@ -149,6 +157,8 @@ DEFAULT_QUESTIONS = {
     "name": "请问这个目标叫什么名字？例如「旅行基金」。",
     "target_amount": "请问目标金额是多少？",
     "birthday": "请问 ta 的生日是哪一天？例如「11月20日」。",
+    "date": "请问希望哪一天送达（日期）？例如「11月20日」或「下周六」。",
+    "item": "请问想送什么礼物？例如「鲜花」「蛋糕」或「伴手礼」。",
 }
 
 NUMERIC_SLOTS = {
@@ -220,6 +230,7 @@ DATA_CONFIRM_INTENTS = {
     "membership.purchase",
     "goal.create",
     "crossscene.birthday_plan",
+    "crossscene.gift_plan",
 }
 
 

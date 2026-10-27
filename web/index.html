@@ -81,12 +81,14 @@
     }
 
     .workspace {
+      min-width: 0;
       min-height: 0;
       display: grid;
       grid-template-columns: 268px minmax(0, 1fr);
     }
 
     .sidebar {
+      min-width: 0;
       min-height: 0;
       padding: 18px;
       border-right: 1px solid var(--line);
@@ -94,6 +96,7 @@
       overflow-y: auto;
     }
     .side-section + .side-section { margin-top: 22px; }
+    .side-section { min-width: 0; }
     .side-label {
       margin: 0 0 9px;
       color: var(--muted);
@@ -157,6 +160,104 @@
       border-color: #9ec7bd;
       background: var(--accent-soft);
       outline: none;
+    }
+    .capability-global-actions {
+      min-width: 0;
+      max-width: 100%;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      margin-bottom: 9px;
+    }
+    .capability-global-action {
+      min-width: 0;
+      padding: 7px 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--accent-strong);
+      background: var(--surface);
+      font-size: 11.5px;
+      font-weight: 700;
+    }
+    .capability-global-action:hover,
+    .capability-global-action:focus-visible {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      outline: none;
+    }
+    .capability-categories {
+      min-width: 0;
+      max-width: 100%;
+      display: grid;
+      gap: 5px;
+    }
+    .capability-category {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      width: 100%;
+      min-width: 0;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--ink);
+      background: var(--surface);
+      text-align: left;
+    }
+    .capability-category:hover,
+    .capability-category:focus-visible,
+    .capability-category.is-active {
+      border-color: #9ec7bd;
+      background: var(--accent-soft);
+      outline: none;
+    }
+    .capability-category.is-active { color: var(--accent-strong); font-weight: 700; }
+    .capability-category-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .capability-arrow {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 13px;
+      transition: transform .16s ease;
+    }
+    .capability-category.is-active .capability-arrow { transform: rotate(90deg); }
+    .capability-actions {
+      min-width: 0;
+      max-width: 100%;
+      display: grid;
+      gap: 5px;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+    .capability-action {
+      width: 100%;
+      min-width: 0;
+      padding: 7px 9px;
+      border: 1px solid #d3dfdc;
+      border-left: 3px solid #b7d7cf;
+      border-radius: 5px;
+      color: var(--ink);
+      background: var(--surface);
+      font-size: 12px;
+      text-align: left;
+    }
+    .capability-action:hover,
+    .capability-action:focus-visible {
+      border-color: #9ec7bd;
+      border-left-color: var(--accent);
+      background: var(--accent-soft);
+      outline: none;
+    }
+    .capability-loading {
+      padding: 8px 0;
+      color: var(--muted);
+      font-size: 12px;
     }
 
     .guide {
@@ -885,16 +986,48 @@
         border-bottom: 1px solid var(--line);
         overflow: visible;
       }
-      .customer, .side-section:not(:first-child) { display: none; }
-      .sidebar .side-section:first-child { margin: 0; }
+      .sidebar .session-section,
+      .sidebar .guide-section { display: none; }
+      .sidebar .capability-section { display: block; margin: 0; }
+      .sidebar .capability-section { width: 100%; overflow: hidden; }
       .side-label { display: none; }
-      .quick-list {
+      .capability-global-actions {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        margin-bottom: 7px;
+      }
+      .capability-global-action {
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
+      .capability-categories {
+        width: 100%;
         display: flex;
         gap: 7px;
         overflow-x: auto;
         padding-bottom: 2px;
       }
-      .quick { width: auto; flex: 0 0 auto; white-space: nowrap; }
+      .capability-category {
+        width: auto;
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
+      .capability-category-label { overflow: visible; }
+      .capability-arrow { display: none; }
+      .capability-actions {
+        width: 100%;
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        margin-top: 7px;
+        padding-top: 7px;
+      }
+      .capability-action {
+        width: auto;
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
       .messages { padding: 16px 12px; }
       .bubble { max-width: 88%; }
       .bubble.wide {
@@ -933,7 +1066,7 @@
 
     <div class="workspace">
       <aside class="sidebar">
-        <section class="side-section">
+        <section class="side-section session-section">
           <p class="side-label">当前会话</p>
           <div class="customer">
             <strong id="customer-name">陈晓明</strong>
@@ -947,22 +1080,18 @@
           <button class="history-button" id="profile-settings-button" type="button">资料与卡片设置</button>
         </section>
 
-        <section class="side-section">
-          <p class="side-label">快捷指令</p>
-          <div class="quick-list">
-            <button class="quick" data-prompt="我还有多少钱">查询总资产</button>
-            <button class="quick" data-prompt="分析我这个月的账单">分析本月账单</button>
-            <button class="quick" data-prompt="推荐几个稳健的理财产品">筛选理财产品</button>
-            <button class="quick" data-prompt="我有哪些卡">管理银行卡</button>
-            <button class="quick" data-prompt="我想开一张储蓄卡">储蓄卡开户</button>
-            <button class="quick" data-prompt="我想申请一张信用卡">信用卡申请</button>
-            <button class="quick" data-prompt="帮我看看有哪些自动续费">检查自动续费</button>
-            <button class="quick" data-prompt="帮我充腾讯视频3个月60元、Keep12个月199元">会员批量充值</button>
-            <button class="quick" data-prompt="我老婆快生日了，帮我准备一下">准备生日惊喜</button>
+        <section class="side-section capability-section">
+          <p class="side-label">业务分类</p>
+          <div class="capability-global-actions" id="capability-global-actions">
+            <div class="capability-loading">正在加载全局功能...</div>
           </div>
+          <div class="capability-categories" id="capability-categories">
+            <div class="capability-loading">正在加载业务分类...</div>
+          </div>
+          <div class="capability-actions" id="capability-actions"></div>
         </section>
 
-        <section class="side-section">
+        <section class="side-section guide-section">
           <p class="side-label">操作说明</p>
           <ul class="guide">
             <li>涉及资金变动时会先要求确认。</li>
@@ -1139,11 +1268,16 @@
     const cardStatus = document.getElementById("card-settings-status");
     const customerName = document.getElementById("customer-name");
     const customerSubtitle = document.getElementById("customer-subtitle");
+    const capabilityGlobalActions = document.getElementById("capability-global-actions");
+    const capabilityCategories = document.getElementById("capability-categories");
+    const capabilityActions = document.getElementById("capability-actions");
     let carePeople = [];
     let sessionId = localStorage.getItem("finagent_session_id") || "";
     let accessToken = sessionStorage.getItem("finagent_access_token") || "";
     let busy = false;
     let awaitingSecret = false;
+    let capabilityCatalog = null;
+    let activeCapabilityId = "";
 
     function newRequestId() {
       if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -1192,6 +1326,85 @@
         return;
       }
       await createSession();
+    }
+
+    function runCapabilityAction(action) {
+      if (!action) return;
+      if (action.input_mode === "upload") {
+        fileInput.click();
+        return;
+      }
+      if (action.input_mode === "panel") {
+        if (action.panel_id === "profile-settings-overlay") {
+          openProfileSettings();
+        } else if (action.panel_id === "upload-history-overlay") {
+          openUploadHistory();
+        }
+        return;
+      }
+      sendMessage(action.prompt);
+    }
+
+    function makeCapabilityActionButton(action, className = "capability-action") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = className;
+      button.textContent = action.label;
+      button.title = action.label;
+      button.addEventListener("click", () => runCapabilityAction(action));
+      return button;
+    }
+
+    function selectCapabilityCategory(categoryId) {
+      if (!capabilityCatalog) return;
+      const category = capabilityCatalog.categories.find((item) => item.id === categoryId);
+      if (!category) return;
+      activeCapabilityId = category.id;
+      capabilityCategories.querySelectorAll(".capability-category").forEach((button) => {
+        const active = button.dataset.categoryId === category.id;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-expanded", active ? "true" : "false");
+      });
+      capabilityActions.replaceChildren(
+        ...category.actions.map((action) => makeCapabilityActionButton(action)),
+      );
+    }
+
+    function renderCapabilityCatalog(catalog) {
+      capabilityCatalog = catalog;
+      capabilityGlobalActions.replaceChildren(
+        ...catalog.global_actions.map((action) =>
+          makeCapabilityActionButton(action, "capability-global-action")
+        ),
+      );
+      capabilityCategories.replaceChildren(
+        ...catalog.categories.map((category) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "capability-category";
+          button.dataset.categoryId = category.id;
+          button.setAttribute("aria-expanded", "false");
+          const label = document.createElement("span");
+          label.className = "capability-category-label";
+          label.textContent = category.label;
+          const arrow = document.createElement("span");
+          arrow.className = "capability-arrow";
+          arrow.setAttribute("aria-hidden", "true");
+          arrow.textContent = "›";
+          button.append(label, arrow);
+          button.addEventListener("click", () => selectCapabilityCategory(category.id));
+          return button;
+        }),
+      );
+      const initial = catalog.categories.find((item) => item.id === activeCapabilityId)
+        || catalog.categories[0];
+      if (initial) selectCapabilityCategory(initial.id);
+    }
+
+    async function loadCapabilityCatalog() {
+      const response = await fetchWithAuth("/v1/capabilities");
+      if (!response.ok) throw new Error(`业务分类加载失败：${response.status}`);
+      renderCapabilityCatalog(await response.json());
     }
 
     function renderAnomalyContent(container, text, reply) {
@@ -2287,10 +2500,13 @@
       input.style.height = `${Math.min(input.scrollHeight, 132)}px`;
     });
 
-    document.querySelectorAll(".quick").forEach((button) => {
-      button.addEventListener("click", () => sendMessage(button.dataset.prompt));
+    loadCapabilityCatalog().catch(() => {
+      capabilityCategories.replaceChildren();
+      const error = document.createElement("div");
+      error.className = "capability-loading";
+      error.textContent = "业务分类加载失败";
+      capabilityCategories.appendChild(error);
     });
-
     ensureSession().catch(() => {
       serviceStatus.textContent = "接口不可用";
       appendMessage("agent", "无法连接 Agent 服务，请确认 API 已启动。", { kind: "error", intent: "network" });
