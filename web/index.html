@@ -1372,9 +1372,10 @@
       if (!capabilityCatalog) return;
       const category = capabilityCatalog.categories.find((item) => item.id === categoryId);
       if (!category) return;
-      activeCapabilityId = category.id;
+      const willCollapse = activeCapabilityId === category.id;
+      activeCapabilityId = willCollapse ? "" : category.id;
       capabilityCategories.querySelectorAll(".capability-group").forEach((group) => {
-        const active = group.dataset.categoryId === category.id;
+        const active = !willCollapse && group.dataset.categoryId === category.id;
         const button = group.querySelector(".capability-category");
         const actions = group.querySelector(".capability-actions");
         button.classList.toggle("is-active", active);
@@ -1389,7 +1390,7 @@
         }
         group.classList.toggle("is-active", active);
       });
-      if (window.matchMedia("(max-width: 760px)").matches) {
+      if (!willCollapse && window.matchMedia("(max-width: 760px)").matches) {
         capabilityCategories
           .querySelector(`.capability-group[data-category-id="${category.id}"]`)
           ?.scrollIntoView({ block: "nearest", inline: "nearest" });

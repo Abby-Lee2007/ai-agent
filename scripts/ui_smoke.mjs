@@ -195,6 +195,43 @@ try {
     cdp,
     `[...document.querySelectorAll(".capability-action")].some((button) => button.textContent.includes("自动续费检测"))`,
   );
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-category")]
+      .find((item) => item.textContent.includes("订阅管理"));
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    cdp,
+    `(() => {
+      const button = [...document.querySelectorAll(".capability-category")]
+        .find((item) => item.textContent.includes("订阅管理"));
+      const panel = button?.closest(".capability-group")?.querySelector(".capability-actions");
+      return button?.getAttribute("aria-expanded") === "false" && panel?.hidden === true;
+    })()`,
+  );
+  const collapsedSubscription = await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-category")]
+      .find((item) => item.textContent.includes("订阅管理"));
+    return {
+      expanded: button?.getAttribute("aria-expanded"),
+      actionCount: button
+        ?.closest(".capability-group")
+        ?.querySelectorAll(".capability-action").length || 0
+    };
+  })()`);
+  assert(collapsedSubscription.expanded === "false", "重复点击分类后没有收起");
+  assert(collapsedSubscription.actionCount === 0, "分类收起后操作列表仍然存在");
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-category")]
+      .find((item) => item.textContent.includes("订阅管理"));
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll(".capability-action")].some((button) => button.textContent.includes("自动续费检测"))`,
+  );
   const categoryExpansion = await evaluate(cdp, `(() => {
     const category = [...document.querySelectorAll(".capability-category")]
       .find((button) => button.textContent.includes("订阅管理"));
