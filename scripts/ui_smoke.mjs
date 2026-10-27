@@ -268,7 +268,7 @@ try {
   assert(!birthdayShortcut.agentText.includes("对象"), "生日惊喜仍预设了对象");
   await sendPrompt(cdp, "老师", "生日");
   await sendPrompt(cdp, "11月20日", "礼物偏好");
-  await sendPrompt(cdp, "沿用资料", "过敏");
+  await sendPrompt(cdp, "没有", "过敏");
   await sendPrompt(cdp, "对花粉和奶制品过敏", "预算");
   await sendPrompt(cdp, "70", "没有可预约礼物");
   await sendPrompt(cdp, "预算1000，没有禁忌", "选择方案 1");

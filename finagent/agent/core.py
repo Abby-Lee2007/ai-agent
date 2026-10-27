@@ -1156,6 +1156,14 @@ class BankingAgent:
     ABORT_WORDS = {"取消", "算了", "不做了", "先不做了", "退出问卷"}
     RESUME_WORDS = {"1", "继续", "继续上次", "上次", "恢复", "恢复上次"}
     RESTART_WORDS = {"2", "重新开始", "重来", "重新", "从头开始"}
+    EMPTY_PREFERENCE_WORDS = {
+        "没有", "无", "没", "暂无", "没了", "没有补充", "无补充", "没补充",
+        "没有其他", "没有别的", "不需要", "不用", "都可以", "都行", "随便",
+        "沿用资料",
+    }
+    NO_AVOID_WORDS = {
+        "没有", "无", "没", "暂无", "没有过敏", "无过敏", "没有禁忌", "无禁忌",
+    }
 
     @classmethod
     def _needs_risk_profile(cls, intent_name: str) -> bool:
@@ -1727,6 +1735,15 @@ class BankingAgent:
             if not missing:
                 return
             slot = missing.pop(0)
+            normalized = re.sub(r"[\s，。！？,.!?]", "", text or "")
+            if slot == "preferences" and normalized in self.EMPTY_PREFERENCE_WORDS:
+                pending.slots["preferences"] = "沿用资料"
+                pending.missing = missing
+                return
+            if slot == "avoid" and normalized in self.NO_AVOID_WORDS:
+                pending.slots["avoid"] = "无"
+                pending.missing = missing
+                return
             value = self._extract_slot(slot, text, ctx)
             if value is None and slot in self.TEXT_SLOTS:
                 value = self._coerce_text(text)

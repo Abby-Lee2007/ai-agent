@@ -278,6 +278,38 @@ class TestCrossScene(unittest.TestCase):
         self.assertIn("过敏", reply.text)
         self.assertEqual(self.agent.session.pending.missing[0], "avoid")
 
+    def test_negative_preference_answer_uses_saved_preferences(self):
+        prefs = dict(self.agent.store.get_user("u_001").preferences or {})
+        prefs["care_people"] = [{
+            "person_id": "CARE-SISTER",
+            "name": "两只猪头",
+            "relation": "妹妹",
+            "birthday": "2000-10-17",
+            "favorite_gift": ["大疆"],
+            "avoid": [],
+        }]
+        prefs["avoid"] = []
+        self.agent.store.get_user("u_001").preferences = prefs
+
+        reply = self.agent.handle("给两只猪头准备生日惊喜")
+        self.assertEqual(self.agent.session.pending.missing[0], "preferences")
+
+        reply = self.agent.handle("没有")
+
+        self.assertNotIn("已记录偏好「没有」", reply.text)
+        self.assertIn("过敏", reply.text)
+        self.assertEqual(self.agent.session.pending.missing[0], "avoid")
+        self.assertEqual(
+            self.agent.session.pending.slots.get("preferences"),
+            "沿用资料",
+        )
+
+        self.agent.handle("无")
+        recommendation = self.agent.handle("90000")
+
+        option_names = [option["name"] for option in recommendation.data["options"]]
+        self.assertTrue(all("大疆" in name for name in option_names))
+
     def test_gift_choice_can_switch_to_another_shortcut(self):
         begin_birthday_recommendation(self.agent)
         self.assertEqual(self.agent.session.pending.kind, "gift_choice")
