@@ -2807,11 +2807,12 @@
         const bankCard = makeInput("text", person.bank_card || "");
         bankCard.dataset.field = "bank_card";
         bankCard.inputMode = "numeric";
-        bankCard.placeholder = "16-19 位数字，可用空格分隔";
-        const bankCardField = makeSettingsField("银行卡号", bankCard);
+        bankCard.maxLength = 23;
+        bankCard.placeholder = "请输入完整 16-19 位银行卡号";
+        const bankCardField = makeSettingsField("银行卡号（完整卡号）", bankCard);
         const bankCardHint = document.createElement("small");
         bankCardHint.className = "settings-hint bank-card-hint";
-        bankCardHint.textContent = "需填写开户银行；银行卡号应为 16-19 位、通常以 62 开头，仅展示尾号。";
+        bankCardHint.textContent = "请输入完整卡号（16-19 位，通常以 62 开头），保存后仅展示后四位。";
         bankCardField.appendChild(bankCardHint);
         const gifts = makeInput("text", (person.favorite_gift || []).join(","));
         gifts.dataset.field = "favorite_gift";

@@ -627,6 +627,9 @@ try {
       .filter((text) => ["手机号", "微信号", "支付宝账号", "开户银行", "银行卡号"].some((name) => text.includes(name)))
       .length,
     careBankHint: document.querySelector(".care-person .bank-card-hint")?.textContent || "",
+    careBankPlaceholder: document.querySelector('.care-person [data-field="bank_card"]')?.placeholder || "",
+    careBankLabel: document.querySelector('.care-person [data-field="bank_card"]')
+      ?.closest(".settings-field")?.textContent || "",
     cardEditors: document.querySelectorAll(".cards-settings-section .card-editor").length,
     cardDeletes: document.querySelectorAll(".cards-settings-section .card-editor .history-delete").length,
     cardDeleteText: document.querySelector(".cards-settings-section .card-editor .history-delete")?.textContent,
@@ -656,6 +659,9 @@ try {
   assert(profilePanel.careContactFields, "关心的人缺少转账联系方式输入框");
   assert(profilePanel.careContactLabels === 5, "关心的人转账联系方式字段名不完整");
   assert(profilePanel.careBankHint.includes("16-19 位"), "银行卡号缺少格式提示");
+  assert(profilePanel.careBankHint.includes("完整卡号"), "银行卡提示没有说明需要完整卡号");
+  assert(profilePanel.careBankPlaceholder.includes("完整"), "银行卡输入框仍暗示只输入尾号");
+  assert(profilePanel.careBankLabel.includes("完整卡号"), "银行卡字段名没有说明需要完整卡号");
   assert(profilePanel.cardEditors >= 3, "银行卡设置没有加载预设卡片");
   assert(profilePanel.cardDeletes >= 3, "银行卡设置没有删除按钮");
   assert(profilePanel.goalEditors >= 1, "资料页没有加载资金目标");
