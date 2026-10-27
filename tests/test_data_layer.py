@@ -37,6 +37,20 @@ class TestDataProvenance(unittest.TestCase):
         self.assertTrue(product.updated_at)
         self.assertTrue(product.is_demo)
 
+    def test_legacy_subscription_snapshot_derives_expiry_and_auto_renew(self):
+        snapshot = self.store.snapshot()
+        legacy = snapshot["subscriptions"]["SUB000001"]
+        legacy.pop("expires_at", None)
+        legacy.pop("auto_renew", None)
+        legacy["status"] = "cancelled"
+
+        restored = make_store()
+        restored.load_snapshot(snapshot)
+        subscription = restored.subscriptions["SUB000001"]
+
+        self.assertEqual(subscription.expires_at, subscription.next_charge_date)
+        self.assertFalse(subscription.auto_renew)
+
 
 class TestMerchantOfferProvider(unittest.TestCase):
     def test_provider_selects_in_budget_offer_with_inventory(self):

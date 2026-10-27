@@ -1,6 +1,6 @@
 # Membership Recharge and Cycle Change Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add batch membership purchasing with per-item auto-renew pricing and next-cycle subscription changes that take effect after the current term expires.
 
@@ -54,7 +54,7 @@
   - `DataStore.membership_orders_of(user_id) -> List[MembershipOrder]`
   - `DataStore.membership_order_items_of(order_id) -> List[MembershipOrderItem]`
 
-- [ ] **Step 1: Write the failing persistence test**
+- [x] **Step 1: Write the failing persistence test**
 
 ```python
 from tests.support import make_store
@@ -87,13 +87,13 @@ def test_membership_order_round_trips_through_snapshot():
     assert restored.membership_order_items[item.item_id].platform == "米游社"
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m unittest tests.test_membership_models -v`
 
 Expected: FAIL because `MembershipOrder` and `DataStore.add_membership_order` do not exist.
 
-- [ ] **Step 3: Add dataclasses and storage methods**
+- [x] **Step 3: Add dataclasses and storage methods**
 
 Define `MembershipOrder` and `MembershipOrderItem` in `models.py` with the fields in the spec. Add `term_months=1` and the four pending-plan fields to `Subscription`.
 
@@ -126,7 +126,7 @@ def add_membership_order_item(
 
 Set `source="user:quote"` on both objects.
 
-- [ ] **Step 4: Normalize legacy subscriptions**
+- [x] **Step 4: Normalize legacy subscriptions**
 
 In `DataStore.load_snapshot`, derive `term_months` when absent:
 
@@ -140,7 +140,7 @@ if not subscription.term_months:
 
 Do not silently convert legacy weekly subscriptions.
 
-- [ ] **Step 5: Add SQLite projections**
+- [x] **Step 5: Add SQLite projections**
 
 Add:
 
@@ -151,7 +151,7 @@ Add:
 
 to `PROJECTION_TABLES`.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run: `python -m unittest tests.test_membership_models tests.test_sqlite_persistence -v`
 
@@ -177,7 +177,7 @@ git commit -m "feat: add membership order domain state"
   - `apply_membership_options(items: list[dict], text: str) -> list[dict]`
   - `validate_membership_items(items: list[dict]) -> list[str]`
 
-- [ ] **Step 1: Write the failing parser tests**
+- [x] **Step 1: Write the failing parser tests**
 
 ```python
 from finagent.nlu.membership_parser import parse_membership_items
@@ -202,13 +202,13 @@ def test_parse_six_month_custom_platform_with_renewal_price():
     assert items[0].renewal_price == 88.0
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m unittest tests.test_membership_nlu -v`
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Implement the parser**
+- [x] **Step 3: Implement the parser**
 
 Split item text on semicolons and commas following `元`. Parse:
 
@@ -220,7 +220,7 @@ RENEWAL_RE = re.compile(r"续费价(?:格)?\s*(?:每次|每月|每年)?\s*(\d+(?
 
 Convert years to 12 months. Require the first non-renewal amount as `purchase_price`. Detect `不自动续费` before `自动续费`.
 
-- [ ] **Step 4: Implement numbered option updates**
+- [x] **Step 4: Implement numbered option updates**
 
 `apply_membership_options` accepts:
 
@@ -232,7 +232,7 @@ Convert years to 12 months. Require the first non-renewal amount as `purchase_pr
 
 Update each item's `auto_renew` and `renewal_price`. When the response says “同本次价格”, set renewal price equal to purchase price.
 
-- [ ] **Step 5: Implement validation**
+- [x] **Step 5: Implement validation**
 
 Reject:
 
@@ -243,7 +243,7 @@ Reject:
 - Auto-renew enabled with non-positive renewal price.
 - Duplicate normalized platform names in one order.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run: `python -m unittest tests.test_membership_nlu -v`
 
@@ -268,7 +268,7 @@ git commit -m "feat: parse batch membership purchases"
 - Consumes: `MembershipOrder`, `MembershipOrderItem`, `DataStore.add_membership_order`, `DataStore.add_membership_order_item`.
 - Produces: `MembershipPurchaseTool`, tool name `membership.purchase`, accepting `items: list[dict]`.
 
-- [ ] **Step 1: Write the failing purchase test**
+- [x] **Step 1: Write the failing purchase test**
 
 ```python
 def test_batch_purchase_creates_one_debit_and_two_subscriptions():
@@ -294,13 +294,13 @@ def test_batch_purchase_creates_one_debit_and_two_subscriptions():
     )) == 2
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m unittest tests.test_membership_purchase -v`
 
 Expected: FAIL because the tool is not registered.
 
-- [ ] **Step 3: Implement the tool**
+- [x] **Step 3: Implement the tool**
 
 The tool must:
 
@@ -328,7 +328,7 @@ ToolResult(
 )
 ```
 
-- [ ] **Step 4: Apply purchased terms**
+- [x] **Step 4: Apply purchased terms**
 
 For each platform:
 
@@ -339,7 +339,7 @@ For each platform:
 - Clear `pending_*` fields because the purchase establishes the current plan.
 - Set `cycle` to `monthly`, `yearly`, or `custom`.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run: `python -m unittest tests.test_membership_purchase -v`
 
@@ -365,7 +365,7 @@ git commit -m "feat: execute combined membership purchases"
 - Produces: `SubscriptionChangeCycleTool`, tool name `subscription.change_cycle`.
 - Params: `merchant`, `term_months`, `renewal_price`, `auto_renew=True`.
 
-- [ ] **Step 1: Write the failing cycle-change test**
+- [x] **Step 1: Write the failing cycle-change test**
 
 ```python
 def test_change_cycle_only_updates_pending_plan():
@@ -394,13 +394,13 @@ def test_change_cycle_only_updates_pending_plan():
     assert after.pending_effective_at == current_expiry
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m unittest tests.test_subscription.TestSubscription.test_change_cycle_only_updates_pending_plan -v`
 
 Expected: FAIL because the intent or tool does not exist.
 
-- [ ] **Step 3: Implement the tool**
+- [x] **Step 3: Implement the tool**
 
 Find only active subscriptions. Validate term and price. Set:
 
@@ -414,11 +414,11 @@ target.pending_effective_at = target.expires_at or target.next_charge_date
 Do not mutate `term_months`, `amount`, `status`, `expires_at`, or
 `next_charge_date`.
 
-- [ ] **Step 4: Clear pending changes on cancellation**
+- [x] **Step 4: Clear pending changes on cancellation**
 
 In `SubscriptionCancelTool.run`, clear all `pending_*` fields before saving.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run: `python -m unittest tests.test_subscription -v`
 
@@ -442,7 +442,7 @@ git commit -m "feat: schedule subscription cycle changes"
 **Interfaces:**
 - Produces: `process_subscription_lifecycle(store, clock, user_id) -> list[str]`
 
-- [ ] **Step 1: Write failing lifecycle tests**
+- [x] **Step 1: Write failing lifecycle tests**
 
 ```python
 def test_pending_cycle_applies_before_auto_renewal():
@@ -487,13 +487,13 @@ def test_renewal_failure_does_not_extend_or_debit():
     assert account.balance == before_balance
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m unittest tests.test_subscription_lifecycle -v`
 
 Expected: FAIL because expiration processing does not exist.
 
-- [ ] **Step 3: Implement lifecycle processing**
+- [x] **Step 3: Implement lifecycle processing**
 
 For each active subscription whose `expires_at <= today`:
 
@@ -504,7 +504,7 @@ For each active subscription whose `expires_at <= today`:
    `last_charge_date`, add `term_months` to expiration, and keep active.
 5. On failure, set `status="renewal_failed"` and `auto_renew=False`.
 
-- [ ] **Step 4: Integrate lifecycle processing**
+- [x] **Step 4: Integrate lifecycle processing**
 
 At the start of `BankingAgent.handle`, call:
 
@@ -514,7 +514,7 @@ process_subscription_lifecycle(self.store, self.clock, self.user_id)
 
 Also call it from `Scheduler.run_due`.
 
-- [ ] **Step 5: Run tests and commit**
+- [x] **Step 5: Run tests and commit**
 
 Run: `python -m unittest tests.test_subscription_lifecycle tests.test_subscription -v`
 
@@ -544,7 +544,7 @@ git commit -m "feat: process membership expiration and renewals"
   - `membership.purchase`
   - `subscription.change_cycle`
 
-- [ ] **Step 1: Write failing intent and dialogue tests**
+- [x] **Step 1: Write failing intent and dialogue tests**
 
 ```python
 def test_membership_purchase_parses_multiple_items():
@@ -569,13 +569,13 @@ def test_membership_purchase_asks_per_item_auto_renew():
     assert "259.00" in reply.text
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m unittest tests.test_nlu tests.test_confirmations -v`
 
 Expected: FAIL because the new intents are not parsed.
 
-- [ ] **Step 3: Add intent and planner mappings**
+- [x] **Step 3: Add intent and planner mappings**
 
 Add both intents to `INTENTS`, parser rules, `SIMPLE_PLANS`, and
 `DATA_CONFIRM_INTENTS`.
@@ -583,7 +583,7 @@ Add both intents to `INTENTS`, parser rules, `SIMPLE_PLANS`, and
 Add `MembershipPurchaseTool` and `SubscriptionChangeCycleTool` to the default
 registry.
 
-- [ ] **Step 4: Add membership-specific multi-turn handling**
+- [x] **Step 4: Add membership-specific multi-turn handling**
 
 In `BankingAgent`, handle two pending kinds:
 
@@ -593,7 +593,7 @@ In `BankingAgent`, handle two pending kinds:
 On each response, update `pending.slots["items"]` and rebuild the plan when all
 items validate.
 
-- [ ] **Step 5: Add confirmation descriptions**
+- [x] **Step 5: Add confirmation descriptions**
 
 The batch confirmation must list every item, auto-renew choice, renewal price,
 combined total, debit account, and the user-quote disclaimer.
@@ -604,7 +604,7 @@ The cycle-change confirmation must show:
 - New term and renewal price.
 - “到期后生效，本周期不扣款”.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run: `python -m unittest tests.test_nlu tests.test_confirmations -v`
 
@@ -633,7 +633,7 @@ git commit -m "feat: add membership purchase dialogue"
   - `pending_auto_renew`
   - `pending_effective_at`
 
-- [ ] **Step 1: Write the failing data test**
+- [x] **Step 1: Write the failing data test**
 
 ```python
 def test_subscription_list_exposes_pending_plan():
@@ -652,18 +652,18 @@ def test_subscription_list_exposes_pending_plan():
     assert row["pending_effective_at"] == "2026-11-08"
 ```
 
-- [ ] **Step 2: Run and verify RED**
+- [x] **Step 2: Run and verify RED**
 
 Run: `python -m unittest tests.test_subscription.TestSubscription.test_subscription_list_exposes_pending_plan -v`
 
 Expected: FAIL because the list data omits pending fields.
 
-- [ ] **Step 3: Add pending fields to list output**
+- [x] **Step 3: Add pending fields to list output**
 
 Include the four pending fields in `SubscriptionListTool` data.
 Add a pending-plan note to the text table.
 
-- [ ] **Step 4: Render pending plans in the HTML table**
+- [x] **Step 4: Render pending plans in the HTML table**
 
 Under the renewal cell show:
 
@@ -674,7 +674,7 @@ Under the renewal cell show:
 
 For `renewal_failed`, show a red status and keep a recovery action.
 
-- [ ] **Step 5: Extend UI smoke assertions**
+- [x] **Step 5: Extend UI smoke assertions**
 
 Assert:
 
@@ -682,7 +682,7 @@ Assert:
 - It does not overwrite current expiry or current price.
 - The mobile table remains free of page-level horizontal overflow.
 
-- [ ] **Step 6: Run tests and commit**
+- [x] **Step 6: Run tests and commit**
 
 Run:
 
@@ -712,7 +712,7 @@ git commit -m "feat: show pending membership plans"
 - Consumes: completed feature.
 - Produces: documented behavior and final verified build.
 
-- [ ] **Step 1: Document the commands**
+- [x] **Step 1: Document the commands**
 
 Add examples:
 
@@ -724,19 +724,19 @@ Add examples:
 Document that prices are user quotes and that cycle changes take effect after
 the current term.
 
-- [ ] **Step 2: Run the full Python test suite**
+- [x] **Step 2: Run the full Python test suite**
 
 Run: `python -m unittest discover -s tests`
 
 Expected: all tests pass; record the exact test count and skip count.
 
-- [ ] **Step 3: Run the UI smoke test**
+- [x] **Step 3: Run the UI smoke test**
 
 Run: `node scripts/ui_smoke.mjs http://127.0.0.1:8000 ui-artifacts`
 
 Expected: `"ok": true`.
 
-- [ ] **Step 4: Run static checks**
+- [x] **Step 4: Run static checks**
 
 Run:
 
@@ -747,7 +747,7 @@ git diff --check
 
 Expected: exit code 0 for both commands.
 
-- [ ] **Step 5: Commit documentation**
+- [x] **Step 5: Commit documentation**
 
 ```bash
 git add README.md USER_GUIDE.md

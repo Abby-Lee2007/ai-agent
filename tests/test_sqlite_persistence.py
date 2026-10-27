@@ -101,6 +101,8 @@ class TestSQLitePersistence(unittest.TestCase):
                 "transactions",
                 "cards",
                 "subscriptions",
+                "membership_orders",
+                "membership_order_items",
                 "holdings",
                 "tasks",
                 "audit_logs",

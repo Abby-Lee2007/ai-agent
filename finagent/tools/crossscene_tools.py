@@ -395,6 +395,8 @@ class DailyBriefTool(Tool):
             else store.subscriptions_of(ctx.user_id, status="active")
         )
         for sub in subscriptions:
+            if not sub.auto_renew:
+                continue
             try:
                 delta = (date.fromisoformat(sub.next_charge_date) - today).days
             except ValueError:

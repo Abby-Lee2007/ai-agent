@@ -282,6 +282,32 @@ try {
   assert(pendingPlan.text.includes("288.00"), "下期计划续费价显示不正确");
   assert(pendingPlan.currentExpiryPreserved, "下期计划覆盖了当前到期时间");
   await screenshot(cdp, "desktop-subscription-resume.png");
+  await sendPrompt(
+    cdp,
+    "帮我充腾讯视频3个月60元、Keep12个月199元",
+    "请逐项确认是否默认开启自动续费",
+  );
+  await sendPrompt(cdp, "1自动续费，续费价25元；2不自动续费", "会员充值订单");
+  const membershipReview = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const text = bubble?.textContent || "";
+    return {
+      hasTwoItems: text.includes("1. 腾讯视频 3 个月") && text.includes("2. Keep 12 个月"),
+      hasTotal: text.includes("259.00"),
+      hasAutoChoices: text.includes("自动续费，续费价 25.00") && text.includes("不自动续费"),
+      hasQuoteNotice: text.includes("未联网核验"),
+      insideViewport: (() => {
+        const rect = bubble?.getBoundingClientRect();
+        return Boolean(rect && rect.left >= 0 && rect.right <= innerWidth + 1);
+      })()
+    };
+  })()`);
+  assert(membershipReview.hasTwoItems, "批量会员确认缺少完整项目");
+  assert(membershipReview.hasTotal, "批量会员确认缺少合计金额");
+  assert(membershipReview.hasAutoChoices, "批量会员确认缺少逐项自动续费设置");
+  assert(membershipReview.hasQuoteNotice, "批量会员确认缺少用户报价提示");
+  assert(membershipReview.insideViewport, "批量会员确认超出桌面视口");
+  await sendPrompt(cdp, "取消", "没有执行任何业务动作");
   await sendPrompt(cdp, "我还有多少钱", "总资产");
   await evaluate(cdp, `document.querySelector("#profile-settings-button").click()`);
   await waitFor(cdp, `document.querySelector("#profile-settings-overlay")?.classList.contains("show")`);

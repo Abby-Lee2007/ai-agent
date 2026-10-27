@@ -116,6 +116,33 @@ class TestMembershipPurchase(unittest.TestCase):
         self.assertEqual(subscription.term_months, 3)
         self.assertFalse(subscription.auto_renew)
 
+    def test_purchase_reactivates_cancelled_platform_without_duplicate(self):
+        from tests.support import run_to_completion
+
+        run_to_completion(self.agent, self.agent.handle("取消腾讯视频会员"))
+        tool = self.agent.registry.get("membership.purchase")
+        result = tool.run(
+            self.agent.context(),
+            items=[
+                {
+                    "platform": "腾讯视频VIP",
+                    "term_months": 3,
+                    "purchase_price": 70,
+                    "auto_renew": True,
+                    "renewal_price": 25,
+                },
+            ],
+        )
+
+        self.assertTrue(result.ok, result.message)
+        matches = [
+            item for item in self.agent.store.subscriptions_of("u_001", status="")
+            if item.merchant == "腾讯视频VIP"
+        ]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].status, "active")
+        self.assertTrue(matches[0].auto_renew)
+
 
 if __name__ == "__main__":
     unittest.main()

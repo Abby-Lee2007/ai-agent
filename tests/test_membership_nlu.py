@@ -21,6 +21,15 @@ class TestMembershipParser(unittest.TestCase):
             [("腾讯视频", 3, 60.0), ("Keep", 12, 199.0)],
         )
 
+    def test_parse_multiple_items_separated_by_chinese_comma(self):
+        items = parse_membership_items(
+            "帮我充腾讯视频3个月60元，Keep12个月199元"
+        )
+        self.assertEqual(
+            [(item.platform, item.term_months) for item in items],
+            [("腾讯视频", 3), ("Keep", 12)],
+        )
+
     def test_parse_six_month_custom_platform_with_renewal_price(self):
         items = parse_membership_items(
             "给米游社充6个月98元，自动续费，续费价88元"

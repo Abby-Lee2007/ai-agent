@@ -389,8 +389,10 @@ def _add_subscriptions(store) -> None:
             category=category,
             account_id="ACC000003" if category in {"视频会员", "音乐会员", "云存储"} else "ACC000001",
             next_charge_date=date(y, m, last_day).isoformat(),
+            expires_at=date(y, m, last_day).isoformat(),
             last_charge_date=_ts(today.year, today.month, min(day, 28))[:10],
             status="active",
+            auto_renew=True,
             auto_detected=True,
             price_history=history,
         )

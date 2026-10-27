@@ -112,12 +112,13 @@ class MembershipPurchaseTool(Tool):
                 status="pending",
             )
             try:
+                matching = [
+                    sub for sub in ctx.store.subscriptions_of(ctx.user_id, status="")
+                    if sub.merchant == order_item.platform
+                ]
                 subscription = next(
-                    (
-                        sub for sub in ctx.store.subscriptions_of(ctx.user_id, status="active")
-                        if sub.merchant == order_item.platform
-                    ),
-                    None,
+                    (sub for sub in matching if sub.status == "active"),
+                    matching[0] if matching else None,
                 )
                 start = _subscription_start(subscription, today)
                 expiry = add_months(start, order_item.term_months)

@@ -43,7 +43,13 @@ def _clean_platform(segment: str, term_start: int) -> str:
 
 def parse_membership_items(text: str) -> List[MembershipDraftItem]:
     """Parse one or more platform/term/price items from a user instruction."""
-    segments = [part.strip() for part in re.split(r"[；;、]", text or "") if part.strip()]
+    boundary = re.compile(
+        r"[；;、]"
+        r"|(?<=元)\s*[，,]\s*"
+        r"(?=(?!续费价|自动续费|不自动续费)"
+        r"[^，,；;]{0,40}?\d+\s*(?:个月|月|年))"
+    )
+    segments = [part.strip() for part in boundary.split(text or "") if part.strip()]
     items: List[MembershipDraftItem] = []
     for segment in segments:
         term_match = TERM_RE.search(segment)
