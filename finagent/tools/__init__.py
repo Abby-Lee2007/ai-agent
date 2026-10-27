@@ -36,11 +36,13 @@ from finagent.tools.crossscene_tools import (
     GoalListTool,
     ScheduleGiftTool,
 )
+from finagent.tools.membership_tools import MembershipPurchaseTool
 from finagent.tools.subscription_tools import (
     SubscriptionCancelTool,
     SubscriptionDetectTool,
     SubscriptionListTool,
     SubscriptionRemindTool,
+    SubscriptionResumeTool,
 )
 from finagent.tools.transfer_tools import (
     ListScheduledTransferTool,
@@ -90,7 +92,9 @@ __all__ = [
     "SubscriptionDetectTool",
     "SubscriptionListTool",
     "SubscriptionCancelTool",
+    "SubscriptionResumeTool",
     "SubscriptionRemindTool",
+    "MembershipPurchaseTool",
     "GoalCreateTool",
     "GoalListTool",
     "ScheduleGiftTool",
