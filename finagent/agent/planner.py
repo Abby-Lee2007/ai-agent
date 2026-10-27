@@ -88,6 +88,16 @@ SIMPLE_PLANS: Dict[str, List[Tuple[str, Dict[str, str]]]] = {
     "subscription.detect": [("subscription.detect", {})],
     "subscription.list": [("subscription.list", {})],
     "subscription.cancel": [("subscription.cancel", {"merchant": "merchant"})],
+    "subscription.resume": [("subscription.resume", {"merchant": "merchant"})],
+    "subscription.change_cycle": [
+        ("subscription.change_cycle", {
+            "merchant": "merchant",
+            "term_months": "term_months",
+            "renewal_price": "renewal_price",
+            "auto_renew": "auto_renew",
+        }),
+    ],
+    "membership.purchase": [("membership.purchase", {"items": "items"})],
     "subscription.remind": [("subscription.remind", {"days": "days"})],
     "goal.create": [("goal.create", {"name": "name", "target_amount": "target_amount",
                                      "deadline": "deadline", "scenario": "scenario"})],
@@ -205,6 +215,9 @@ DATA_CONFIRM_INTENTS = {
     "card.unlock",
     "card.report_lost",
     "subscription.cancel",
+    "subscription.resume",
+    "subscription.change_cycle",
+    "membership.purchase",
     "goal.create",
     "crossscene.birthday_plan",
 }
@@ -538,6 +551,64 @@ class Planner:
                 return (f"取消「{target.merchant}」的自动续费；"
                         f"扣费金额：{target.amount:,.2f} 元；"
                         f"下次扣费：{target.next_charge_date}")
+            if tool == "subscription.resume":
+                keyword = str(args.get("merchant") or "")
+                target = next(
+                    (sub for sub in ctx.providers.subscriptions.of(ctx.user_id, "cancelled")
+                     if keyword and (keyword in sub.merchant or sub.merchant in keyword)),
+                    None,
+                )
+                if target is None:
+                    return f"恢复「{keyword}」的自动续费（未找到已取消订阅）"
+                return (f"恢复「{target.merchant}」的自动续费；"
+                        f"每期金额：{target.amount:,.2f} 元；"
+                        f"当前周期到期：{target.expires_at or target.next_charge_date}")
+            if tool == "subscription.change_cycle":
+                keyword = str(args.get("merchant") or "")
+                target = next(
+                    (
+                        sub
+                        for sub in ctx.providers.subscriptions.of(ctx.user_id, "active")
+                        if keyword and (
+                            keyword in sub.merchant or sub.merchant in keyword
+                        )
+                    ),
+                    None,
+                )
+                if target is None:
+                    return f"调整「{keyword}」续费周期（未找到生效中的订阅）"
+                return "\n".join([
+                    f"  · 当前服务：{target.merchant}，{target.term_months} 个月，"
+                    f"续费价 {target.amount:,.2f} 元",
+                    f"  · 下期服务：{int(args.get('term_months', 0))} 个月，"
+                    f"续费价 {float(args.get('renewal_price', 0)):,.2f} 元",
+                    "  · 本周期不扣款，当前到期后生效",
+                ])
+            if tool == "membership.purchase":
+                items = list(args.get("items") or [])
+                lines = ["会员充值订单（价格由用户提供，未联网核验）："]
+                total = 0.0
+                for index, item in enumerate(items, start=1):
+                    price = float(item.get("purchase_price") or 0)
+                    total += price
+                    auto_label = (
+                        f"自动续费，续费价 {float(item.get('renewal_price') or 0):,.2f} 元"
+                        if item.get("auto_renew")
+                        else "不自动续费"
+                    )
+                    lines.append(
+                        f"  {index}. {item.get('platform')} "
+                        f"{int(item.get('term_months') or 0)} 个月，"
+                        f"本次 {price:,.2f} 元，{auto_label}"
+                    )
+                account = ctx.store.primary_account(ctx.user_id)
+                lines.append(f"  · 合计扣款：{total:,.2f} 元")
+                if account is not None:
+                    lines.append(
+                        f"  · 扣款账户：{account.name}（尾号 {account.tail}），"
+                        f"可用 {account.available:,.2f} 元"
+                    )
+                return "\n".join(lines)
             if tool == "goal.create":
                 account = resolve_account(ctx)
                 parts = [f"锁定 {float(args.get('target_amount', 0)):,.2f} 元到目标「{args.get('name')}」"]

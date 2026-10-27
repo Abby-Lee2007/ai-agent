@@ -226,6 +226,27 @@ INTENTS: Dict[str, IntentSpec] = {
         [L("merchant", "订阅商户名称", True)],
         ["取消腾讯视频会员", "把iCloud订阅取消掉"],
     ),
+    "subscription.resume": IntentSpec(
+        "subscription.resume", "订阅管理", "恢复已取消订阅的自动续费",
+        [L("merchant", "订阅商户名称", True)],
+        ["恢复腾讯视频VIP自动续费", "重新开通Keep会员"],
+    ),
+    "subscription.change_cycle": IntentSpec(
+        "subscription.change_cycle", "订阅管理", "修改已有订阅的下期周期和续费价格",
+        [
+            L("merchant", "订阅商户名称", True),
+            L("term_months", "下期周期月数", True, "integer"),
+            L("renewal_price", "下期续费价格", True, "number"),
+            L("auto_renew", "下期是否自动续费", False, "boolean"),
+        ],
+        ["把腾讯视频改成12个月续费，续费价288元"],
+    ),
+    "membership.purchase": IntentSpec(
+        "membership.purchase", "订阅管理",
+        "批量购买一个或多个平台的会员周期",
+        [L("items", "会员购买项目列表", True, "array")],
+        ["帮我充腾讯视频3个月60元、Keep12个月199元"],
+    ),
     "subscription.remind": IntentSpec(
         "subscription.remind", "订阅管理", "查看即将扣费的订阅并设置提醒",
         [L("days", "提前提醒天数", False, "integer")],

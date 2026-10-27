@@ -115,7 +115,12 @@ def apply_membership_options(
         "都自动续费" in text or "全部自动续费" in text
     )
     all_manual = "都不自动续费" in text or "全部不自动续费" in text
-    same_price = "同本次价格" in text or "同本次价" in text
+    same_price = (
+        "同本次价格" in text
+        or "同本次价" in text
+        or "按本次价格" in text
+        or "按本次价" in text
+    )
     order_renewal = RENEWAL_RE.search(text)
 
     if all_auto or all_manual:
@@ -149,6 +154,44 @@ def apply_membership_options(
             updated[index]["renewal_price"] = float(
                 updated[index].get("purchase_price") or 0
             )
+    return updated
+
+
+def apply_membership_renewal_prices(
+    items: List[Any],
+    text: str,
+) -> List[Dict[str, Any]]:
+    """Apply numbered or order-wide renewal prices to auto-renew items."""
+    updated = _copy_items(items)
+    if (
+        "同本次价格" in text
+        or "同本次价" in text
+        or "按本次价格" in text
+        or "按本次价" in text
+    ):
+        for item in updated:
+            item["renewal_price"] = float(item.get("purchase_price") or 0)
+        return updated
+
+    assigned = False
+    for number, price in re.findall(
+        r"(\d+)\D{0,8}(\d+(?:\.\d{1,2})?)\s*元",
+        text,
+    ):
+        index = int(number) - 1
+        if 0 <= index < len(updated):
+            updated[index]["renewal_price"] = float(price)
+            assigned = True
+    if assigned:
+        return updated
+
+    auto_items = [item for item in updated if item.get("auto_renew")]
+    prices = [
+        float(value)
+        for value in re.findall(r"(\d+(?:\.\d{1,2})?)\s*元", text)
+    ]
+    if len(auto_items) == 1 and prices:
+        auto_items[0]["renewal_price"] = prices[0]
     return updated
 
 

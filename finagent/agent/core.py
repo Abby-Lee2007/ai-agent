@@ -36,6 +36,11 @@ from finagent.data.providers import build_data_providers
 from finagent.nlu.intent_parser import IntentParser
 from finagent.nlu.intent_parser import normalize_synonyms
 from finagent.nlu.intent_schema import Intent
+from finagent.nlu.membership_parser import (
+    apply_membership_options,
+    apply_membership_renewal_prices,
+    validate_membership_items,
+)
 from finagent.nlu.llm_client import LLMClient
 from finagent.risk.engine import RiskDecision, RiskEngine
 from finagent.risk.questionnaire import (
@@ -312,6 +317,18 @@ class BankingAgent:
                 self.session.clear_pending()
                 return AgentReply("好的，本次操作已取消，没有执行任何业务动作。")
 
+        if pending is not None and pending.kind == "membership_options":
+            if classify_control(text) == "deny":
+                self.session.clear_pending()
+                return AgentReply("好的，本次会员充值已取消，没有扣款。")
+            return self._handle_membership_options(pending, text)
+
+        if pending is not None and pending.kind == "membership_renewal_prices":
+            if classify_control(text) == "deny":
+                self.session.clear_pending()
+                return AgentReply("好的，本次会员充值已取消，没有扣款。")
+            return self._handle_membership_renewal_prices(pending, text)
+
         if pending is not None and pending.kind == "confirm":
             control = classify_control(text)
             if control == "confirm":
@@ -372,6 +389,11 @@ class BankingAgent:
 
     def _continue_with_intent(self, intent: Intent) -> AgentReply:
         """Route a recognized new business intent after any prior state is handled."""
+        if intent.name == "membership.purchase":
+            self.session.clear_pending()
+            return self._advance_membership_order(
+                list(intent.slots.get("items") or [])
+            )
         # 理财相关操作必须先完成风险问卷（投资者适当性管理的准入要求）
         if self._needs_risk_profile(intent.name) and self.risk_level is None:
             return self._start_questionnaire(intent)
@@ -390,6 +412,123 @@ class BankingAgent:
             return AgentReply(f"我理解到您的意图是「{intent.name}」，但没能生成可执行的动作，请再说具体一点。",
                               intent=intent.name, kind="question", needs_input=True)
         return self._gate_and_execute(plan)
+
+    @staticmethod
+    def _membership_item_lines(items: List[Dict[str, Any]]) -> str:
+        return "\n".join(
+            f"  {index}. {item.get('platform')} "
+            f"{int(item.get('term_months') or 0)} 个月，"
+            f"本次 {float(item.get('purchase_price') or 0):,.2f} 元"
+            for index, item in enumerate(items, start=1)
+        )
+
+    def _advance_membership_order(
+        self,
+        items: List[Dict[str, Any]],
+    ) -> AgentReply:
+        normalized = [dict(item) for item in items]
+        if not normalized:
+            return AgentReply(
+                "请告诉我要充值的平台、月数和本次价格。例如："
+                "「腾讯视频3个月60元、Keep12个月199元」。",
+                intent="membership.purchase",
+                kind="question",
+                needs_input=True,
+            )
+        invalid_core = [item for item in normalized if (
+            not str(item.get("platform") or "").strip()
+            or not 1 <= int(item.get("term_months") or 0) <= 36
+            or float(item.get("purchase_price") or 0) <= 0
+        )]
+        if invalid_core:
+            return AgentReply(
+                "部分项目缺少平台、1–36 个月周期或本次价格，请重新发送完整订单。",
+                intent="membership.purchase",
+                kind="question",
+                needs_input=True,
+            )
+
+        if any(item.get("auto_renew") is None for item in normalized):
+            self.session.pending = Pending(
+                kind="membership_options",
+                intent="membership.purchase",
+                slots={"items": normalized},
+            )
+            return AgentReply(
+                "请逐项确认是否默认开启自动续费（价格由你提供）：\n"
+                f"{self._membership_item_lines(normalized)}\n\n"
+                "可回复：「1自动续费，续费价25元；2不自动续费」，"
+                "或「都自动续费，续费价同本次价格」。",
+                intent="membership.purchase",
+                kind="question",
+                needs_input=True,
+            )
+
+        missing_renewal = [
+            item for item in normalized
+            if item.get("auto_renew")
+            and float(item.get("renewal_price") or 0) <= 0
+        ]
+        if missing_renewal:
+            self.session.pending = Pending(
+                kind="membership_renewal_prices",
+                intent="membership.purchase",
+                slots={"items": normalized},
+            )
+            return AgentReply(
+                "以下项目开启了自动续费，请补充每期续费价格：\n"
+                f"{self._membership_item_lines(normalized)}\n\n"
+                "可回复：「1续费价25元，2续费价199元」，"
+                "或「都按本次价格续费」。",
+                intent="membership.purchase",
+                kind="question",
+                needs_input=True,
+            )
+
+        errors = validate_membership_items(normalized)
+        if errors:
+            self.session.pending = Pending(
+                kind="membership_options",
+                intent="membership.purchase",
+                slots={"items": normalized},
+            )
+            return AgentReply(
+                "会员订单还需要调整：\n"
+                + "\n".join(f"  · {error}" for error in errors),
+                intent="membership.purchase",
+                kind="question",
+                needs_input=True,
+            )
+
+        self.session.clear_pending()
+        intent = Intent(
+            "membership.purchase",
+            {"items": normalized},
+            confidence=0.9,
+            source="rule",
+        )
+        plan = self.planner.plan(intent, self.context())
+        return self._gate_and_execute(plan)
+
+    def _handle_membership_options(self, pending: Pending, text: str) -> AgentReply:
+        items = apply_membership_options(
+            list(pending.slots.get("items") or []),
+            text,
+        )
+        pending.slots["items"] = items
+        return self._advance_membership_order(items)
+
+    def _handle_membership_renewal_prices(
+        self,
+        pending: Pending,
+        text: str,
+    ) -> AgentReply:
+        items = apply_membership_renewal_prices(
+            list(pending.slots.get("items") or []),
+            text,
+        )
+        pending.slots["items"] = items
+        return self._advance_membership_order(items)
 
     def _interrupt_intent(self, text: str) -> Optional[Intent]:
         """Return a valid new business intent that should break a pending prompt."""
@@ -602,6 +741,8 @@ class BankingAgent:
                     "subscription.list",
                     "subscription.cancel",
                     "subscription.resume",
+                    "subscription.change_cycle",
+                    "membership.purchase",
                     "subscription.remind",
                 ),
                 "订阅管理",

@@ -66,6 +66,8 @@ class RiskEngine:
         "wealth.subscribe": "理财申购在确认后不可撤单",
         "wealth.redeem": "赎回后资金将回到活期账户",
         "subscription.cancel": "取消订阅后权益立即失效",
+        "subscription.resume": "恢复后将在每个订阅周期继续自动扣款",
+        "membership.purchase": "会员充值确认后将合并扣款且不可撤销",
     }
 
     # 中等风险工具：需要二次确认但原因由规则给出
@@ -75,6 +77,7 @@ class RiskEngine:
         "transfer.split_aa": "将向多人发起收款",
         "crossscene.birthday_plan": "将锁定资金并预约下单",
         "goal.create": "将锁定活期资金",
+        "subscription.change_cycle": "将改变当前订阅到期后的续费周期和价格",
     }
 
     # 只有这些工具会真正动到资金，金额阈值才对它们生效

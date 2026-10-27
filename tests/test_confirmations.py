@@ -107,6 +107,38 @@ class TestActionDataConfirmation(unittest.TestCase):
         self.assertIn("腾讯视频VIP", reply.text)
         self.assertIn("25.00", reply.text)
 
+    def test_membership_purchase_reviews_batch_and_auto_renew(self):
+        agent = make_agent()
+        before = len(agent.store.transactions_of("u_001"))
+
+        reply = agent.handle("帮我充腾讯视频3个月60元、Keep12个月199元")
+        self.assertEqual(reply.intent, "membership.purchase")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("1.", reply.text)
+        self.assertIn("自动续费", reply.text)
+
+        reply = agent.handle("1自动续费，续费价25元；2不自动续费")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("合计", reply.text)
+        self.assertIn("259.00", reply.text)
+        self.assertIn("未联网核验", reply.text)
+        self.assertEqual(len(agent.store.transactions_of("u_001")), before)
+
+        reply = agent.handle("确认")
+        self.assertTrue(reply.ok, reply.text)
+        self.assertEqual(len(agent.store.transactions_of("u_001")), before + 1)
+        self.assertEqual(len(agent.store.membership_orders_of("u_001")), 1)
+
+    def test_change_cycle_review_makes_clear_it_starts_next_period(self):
+        agent = make_agent()
+
+        reply = agent.handle("把腾讯视频改成12个月续费，续费价288元")
+
+        self.assertEqual(reply.intent, "subscription.change_cycle")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("下期服务：12 个月", reply.text)
+        self.assertIn("本周期不扣款", reply.text)
+
     def test_redeem_all_review_lists_portfolio_before_execution(self):
         agent = make_agent()
         before = len(agent.store.holdings_of("u_001", status="holding"))

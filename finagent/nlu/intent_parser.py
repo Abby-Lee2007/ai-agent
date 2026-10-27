@@ -13,6 +13,12 @@ from typing import Any, Dict, List, Optional
 
 from finagent.nlu.intent_schema import INTENTS, Intent, catalog_text, slot_dictionary_text
 from finagent.nlu.llm_client import LLMClient
+from finagent.nlu.membership_parser import (
+    PRICE_RE,
+    RENEWAL_RE,
+    TERM_RE,
+    parse_membership_items,
+)
 from finagent.utils import parse_amount, parse_date, parse_period
 
 NAME_CORE = r"[\u4e00-\u9fa5]{2,4}"
@@ -88,6 +94,9 @@ INTENT_KEYWORDS = {
     "subscription.detect": ["自动续费", "自动扣", "偷偷扣", "订阅扣", "扣钱"],
     "subscription.list": ["订阅", "会员"],
     "subscription.cancel": ["取消订阅", "退订", "取消会员"],
+    "subscription.resume": ["恢复订阅", "恢复自动续费", "重新开通", "续回去"],
+    "subscription.change_cycle": ["改周期", "改成续费", "调整续费", "更换套餐"],
+    "membership.purchase": ["充会员", "购买会员", "开通会员", "会员充值"],
     "subscription.remind": ["续费", "快到期", "扣费提醒"],
     "goal.create": ["攒钱", "锁定资金", "资金目标"],
     "goal.list": ["我的目标", "目标进度"],
@@ -135,6 +144,9 @@ class RuleIntentParser:
         "card.limit_adjust",
         "card.apply",
         "card.list",
+        "subscription.change_cycle",
+        "membership.purchase",
+        "subscription.resume",
         "subscription.cancel",
         "subscription.remind",
         "subscription.detect",
@@ -318,6 +330,23 @@ class RuleIntentParser:
 
     def _match_subscription_cancel(self, t: str) -> bool:
         return self._has(t, "取消") and self._has(t, "订阅", "会员", "续费", "自动续费", "扣费")
+
+    def _match_subscription_resume(self, t: str) -> bool:
+        restore_action = self._has(t, "恢复", "重新开通", "续回去", "重新开启")
+        open_action = self._has(t, "打开", "开启") and self._has(t, "自动续费", "续费")
+        return (restore_action or open_action) and self._has(
+            t, "订阅", "会员", "续费", "自动续费",
+        )
+
+    def _match_subscription_change_cycle(self, t: str) -> bool:
+        return self._has(t, "改", "调整", "变更", "更换") and self._has(
+            t, "续费", "周期", "套餐", "月会", "年会",
+        )
+
+    def _match_membership_purchase(self, t: str) -> bool:
+        return self._has(t, "充", "购买", "开通", "充值") and bool(
+            parse_membership_items(t)
+        )
 
     def _match_subscription_remind(self, t: str) -> bool:
         return self._has(t, "续费提醒", "要扣费", "快到期", "哪个要扣", "什么时候扣", "即将扣费", "最近有哪些订阅")
@@ -535,10 +564,30 @@ class RuleIntentParser:
             if phone:
                 slots["phone"] = phone.group(0)
 
-        elif intent == "subscription.cancel":
+        elif intent in {"subscription.cancel", "subscription.resume"}:
             merchant = self._merchant(text)
             if merchant:
                 slots["merchant"] = merchant
+
+        elif intent == "subscription.change_cycle":
+            merchant = self._merchant(text)
+            if merchant:
+                slots["merchant"] = merchant
+            term_match = TERM_RE.search(text)
+            if term_match:
+                term = int(term_match.group(1))
+                slots["term_months"] = term * 12 if term_match.group(2) == "年" else term
+            renewal_match = RENEWAL_RE.search(text)
+            if renewal_match:
+                slots["renewal_price"] = float(renewal_match.group(1))
+            else:
+                prices = PRICE_RE.findall(text)
+                if prices:
+                    slots["renewal_price"] = float(prices[-1])
+            slots["auto_renew"] = "不自动续费" not in text
+
+        elif intent == "membership.purchase":
+            slots["items"] = [item.as_dict() for item in parse_membership_items(text)]
 
         elif intent == "subscription.remind":
             slots["days"] = 7

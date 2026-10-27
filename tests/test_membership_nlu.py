@@ -5,6 +5,7 @@ import unittest
 
 from finagent.nlu.membership_parser import (
     apply_membership_options,
+    apply_membership_renewal_prices,
     parse_membership_items,
     validate_membership_items,
 )
@@ -53,6 +54,27 @@ class TestMembershipParser(unittest.TestCase):
         )
         self.assertTrue(updated[0]["auto_renew"])
         self.assertEqual(updated[0]["renewal_price"], 98.0)
+
+    def test_apply_numbered_renewal_prices(self):
+        items = [
+            {
+                "platform": "腾讯视频",
+                "term_months": 3,
+                "purchase_price": 60.0,
+                "auto_renew": True,
+                "renewal_price": 0.0,
+            },
+            {
+                "platform": "Keep",
+                "term_months": 12,
+                "purchase_price": 199.0,
+                "auto_renew": True,
+                "renewal_price": 0.0,
+            },
+        ]
+        updated = apply_membership_renewal_prices(items, "1续费价25元，2续费价199元")
+        self.assertEqual(updated[0]["renewal_price"], 25.0)
+        self.assertEqual(updated[1]["renewal_price"], 199.0)
 
     def test_validate_rejects_duplicate_platforms(self):
         errors = validate_membership_items([
