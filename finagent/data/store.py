@@ -636,7 +636,21 @@ class DataStore:
     def seed(self) -> "DataStore":
         """装载整套模拟数据。"""
         seed_module.build_seed(self)
+        self.ensure_card_ledger()
         return self
+
+    def ensure_card_ledger(self) -> None:
+        """Backfill card/account links for old snapshots without losing balances."""
+        from finagent.data.card_ledger import (
+            ensure_card_account,
+            repair_card_ledger,
+            sync_card_from_account,
+        )
+
+        repair_card_ledger(self)
+        for card in self.cards.values():
+            ensure_card_account(self, card)
+            sync_card_from_account(self, card)
 
     def snapshot(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {"counters": self.counters, "audit": self.audit[-200:]}
@@ -652,6 +666,7 @@ class DataStore:
             setattr(self, table, {k: build(model, v) for k, v in raw.items()})
         self.counters = data.get("counters", {}) or {}
         self.audit = data.get("audit", []) or []
+        self.ensure_card_ledger()
         return self
 
     def save(self, path: Optional[Path] = None) -> Path:

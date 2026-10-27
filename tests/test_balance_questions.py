@@ -9,6 +9,18 @@ from tests.support import make_agent
 
 
 class TestBalanceQuestions(unittest.TestCase):
+    def test_total_assets_are_sum_of_bank_card_balances(self):
+        agent = make_agent()
+        expected = round(sum(
+            card.balance
+            for card in agent.store.cards_of("u_001")
+            if card.is_asset_card and card.status not in {"cancelled", "pending"}
+        ), 2)
+        reply = agent.handle("我还有多少钱")
+        self.assertEqual(reply.intent, "account.balance")
+        self.assertAlmostEqual(reply.data["total"], expected, places=2)
+        self.assertEqual(expected, 184060.52)
+        self.assertIn("信用卡欠款不计入资产", reply.text)
     def test_upload_balance_mismatch_question_answers_instead_of_bill_analysis(self):
         agent = make_agent()
 

@@ -37,6 +37,11 @@ class TestSQLitePersistence(unittest.TestCase):
             )
             first_service.send_message(
                 session_id,
+                "246810",
+                request_id="password-1",
+            )
+            first_service.send_message(
+                session_id,
                 "明天给王强转1块，用微信",
                 request_id="schedule-1",
             )
@@ -44,6 +49,11 @@ class TestSQLitePersistence(unittest.TestCase):
                 session_id,
                 "确认",
                 request_id="schedule-confirm-1",
+            )
+            first_service.send_message(
+                session_id,
+                "246810",
+                request_id="schedule-password-1",
             )
 
             second_service = AgentSessionService(

@@ -27,11 +27,13 @@ from finagent.tools.card_tools import (
     CardFreezeTool,
     CardLimitAdjustTool,
     CardListTool,
+    CreditCardRepayTool,
     CardReportLostTool,
     CardUnlockTool,
 )
 from finagent.tools.crossscene_tools import (
     DailyBriefTool,
+    GiftRecommendTool,
     GoalCreateTool,
     GoalListTool,
     ScheduleGiftTool,
@@ -43,6 +45,7 @@ from finagent.tools.subscription_tools import (
     SubscriptionRemindTool,
 )
 from finagent.tools.transfer_tools import (
+    InternalTransferTool,
     ListScheduledTransferTool,
     ScheduledTransferTool,
     SplitBillTool,
@@ -64,6 +67,7 @@ __all__ = [
     "format_money",
     "render_table",
     "TransferTool",
+    "InternalTransferTool",
     "ScheduledTransferTool",
     "SplitBillTool",
     "ListScheduledTransferTool",
@@ -82,6 +86,7 @@ __all__ = [
     "CardListTool",
     "CardApplyTool",
     "CardBindTool",
+    "CreditCardRepayTool",
     "CardLimitAdjustTool",
     "CardControlTool",
     "CardFreezeTool",
@@ -95,6 +100,7 @@ __all__ = [
     "GoalListTool",
     "ScheduleGiftTool",
     "DailyBriefTool",
+    "GiftRecommendTool",
     "BalanceTool",
     "ProfileTool",
     "HelpTool",

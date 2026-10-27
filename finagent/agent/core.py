@@ -50,7 +50,8 @@ from finagent.tools.card_tools import (
     validate_card_number,
     validate_phone_number,
 )
-from finagent.tools.transfer_tools import resolve_account
+from finagent.tools.card_tools import verify_card_password
+from finagent.tools.transfer_tools import resolve_account, resolve_payment_card
 from finagent.utils import parse_amount, parse_date
 from finagent.vision.receipt_parser import looks_like_pasted_bill
 
@@ -89,8 +90,16 @@ class BankingAgent:
 
     MAX_VERIFY_ATTEMPTS = 3
     MAX_REPLY_HISTORY = 20
+    PAYMENT_AUTH_INTENTS = {
+        "transfer.send",
+        "transfer.schedule",
+        "transfer.internal",
+        "card.repay",
+        "wealth.subscribe",
+    }
     REVISABLE_AMOUNT_SLOTS = {
         "transfer.send": "amount",
+        "transfer.internal": "amount",
         "transfer.schedule": "amount",
         "transfer.split_aa": "total",
     }
@@ -136,6 +145,7 @@ class BankingAgent:
         self.risk_assessed_at = ""
         self.risk_inference_confirmed_at = ""
         self.verify_attempts = 0
+        self.payment_password_attempts = 0
         self.last_intent_name = ""
         self.paused_questionnaire: Optional[Pending] = None
         self.last_reply: Optional[AgentReply] = None
@@ -152,6 +162,7 @@ class BankingAgent:
         self.risk_assessed_at = ""
         self.risk_inference_confirmed_at = ""
         self.verify_attempts = 0
+        self.payment_password_attempts = 0
         self.paused_questionnaire = None
         self.last_reply = None
         self.reply_history.clear()
@@ -255,11 +266,13 @@ class BankingAgent:
         )
         self.last_reply = reply
         if not self._is_why_question(raw):
-            self.remember_reply(raw, reply)
+            self.remember_reply(remembered_text, reply)
         return reply
 
     def _input_is_secret(self, text: str) -> bool:
         pending = self.session.pending
+        if pending is not None and pending.kind == "payment_auth":
+            return True
         if pending is None or not pending.missing:
             return False
         current = pending.missing[0]
@@ -305,6 +318,12 @@ class BankingAgent:
 
         if pending is not None and pending.kind == "verify":
             return self._handle_verify(pending, text)
+
+        if pending is not None and pending.kind == "payment_auth":
+            return self._handle_payment_auth(pending, text)
+
+        if pending is not None and pending.kind == "gift_choice":
+            return self._handle_gift_choice(pending, text)
 
         if pending is not None and pending.kind == "slot":
             return self._resume_from_slots(pending, text)
@@ -355,6 +374,16 @@ class BankingAgent:
 
     def _continue_with_intent(self, intent: Intent) -> AgentReply:
         """Route a recognized new business intent after any prior state is handled."""
+        if intent.name == "wealth.subscribe" and not intent.slots.get("product"):
+            selected = self._recommended_product_from_text(intent.raw_text)
+            if selected is not None:
+                intent.slots["product"] = selected["product_id"]
+        if intent.name == "wealth.subscribe":
+            preflight = self._preflight_wealth_subscribe(intent)
+            if preflight is not None:
+                self.session.clear_pending()
+                return preflight
+
         # 理财相关操作必须先完成风险问卷（投资者适当性管理的准入要求）
         if self._needs_risk_profile(intent.name) and self.risk_level is None:
             return self._start_questionnaire(intent)
@@ -373,6 +402,55 @@ class BankingAgent:
             return AgentReply(f"我理解到您的意图是「{intent.name}」，但没能生成可执行的动作，请再说具体一点。",
                               intent=intent.name, kind="question", needs_input=True)
         return self._gate_and_execute(plan)
+
+    def _recommended_product_from_text(self, text: str) -> Optional[Dict[str, Any]]:
+        details = self.scratch.get("last_wealth_products") or []
+        match = re.search(r"第?\s*([1-9]\d*)\s*[只个款]", text or "")
+        if match:
+            index = int(match.group(1))
+            return next(
+                (item for item in details if int(item.get("index", 0)) == index),
+                None,
+            )
+        for item in details:
+            if (
+                str(item.get("name") or "") in (text or "")
+                or str(item.get("code") or "") in (text or "")
+            ):
+                return item
+        return None
+
+    def _preflight_wealth_subscribe(self, intent: Intent) -> Optional[AgentReply]:
+        product_key = str(intent.slots.get("product") or "").strip()
+        amount = intent.slots.get("amount")
+        if not product_key or amount is None:
+            return None
+        product = self.providers.wealth.find(product_key)
+        if product is None:
+            return None
+        try:
+            value = float(amount)
+        except (TypeError, ValueError):
+            return None
+        if value < product.min_amount:
+            return AgentReply(
+                f"「{product.name}」起投金额为 {product.min_amount:,.2f} 元，"
+                f"你输入的 {value:,.2f} 元未达到门槛，尚未进入付款认证。\n"
+                "可以回复「换一批理财产品」或选择其他低门槛产品。",
+                intent="wealth.subscribe",
+                ok=False,
+                kind="error",
+            )
+        risk_level = self.risk_level
+        if risk_level is not None and product.risk_level > risk_level + 1:
+            return AgentReply(
+                f"「{product.name}」为 R{product.risk_level}，高于你的风险承受能力，"
+                "按适当性规则不能申购。",
+                intent="wealth.subscribe",
+                ok=False,
+                kind="error",
+            )
+        return None
 
     def _interrupt_intent(self, text: str) -> Optional[Intent]:
         """Return a valid new business intent that should break a pending prompt."""
@@ -1021,6 +1099,20 @@ class BankingAgent:
         self.paused_questionnaire = None
         self.risk_level = result.level
         self.risk_assessed_at = self.clock.iso()
+        prefs = dict(user.preferences or {})
+        prefs.update({
+            "risk_profile_label": result.label,
+            "risk_score": result.level,
+            "risk_assessment_total": result.total,
+            "risk_assessed_at": self.risk_assessed_at,
+            "risk_assessment_method": "basic_questionnaire_v1",
+        })
+        user.risk_profile = result.label
+        user.risk_score = result.level
+        user.preferences = prefs
+        user.source = "agent:risk_assessment"
+        user.updated_at = self.clock.iso()
+        self.store.touch(user)
         if pending.inferences:
             self.risk_inference_confirmed_at = self.clock.iso()
             pending.inference_confirmed_at = self.risk_inference_confirmed_at
@@ -1187,18 +1279,31 @@ class BankingAgent:
             return AgentReply("好的，本次操作已取消，没有执行任何业务动作。")
         ctx = self.context()
         current_slot_answer = None
-        if pending.intent == "card.apply" and pending.missing:
+        if pending.intent in {"card.apply", "crossscene.birthday_plan"} and pending.missing:
             current_slot = pending.missing[0]
             current_slot_answer = self._extract_slot(current_slot, text, ctx)
-        interrupt = (
-            None
-            if current_slot_answer is not None
-            else self._interrupt_intent(text)
-        )
+        candidate_interrupt = self._interrupt_intent(text)
+        if pending.intent == "card.apply" and current_slot_answer is not None:
+            interrupt = None
+        elif pending.intent == "crossscene.birthday_plan" and current_slot_answer is not None:
+            interrupt = (
+                None
+                if candidate_interrupt is None or candidate_interrupt.name == pending.intent
+                else candidate_interrupt
+            )
+        else:
+            interrupt = candidate_interrupt
         if interrupt is not None:
             self.session.clear_pending()
             return self._continue_with_intent(interrupt)
         self._fill_missing(pending, text, ctx)
+        if pending.intent == "wealth.subscribe":
+            preflight = self._preflight_wealth_subscribe(
+                Intent(pending.intent, pending.slots, 0.9, "system")
+            )
+            if preflight is not None:
+                self.session.clear_pending()
+                return preflight
         validation_error = self._validate_pending_slots(pending)
         if validation_error is not None:
             return validation_error
@@ -1331,6 +1436,19 @@ class BankingAgent:
 
     def _fill_missing(self, pending: Pending, text: str, ctx: ToolContext) -> None:
         missing = list(pending.missing)
+        if pending.intent == "crossscene.birthday_plan":
+            if not missing:
+                return
+            slot = missing.pop(0)
+            value = self._extract_slot(slot, text, ctx)
+            if value is None and slot in self.TEXT_SLOTS:
+                value = self._coerce_text(text)
+            if value is not None and self._is_valid_slot_value(slot, value):
+                pending.slots[slot] = value
+            else:
+                missing.insert(0, slot)
+            pending.missing = missing
+            return
         if pending.intent == "card.apply":
             if not missing:
                 return
@@ -1365,7 +1483,10 @@ class BankingAgent:
                 remaining.insert(0, slot)
         pending.missing = remaining
 
-    TEXT_SLOTS = {"payee", "person", "merchant", "card", "product", "name", "keyword"}
+    TEXT_SLOTS = {
+        "payee", "person", "merchant", "card", "product", "name", "keyword",
+        "from_card", "to_card", "account", "preferences", "avoid",
+    }
 
     @classmethod
     def _is_valid_slot_value(cls, slot: str, value: Any) -> bool:
@@ -1448,8 +1569,14 @@ class BankingAgent:
             if any(word in text for word in ("演示", "模拟", "示例", "没有流水", "无流水")):
                 return "demo"
             return None
-        if slot in {"employment", "credit_purpose", "branch"}:
+        if slot in {"employment", "credit_purpose", "branch", "preferences", "avoid"}:
             return self._coerce_text(text) or None
+        if slot in {"from_card", "to_card", "account"}:
+            match = re.search(r"(?:用|从)?([^，,。；;\s]{1,20}(?:卡|账户|活期|零钱|钱包))", text)
+            value = match.group(1) if match else self._coerce_text(text)
+            if slot == "account" and value in {"银行卡", "卡"}:
+                return None
+            return value or None
         if slot == "channel":
             if "微信" in text:
                 return "wechat"
@@ -1464,7 +1591,7 @@ class BankingAgent:
             compact = re.sub(r"[\s-]", "", text)
             digits = re.findall(r"\d{16,19}", compact)
             return digits[0] if digits else None
-        if slot in {"password", "card_password", "card_password_confirm"}:
+        if slot in {"password", "card_password", "card_password_confirm", "payment_password"}:
             match = re.search(r"(?<!\d)(\d{6})(?!\d)", text)
             return match.group(1) if match else None
         if slot == "phone":
@@ -1540,7 +1667,12 @@ class BankingAgent:
                 slots=dict(plan.slots),
             )
             tail = "\n\n请回复「确认」执行，或「取消」放弃。"
-            if requires_verification:
+            if plan.intent in self.PAYMENT_AUTH_INTENTS:
+                tail = (
+                    "\n\n请回复「确认」继续。确认后还需要输入付款卡 6 位交易密码"
+                    + ("，并通过短信验证码校验身份。" if requires_verification else "。")
+                )
+            elif requires_verification:
                 tail = ("\n\n请回复「确认」继续。确认后还需要输入 6 位短信验证码"
                         f"（演示环境固定为 {RiskPolicy.DEMO_SMS_CODE}）。")
             return AgentReply(
@@ -1608,6 +1740,21 @@ class BankingAgent:
                 kind="question",
                 needs_input=True,
             )
+        if plan.intent in self.PAYMENT_AUTH_INTENTS:
+            self.payment_password_attempts = 0
+            self.session.pending = Pending(
+                kind="payment_auth",
+                intent=plan.intent,
+                plan=plan,
+                slots=dict(plan.slots),
+            )
+            return AgentReply(
+                "关键信息已确认。请输入付款银行卡的 6 位交易密码后再执行。\n"
+                "演示种子卡固定为 246810；新开或新绑定的卡使用你设置的卡密码。",
+                intent=plan.intent,
+                kind="question",
+                needs_input=True,
+            )
         self.session.clear_pending()
         return self._gate_and_execute(plan, data_confirmed=True)
 
@@ -1648,6 +1795,20 @@ class BankingAgent:
             completed_at=self.clock.iso(),
         )
         self.session.clear_pending()
+        if plan.intent in self.PAYMENT_AUTH_INTENTS:
+            self.payment_password_attempts = 0
+            self.session.pending = Pending(
+                kind="payment_auth",
+                intent=plan.intent,
+                plan=plan,
+                slots=dict(plan.slots),
+            )
+            return AgentReply(
+                "冷静期已结束，关键信息仍然保留。请输入付款银行卡的 6 位交易密码后再执行。",
+                intent=plan.intent,
+                kind="question",
+                needs_input=True,
+            )
         return self._gate_and_execute(plan, data_confirmed=True)
 
     def _cooling_product(self, plan: Plan):
@@ -1662,14 +1823,49 @@ class BankingAgent:
     def _assess_step(self, tool_name: str, args: Dict[str, Any], ctx: ToolContext) -> RiskDecision:
         if tool_name == "transfer.send":
             user = ctx.user
-            payer = resolve_account(ctx, str(args.get("account", "")))
+            payer = resolve_payment_card(ctx, str(args.get("account", "")))
+            if payer is None:
+                return RiskDecision(
+                    level="block",
+                    blocked=True,
+                    reasons=["未找到指定的付款银行卡，请核对卡名、银行或尾号后重试"],
+                )
             payee = ctx.providers.payees.find(user.user_id, str(args.get("payee", "")))
             return self.risk.check_transfer(user, payer, payee, str(args.get("payee", "")),
                                             float(args.get("amount", 0) or 0))
         tool = self.registry.get(tool_name)
         account = None
-        if tool_name in {"wealth.subscribe"}:
-            account = resolve_account(ctx, str(args.get("account", "")))
+        if tool_name in {"transfer.schedule", "transfer.internal", "card.repay"}:
+            card_key = "account" if tool_name == "transfer.schedule" else "from_card"
+            account = resolve_payment_card(ctx, str(args.get(card_key, "")))
+            if account is None:
+                return RiskDecision(
+                    level="block",
+                    blocked=True,
+                    reasons=[
+                        f"未找到付款银行卡「{args.get(card_key, '')}」，"
+                        "请先到「资料与卡片设置」核对卡名和备注"
+                    ],
+                )
+            if tool_name == "transfer.internal":
+                target = resolve_payment_card(ctx, str(args.get("to_card", "")))
+                if target is None:
+                    return RiskDecision(
+                        level="block",
+                        blocked=True,
+                        reasons=[
+                            f"未找到收款银行卡「{args.get('to_card', '')}」，"
+                            "请先到「资料与卡片设置」核对卡名和备注"
+                        ],
+                    )
+                if target.card_id == account.card_id:
+                    return RiskDecision(
+                        level="block",
+                        blocked=True,
+                        reasons=["付款卡和收款卡不能是同一张卡"],
+                    )
+        elif tool_name == "wealth.subscribe":
+            account = resolve_payment_card(ctx, str(args.get("account", "")))
         decision = self.risk.check_operation(tool_name, args, ctx.user, account)
         if tool is not None and tool.requires_confirmation and not decision.requires_confirmation:
             decision.requires_confirmation = True
@@ -1682,6 +1878,9 @@ class BankingAgent:
     def _tool_label(tool_name: str) -> str:
         return {
             "transfer.send": "转账",
+            "transfer.internal": "本人银行卡内部转账",
+            "transfer.schedule": "定时转账",
+            "card.repay": "信用卡还款",
             "goal.create": "锁定资金",
             "wealth.subscribe": "理财申购",
         }.get(tool_name, tool_name)
@@ -1718,6 +1917,116 @@ class BankingAgent:
         self.session.clear_pending()
         return self._execute(pending.plan, ctx)
 
+    def _handle_gift_choice(self, pending: Pending, text: str) -> AgentReply:
+        if classify_control(text) == "deny":
+            self.session.clear_pending()
+            return AgentReply("好的，本次生日礼物不购买，也没有锁定资金。")
+        ctx = self.context()
+        if any(word in text for word in ("换一批", "再看看", "其他方案", "更多方案")):
+            tool = self.registry.get("crossscene.gift_recommend")
+            if tool is None:
+                self.session.clear_pending()
+                return AgentReply("礼物推荐服务暂不可用。", ok=False, kind="error")
+            result = tool.run(
+                ctx,
+                person=str(pending.slots.get("person") or "爱人"),
+                birthday=str(pending.slots.get("birthday") or ""),
+                budget=pending.slots.get("budget"),
+                preferences=str(pending.slots.get("preferences") or ""),
+                avoid=str(pending.slots.get("avoid") or ""),
+                offset=int(pending.slots.get("offset") or 0),
+            )
+            if not result.ok:
+                return AgentReply(result.message, ok=False, kind="error")
+            choice = result.data.get("gift_choice") or {}
+            pending.slots = dict(choice)
+            self.session.pending = pending
+            return AgentReply(
+                result.message,
+                intent=pending.intent,
+                kind="question",
+                needs_input=True,
+                data=result.data,
+            )
+
+        options = list(pending.slots.get("options") or [])
+        selected = None
+        match = re.search(r"(?:第)?\s*([1-9一二三四五六七八九])\s*(?:个|套|款|号)?", text)
+        if match:
+            number_map = {
+                "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+                "六": 6, "七": 7, "八": 8, "九": 9,
+            }
+            raw = match.group(1)
+            index = number_map.get(raw, int(raw) if raw.isdigit() else 0)
+            selected = next(
+                (item for item in options if int(item.get("index", 0)) == index),
+                None,
+            )
+        if selected is None:
+            selected = next(
+                (item for item in options if str(item.get("name") or "") in text),
+                None,
+            )
+        if selected is None:
+            return AgentReply(
+                "请回复要选择的方案序号，例如「第1个」，也可以回复「换一批」或「取消」。",
+                intent=pending.intent,
+                kind="question",
+                needs_input=True,
+            )
+
+        birthday = datetime.fromisoformat(str(pending.slots.get("birthday"))[:10]).date()
+        gift_day = birthday - timedelta(days=2)
+        display_name = str(pending.slots.get("display_name") or "爱人")
+        items = list(selected.get("items") or [])
+        total = float(selected.get("total") or 0)
+        steps = [
+            PlanStep(
+                tool="goal.create",
+                args={
+                    "name": f"{display_name}生日惊喜金",
+                    "target_amount": total,
+                    "deadline": birthday.isoformat(),
+                    "scenario": "birthday",
+                },
+                note="按已选礼物方案锁定生日专款",
+            )
+        ]
+        for item in items:
+            item_label = str(item.get("label") or item.get("item"))
+            steps.append(PlanStep(
+                tool="crossscene.schedule_gift",
+                args={
+                    "person": display_name,
+                    "item": item_label,
+                    "date": gift_day.isoformat(),
+                    "budget": item.get("price"),
+                    "offer_id": item.get("offer_id"),
+                    "note": (
+                        f"生日礼物；偏好：{pending.slots.get('preferences')}；"
+                        f"禁忌：{pending.slots.get('avoid')}"
+                    ),
+                },
+                note=f"生日前 2 天预约{item_label}",
+            ))
+        plan = Plan(
+            intent="crossscene.birthday_order",
+            steps=steps,
+            slots=dict(pending.slots),
+        )
+        item_text = "、".join(
+            str(item.get("label") or item.get("item")) for item in items
+        )
+        plan.description = (
+            f"已选择方案「{selected.get('name')}」：{item_text}，合计 {total:,.2f} 元\n"
+            f"  生日：{birthday.isoformat()}\n"
+            f"  礼物将在 {gift_day.isoformat()}（生日前 2 天）预约配送\n"
+            f"  收礼人：{display_name}；预算上限：{float(pending.slots.get('budget') or 0):,.2f} 元"
+        )
+        self.session.clear_pending()
+        return self._gate_and_execute(plan)
+
     def _handle_verify(self, pending: Pending, text: str) -> AgentReply:
         if classify_control(text) == "deny":
             self.session.clear_pending()
@@ -1743,6 +2052,58 @@ class BankingAgent:
             return AgentReply("计划已失效，请重新说一次您的需求。", ok=False, kind="error")
         self.session.clear_pending()
         return self._execute(pending.plan, self.context())
+
+    def _handle_payment_auth(self, pending: Pending, text: str) -> AgentReply:
+        if classify_control(text) == "deny":
+            self.session.clear_pending()
+            return AgentReply("好的，付款认证已取消，本次没有发生资金变动。")
+        interrupt = self._interrupt_intent(text)
+        if interrupt is not None:
+            self.session.clear_pending()
+            return self._continue_with_intent(interrupt)
+        password = "".join(ch for ch in text if ch.isdigit())
+        if not re.fullmatch(r"\d{6}", password):
+            return AgentReply(
+                "交易密码必须为 6 位数字，请重新输入。",
+                kind="question",
+                needs_input=True,
+            )
+        if pending.plan is None:
+            self.session.clear_pending()
+            return AgentReply("付款计划已失效，请重新发起操作。", ok=False, kind="error")
+        ctx = self.context()
+        step = next(
+            (item for item in pending.plan.steps if item.tool in {
+                "transfer.send", "transfer.schedule", "transfer.internal", "card.repay",
+                "wealth.subscribe",
+            }),
+            None,
+        )
+        if step is None:
+            self.session.clear_pending()
+            return AgentReply("没有找到需要付款认证的步骤。", ok=False, kind="error")
+        source_key = "from_card" if step.tool in {"transfer.internal", "card.repay"} else "account"
+        card = resolve_payment_card(ctx, str(step.args.get(source_key) or ""))
+        if card is None:
+            self.session.clear_pending()
+            return AgentReply("没有找到付款银行卡，操作已终止。", ok=False, kind="error")
+        if not verify_card_password(card, password):
+            self.payment_password_attempts += 1
+            if self.payment_password_attempts >= self.MAX_VERIFY_ATTEMPTS:
+                self.session.clear_pending()
+                return AgentReply(
+                    "交易密码连续错误，操作已终止。如非本人操作，建议冻结卡片。",
+                    ok=False,
+                    kind="error",
+                )
+            return AgentReply(
+                "付款卡交易密码不正确，请重新输入 6 位交易密码。",
+                kind="question",
+                needs_input=True,
+            )
+        step.args["payment_password"] = password
+        self.session.clear_pending()
+        return self._gate_and_execute(pending.plan, data_confirmed=True)
 
     # ==================================================================
     # 工具执行
@@ -1771,6 +2132,7 @@ class BankingAgent:
                 "args": {
                     key: ("******" if key in {
                         "password", "card_password", "card_password_confirm",
+                        "payment_password",
                     } else value)
                     for key, value in step.args.items()
                 },
@@ -1789,6 +2151,23 @@ class BankingAgent:
                 break
         self.store.log("agent.execute", intent=plan.intent, tools=plan.tools(), ok=ok)
         text = "\n\n".join(messages) if len(plan.steps) > 1 else (messages[0] if messages else "操作已完成。")
+        gift_choice = payload.get("gift_choice") if ok else None
+        if gift_choice:
+            self.session.pending = Pending(
+                kind="gift_choice",
+                intent=plan.intent,
+                slots=dict(gift_choice),
+            )
+            return AgentReply(
+                text,
+                intent=plan.intent,
+                ok=True,
+                kind="question",
+                trace=trace,
+                plan=plan.tools(),
+                data=payload,
+                needs_input=True,
+            )
         follow_up = payload.get("follow_up") if ok else None
         if follow_up:
             # 工具执行到一半需要用户确认下一步（例如"识别完账单，是否导入流水"）

@@ -63,9 +63,21 @@ INTENTS: Dict[str, IntentSpec] = {
             L("payee", "收款人姓名、昵称备注或手机号", True),
             L("amount", "金额（元）", True, "number"),
             L("note", "转账备注"),
-            L("account", "付款账户，如 活期/信用卡/零钱"),
+            L("account", "付款银行卡，如 工资卡/尾号6222"),
+            L("payment_password", "付款卡交易密码", True),
         ],
         ["给老婆转2000块", "转500给13700003333", "给房东转3800块交房租"],
+    ),
+    "transfer.internal": IntentSpec(
+        "transfer.internal", "智能转账", "本人不同银行卡之间划转资金",
+        [
+            L("from_card", "付款银行卡", True),
+            L("to_card", "收款银行卡", True),
+            L("amount", "划转金额（元）", True, "number"),
+            L("payment_password", "付款卡交易密码", True),
+            L("note", "划转备注"),
+        ],
+        ["从工资卡转1000到定期卡", "尾号6222转500到3011"],
     ),
     "transfer.schedule": IntentSpec(
         "transfer.schedule", "智能转账", "设置定时/周期性转账",
@@ -166,7 +178,7 @@ INTENTS: Dict[str, IntentSpec] = {
     "card.apply": IntentSpec(
         "card.apply", "卡片管理", "申请新卡",
         [
-            L("kind", "卡类型", False, "string", ["credit", "virtual", "supplementary"]),
+            L("kind", "卡类型", False, "string", ["debit", "credit", "virtual", "supplementary"]),
             L("limit_request", "期望额度（元）", False, "number"),
             L("note", "备注"),
         ],
@@ -182,6 +194,16 @@ INTENTS: Dict[str, IntentSpec] = {
             L("phone", "银行预留手机号"),
         ],
         ["绑定一张工商银行的储蓄卡", "添加我的建设银行卡"],
+    ),
+    "card.repay": IntentSpec(
+        "card.repay", "卡片管理", "使用本人借记卡偿还信用卡账单",
+        [
+            L("card", "信用卡", True),
+            L("from_card", "付款借记卡", True),
+            L("amount", "还款金额（元）", True, "number"),
+            L("payment_password", "付款卡交易密码", True),
+        ],
+        ["用工资卡还信用卡3000元", "从尾号6222还信用卡1000块"],
     ),
     "card.limit_adjust": IntentSpec(
         "card.limit_adjust", "卡片管理", "调整额度或交易限额",

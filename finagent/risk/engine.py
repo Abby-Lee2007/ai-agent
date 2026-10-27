@@ -72,6 +72,7 @@ class RiskEngine:
     MEDIUM_RISK_TOOLS = {
         "card.limit_adjust": "调整额度会即刻生效",
         "card.control": "交易开关会即刻生效",
+        "card.repay": "信用卡还款会立即扣减付款卡余额",
         "transfer.split_aa": "将向多人发起收款",
         "crossscene.birthday_plan": "将锁定资金并预约下单",
         "goal.create": "将锁定活期资金",
@@ -87,6 +88,7 @@ class RiskEngine:
         "goal.create",
         # 额度调整虽然不动资金，但改动额度过大同样属于敏感操作
         "card.limit_adjust",
+        "card.repay",
     }
 
     def __init__(

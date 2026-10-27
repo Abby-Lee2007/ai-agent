@@ -16,9 +16,13 @@ from finagent.agent.registry import ToolRegistry
 from finagent.nlu.intent_schema import Intent
 from finagent.tools.base import ToolContext
 from finagent.tools.card_tools import BANK_BINS, evaluate_card_password
-from finagent.tools.crossscene_tools import lookup_person
+from finagent.tools.crossscene_tools import lookup_person, lookup_person_preferences
 from finagent.data.providers import MerchantOfferProvider
-from finagent.tools.transfer_tools import channel_account, resolve_account
+from finagent.tools.transfer_tools import (
+    channel_account,
+    resolve_account,
+    resolve_payment_card,
+)
 from finagent.utils import parse_date
 
 
@@ -53,9 +57,13 @@ class Plan:
 SIMPLE_PLANS: Dict[str, List[Tuple[str, Dict[str, str]]]] = {
     "transfer.send": [("transfer.send", {"payee": "payee", "amount": "amount", "channel": "channel",
                                          "note": "note", "account": "account"})],
+    "transfer.internal": [("transfer.internal", {"from_card": "from_card",
+                                                   "to_card": "to_card", "amount": "amount",
+                                                   "note": "note"})],
     "transfer.schedule": [("transfer.schedule", {"payee": "payee", "amount": "amount", "when": "when",
                                                  "channel": "channel",
-                                                 "repeat": "repeat", "note": "note"})],
+                                                 "repeat": "repeat", "note": "note",
+                                                 "account": "account"})],
     "transfer.split_aa": [("transfer.split_aa", {"total": "total", "participants": "participants",
                                                  "channel": "channel",
                                                  "note": "note"})],
@@ -79,6 +87,8 @@ SIMPLE_PLANS: Dict[str, List[Tuple[str, Dict[str, str]]]] = {
                                    "limit_request": "limit_request", "note": "note"})],
     "card.bind": [("card.bind", {"card_no": "card_no", "password": "password",
                                  "bank": "bank", "phone": "phone"})],
+    "card.repay": [("card.repay", {"card": "card", "from_card": "from_card",
+                                   "amount": "amount"})],
     "card.limit_adjust": [("card.limit_adjust", {"card": "card", "new_limit": "new_limit"})],
     "card.control": [("card.control", {"card": "card", "scope": "scope", "enable": "enable"})],
     "card.freeze": [("card.freeze", {"card": "card", "reason": "reason"})],
@@ -112,6 +122,13 @@ DEFAULT_QUESTIONS = {
     "card": "请问是哪张卡？可以说「信用卡」「虚拟卡」或卡号后四位。",
     "card_no": "请把要绑定的银行卡号发给我（16-19 位）。",
     "password": "请输入该卡的取款密码（演示环境固定 123456）。",
+    "payment_password": (
+        "请输入付款卡 6 位交易密码。演示种子卡固定为 246810；"
+        "新开或新绑定的卡使用你设置的卡密码。"
+    ),
+    "from_card": "请指定付款银行卡，可以使用卡名、银行名或尾号后四位。",
+    "to_card": "请指定收款银行卡，可以使用卡名、银行名或尾号后四位。",
+    "account": "请选择付款银行卡，例如「工资卡」「尾号6222」或「定期存单」。",
     "phone": "请提供这张卡在银行预留的 11 位手机号。",
     "kind": "您要申请储蓄卡、信用卡、虚拟卡还是附属卡？",
     "bank": "请选择发卡行，例如工商银行、农业银行、中国银行、建设银行、招商银行或交通银行。",
@@ -139,6 +156,8 @@ DEFAULT_QUESTIONS = {
     "name": "请问这个目标叫什么名字？例如「旅行基金」。",
     "target_amount": "请问目标金额是多少？",
     "birthday": "请问 ta 的生日是哪一天？例如「11月20日」。",
+    "preferences": "她平时喜欢什么礼物、颜色、口味或活动？",
+    "avoid": "她对鲜花、食物、香味等有过敏或禁忌吗？没有可回复「无」。",
 }
 
 NUMERIC_SLOTS = {
@@ -193,12 +212,14 @@ CARD_APPLY_FIELD_LABELS = {
 # reviewed as a whole before any tool is allowed to mutate state.
 DATA_CONFIRM_INTENTS = {
     "transfer.send",
+    "transfer.internal",
     "transfer.schedule",
     "transfer.split_aa",
     "wealth.subscribe",
     "wealth.redeem",
     "card.apply",
     "card.bind",
+    "card.repay",
     "card.limit_adjust",
     "card.control",
     "card.freeze",
@@ -206,7 +227,6 @@ DATA_CONFIRM_INTENTS = {
     "card.report_lost",
     "subscription.cancel",
     "goal.create",
-    "crossscene.birthday_plan",
 }
 
 
@@ -316,54 +336,70 @@ class Planner:
         return plan
 
     def _birthday_plan(self, intent: Intent, ctx: ToolContext) -> Plan:
-        """跨场景示例：生日惊喜（锁定资金 + 生日前 2 天订花和蛋糕）。"""
+        """Collect gift requirements and return recommendations before any purchase."""
         slots = dict(intent.slots)
         person = slots.get("person") or "爱人"
         target_person, birthday = lookup_person(ctx, person)
         display_name = target_person.name if target_person else person
         given = slots.get("birthday")
         if not given:
-            plan = Plan(intent=intent.name, slots=slots, missing=["birthday"])
-            hint = (f"系统记录为 {birthday.isoformat()}，请重新输入确认。"
-                    if birthday else "系统目前没有记录。")
-            plan.question = (f"请先输入「{display_name}」的生日，格式例如「11月20日」或「2026-11-20」。"
-                             f"\n{hint}")
-            return plan
-        parsed = parse_date(str(given), ctx.clock.today())
-        if parsed is None:
+            if birthday:
+                slots["birthday"] = birthday.isoformat()
+            else:
+                plan = Plan(intent=intent.name, slots=slots, missing=["birthday"])
+                plan.question = (
+                    f"资料中还没有「{display_name}」的生日。"
+                    "请输入「11月20日」或「2026-11-20」。"
+                )
+                return plan
+        parsed = parse_date(str(given), ctx.clock.today()) if given else None
+        if given and parsed is None:
             plan = Plan(intent=intent.name, slots=slots, missing=["birthday"])
             plan.question = "这个生日日期无法识别，请重新输入，例如「11月20日」。"
             return plan
-        birthday = parsed
-        budget = float(slots.get("budget") or 1000.0)
-        lock_amount = float(slots["budget"]) if slots.get("budget") else 1000.0
-        gift_day = birthday - timedelta(days=2)
-        steps = [
-            PlanStep(
-                tool="goal.create",
-                args={"name": f"{display_name}生日惊喜金", "target_amount": lock_amount,
-                      "deadline": birthday.isoformat(), "scenario": "birthday"},
-                note="锁定当月活期资金",
-            ),
-            PlanStep(
-                tool="crossscene.schedule_gift",
-                args={"person": display_name, "item": "鲜花", "date": gift_day.isoformat(),
-                      "budget": round(budget * 0.35, 2)},
-                note="生日前 2 天送花",
-            ),
-            PlanStep(
-                tool="crossscene.schedule_gift",
-                args={"person": display_name, "item": "蛋糕", "date": gift_day.isoformat(),
-                      "budget": round(budget * 0.45, 2)},
-                note="生日前 2 天订蛋糕",
-            ),
-        ]
-        plan = Plan(intent=intent.name, steps=steps, slots=slots)
+        if parsed:
+            birthday = parsed
+        profile = lookup_person_preferences(ctx, person)
+        missing = []
+        if not slots.get("preferences"):
+            missing.append("preferences")
+        if not slots.get("avoid"):
+            missing.append("avoid")
+        if slots.get("budget") in (None, ""):
+            missing.append("budget")
+        if missing:
+            plan = Plan(intent=intent.name, slots=slots, missing=missing)
+            if missing[0] == "preferences":
+                known = "、".join(profile.get("favorite_gift") or []) or "暂无记录"
+                plan.question = (
+                    f"已使用资料中「{display_name}」的生日 {birthday.isoformat()}。"
+                    f"资料记录的礼物偏好：{known}。\n"
+                    "她还有其他喜欢或想要的东西吗？没有补充可回复「沿用资料」。"
+                )
+            elif missing[0] == "avoid":
+                known = "、".join(profile.get("avoid") or []) or "暂无记录"
+                plan.question = (
+                    f"她对鲜花、甜食、奶制品等有过敏或禁忌吗？资料记录：{known}。\n"
+                    "没有请回复「无」。"
+                )
+            else:
+                plan.question = "这次生日礼物预算大约多少元？例如「1000」。"
+            return plan
+        step = PlanStep(
+            tool="crossscene.gift_recommend",
+            args={
+                "person": display_name,
+                "birthday": birthday.isoformat(),
+                "budget": slots.get("budget"),
+                "preferences": slots.get("preferences"),
+                "avoid": slots.get("avoid"),
+                "offset": 0,
+            },
+        )
+        plan = Plan(intent=intent.name, steps=[step], slots=slots)
         plan.description = (
-            f"为「{display_name}」准备生日惊喜（生日 {birthday.isoformat()}）：\n"
-            f"  1. 现在锁定 {lock_amount:,.2f} 元活期资金作为生日专款\n"
-            f"  2. {gift_day.isoformat()}（生日前 2 天）订购鲜花，预算 {budget * 0.35:,.2f} 元\n"
-            f"  3. {gift_day.isoformat()}（生日前 2 天）预订蛋糕，预算 {budget * 0.45:,.2f} 元"
+            f"为「{display_name}」生成 3 组生日礼物方案；"
+            "本轮只推荐，不会锁定资金或下单。"
         )
         return plan
 
@@ -378,7 +414,7 @@ class Planner:
                 channel = str(args.get("channel") or "phone")
                 payee = ctx.providers.payees.find(ctx.user_id, str(args.get("payee") or ""))
                 target = channel_account(payee, channel) if payee else ""
-                payer = resolve_account(ctx, str(args.get("account") or ""))
+                payer = resolve_payment_card(ctx, str(args.get("account") or ""))
                 parts = [
                     f"向「{self._payee_label(ctx, args.get('payee'))}」"
                     f"转账 {float(args.get('amount', 0)):,.2f} 元",
@@ -392,7 +428,10 @@ class Planner:
                         "请到「资料与卡片设置」补充"
                     )
                 if payer:
-                    parts.append(f"付款账户：{payer.name}（尾号 {payer.tail}）")
+                    parts.append(
+                        f"付款银行卡：{payer.brand}（尾号 {payer.tail}，"
+                        f"余额 {payer.balance:,.2f} 元）"
+                    )
                 if args.get("note"):
                     parts.append(f"备注：{args['note']}")
                 return "；".join(parts)
@@ -419,7 +458,28 @@ class Planner:
                         f"未配置{CHANNEL_LABELS.get(channel, channel)}收款账号，"
                         "请到「资料与卡片设置」补充"
                     )
+                payer = resolve_payment_card(ctx, str(args.get("account") or ""))
+                if payer:
+                    parts.append(
+                        f"付款银行卡：{payer.brand}（尾号 {payer.tail}，"
+                        f"余额 {payer.balance:,.2f} 元）"
+                    )
                 return "；".join(parts)
+            if tool == "transfer.internal":
+                source = resolve_payment_card(ctx, str(args.get("from_card") or ""))
+                target = resolve_payment_card(ctx, str(args.get("to_card") or ""))
+                source_label = (
+                    f"{source.brand}（尾号 {source.tail}，余额 {source.balance:,.2f} 元）"
+                    if source else str(args.get("from_card") or "未识别付款卡")
+                )
+                target_label = (
+                    f"{target.brand}（尾号 {target.tail}，余额 {target.balance:,.2f} 元）"
+                    if target else str(args.get("to_card") or "未识别收款卡")
+                )
+                return (
+                    f"本人银行卡内部划转 {float(args.get('amount', 0)):,.2f} 元；"
+                    f"转出：{source_label}；转入：{target_label}"
+                )
             if tool == "transfer.split_aa":
                 people = args.get("participants") or []
                 total = float(args.get("total", 0))
@@ -438,7 +498,7 @@ class Planner:
                 return f"检索与「{args.get('keyword')}」相关的消费"
             if tool == "wealth.subscribe":
                 product = ctx.providers.wealth.find(str(args.get("product") or ""))
-                payer = resolve_account(ctx, str(args.get("account") or ""))
+                payer = resolve_payment_card(ctx, str(args.get("account") or ""))
                 product_text = (f"「{product.name}」（{product.product_id}，R{product.risk_level}）"
                                 if product else f"「{args.get('product')}」")
                 parts = [f"申购{product_text} {float(args.get('amount', 0)):,.2f} 元"]
@@ -447,7 +507,10 @@ class Planner:
                     parts.append(f"赎回：{product.redemption_rule}")
                     parts.append(f"数据：{product.source or '未知来源'}")
                 if payer:
-                    parts.append(f"扣款账户：{payer.name}（尾号 {payer.tail}）")
+                    parts.append(
+                        f"付款银行卡：{payer.brand}（尾号 {payer.tail}，"
+                        f"余额 {payer.balance:,.2f} 元）"
+                    )
                 return "；".join(parts)
             if tool == "wealth.redeem":
                 holdings = ctx.providers.wealth.holdings(ctx.user_id, "holding")
@@ -497,6 +560,24 @@ class Planner:
                         "模拟信用评估授权：已同意"
                     )
                 return f"申请{label}；发卡行：{bank}"
+            if tool == "card.repay":
+                credit_card = ctx.providers.cards.find(
+                    ctx.user_id,
+                    str(args.get("card") or ""),
+                )
+                source = resolve_payment_card(ctx, str(args.get("from_card") or ""))
+                credit_label = (
+                    f"信用卡（尾号 {credit_card.tail}，已用 {credit_card.used:,.2f} 元）"
+                    if credit_card else "未识别信用卡"
+                )
+                source_label = (
+                    f"{source.brand}（尾号 {source.tail}，余额 {source.balance:,.2f} 元）"
+                    if source else str(args.get("from_card") or "未识别付款卡")
+                )
+                return (
+                    f"信用卡还款 {float(args.get('amount', 0)):,.2f} 元；"
+                    f"付款卡：{source_label}；还款对象：{credit_label}"
+                )
             if tool == "card.bind":
                 number = "".join(ch for ch in str(args.get("card_no") or "") if ch.isdigit())
                 bank = str(args.get("bank") or BANK_BINS.get(number[:6], "未识别银行"))

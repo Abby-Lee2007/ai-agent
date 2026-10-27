@@ -63,6 +63,7 @@ def normalize_synonyms(text: str) -> str:
 # 通用兜底关键词：精确规则都没命中时，用这些词判断用户大概想办什么
 INTENT_KEYWORDS = {
     "transfer.send": ["转账", "转给", "打钱", "汇款", "发红包"],
+    "transfer.internal": ["本人转账", "内部转账", "卡片互转", "银行卡互转"],
     "transfer.schedule": ["定时转", "自动转", "每月转", "每周转", "预约转"],
     "transfer.split_aa": ["aa", "分摊", "平摊", "均摊", "各付"],
     "transfer.list_scheduled": ["定时转账", "待执行", "预约任务"],
@@ -74,10 +75,11 @@ INTENT_KEYWORDS = {
     "bill.supported_formats": ["上传哪些格式", "支持哪些格式", "账单格式", "文件格式", "能识别哪些文件"],
     "wealth.risk_assess": ["风险测评", "风险承受", "测评"],
     "wealth.recommend": ["推荐", "理财产品", "配置", "买什么"],
-    "wealth.subscribe": ["申购", "买入", "认购"],
+    "wealth.subscribe": ["申购", "买入", "认购", "购买"],
     "wealth.redeem": ["赎回", "卖出"],
     "wealth.portfolio": ["持仓", "赚了多少", "收益"],
     "card.list": ["有哪些卡", "卡列表", "我的卡"],
+    "card.repay": ["信用卡还款", "还信用卡", "偿还信用卡"],
     "card.apply": ["申领", "办卡", "开卡", "申请卡", "领卡"],
     "card.bind": ["绑定", "绑卡", "添加卡"],
     "card.limit_adjust": ["额度", "限额", "提额", "降额"],
@@ -115,6 +117,7 @@ class RuleIntentParser:
         "bill.scan_receipt",
         "transfer.split_aa",
         "transfer.list_scheduled",
+        "transfer.internal",
         "transfer.schedule",
         "transfer.send",
         "bill.anomaly",
@@ -130,6 +133,7 @@ class RuleIntentParser:
         "card.report_lost",
         "card.unlock",
         "card.freeze",
+        "card.repay",
         "card.bind",
         "card.control",
         "card.limit_adjust",
@@ -214,6 +218,15 @@ class RuleIntentParser:
     def _match_transfer_list_scheduled(self, t: str) -> bool:
         return self._has(t, "定时转账", "预约任务", "待执行任务", "有哪些定时", "我的计划")
 
+    def _match_transfer_internal(self, t: str) -> bool:
+        if "到" not in t or not self._has(t, "转", "划转", "调拨"):
+            return False
+        if not self._has(t, "卡", "尾号", "账户"):
+            return False
+        return self._has(t, "从", "本人", "自己", "内部") or bool(
+            re.search(r"(?:尾号)?\d{4}.{0,12}(?:转|划转).{0,12}(?:尾号)?\d{4}", t)
+        )
+
     def _match_transfer_schedule(self, t: str) -> bool:
         if not self._has(t, "转", "打钱", "汇款", "付", "交"):
             return False
@@ -271,7 +284,7 @@ class RuleIntentParser:
         if self._has(t, "股票", "个股", "基金", "理财产品", "理财", "债券",
                      "期权", "期货", "衍生品") and not self._product_name(t):
             return False
-        if self._has(t, "申购", "买入", "认购", "买点", "投点", "帮我买", "帮我投"):
+        if self._has(t, "申购", "买入", "认购", "购买", "买点", "投点", "帮我买", "帮我投"):
             return True
         return bool(re.search(r"买\s*\d", t))
 
@@ -283,7 +296,10 @@ class RuleIntentParser:
         if self._has(t, "买点", "买些", "想买", "买什么") and self._has(
                 t, "股票", "基金", "理财", "债券", "期权", "期货", "衍生品"):
             return True
-        return self._has(t, "推荐", "理财产品", "买什么好", "怎么配置", "资产配置", "有哪些产品", "基金推荐", "理财")
+        return self._has(
+            t, "推荐", "理财产品", "买什么好", "怎么配置", "资产配置",
+            "有哪些产品", "基金推荐", "理财", "换一批", "更多产品",
+        )
 
     def _match_card_report_lost(self, t: str) -> bool:
         return self._has(t, "挂失", "丢了", "不见了", "找不到卡", "补卡", "被偷", "被偷了")
@@ -308,6 +324,9 @@ class RuleIntentParser:
         actions = ("申请", "申领", "领取", "办理", "办一张", "办张", "办个",
                    "开一张", "开张", "开个", "开通", "想要一张", "要一张", "来一张")
         return self._has(t, *actions) and self._has(t, "卡")
+
+    def _match_card_repay(self, t: str) -> bool:
+        return self._has(t, "信用卡") and self._has(t, "还款", "还信用卡", "偿还")
 
     def _match_card_bind(self, t: str) -> bool:
         return self._has(t, "绑定", "添加", "绑一张", "绑定一张") and self._has(
@@ -352,7 +371,24 @@ class RuleIntentParser:
         today = self.store.clock.today() if self.store is not None else None
         slots: Dict[str, Any] = {}
 
-        if intent in {"transfer.send", "transfer.schedule"}:
+        if intent == "transfer.internal":
+            if "到" in text:
+                left, right = text.split("到", 1)
+                match = re.search(r"(?:从)?(.+?)(?:转|划转|调拨)", left)
+                if match:
+                    slots["from_card"] = match.group(1).strip("从 ，,")
+                target = re.split(r"[，。,；;\s]|(?:\d+(?:\.\d+)?元)", right, maxsplit=1)[0].strip()
+                target = re.sub(r"(?:卡中|卡里|卡上|里面|中|里|上)$", "卡", target)
+                if target:
+                    slots["to_card"] = target
+            amount = parse_amount(text)
+            if amount is not None:
+                slots["amount"] = amount
+            note = self._note(text)
+            if note:
+                slots["note"] = note
+
+        elif intent in {"transfer.send", "transfer.schedule"}:
             payee = self._person(text)
             if payee:
                 slots["payee"] = payee
@@ -444,6 +480,10 @@ class RuleIntentParser:
 
         elif intent == "wealth.subscribe":
             amount = parse_amount(text)
+            has_ordinal = bool(re.search(r"第?\s*[1-9]\d*\s*[只个款]", text))
+            has_explicit_amount = bool(re.search(r"\d+(?:\.\d+)?\s*(?:元|块|万|千)", text))
+            if has_ordinal and not has_explicit_amount:
+                amount = None
             if amount is not None:
                 slots["amount"] = amount
             product = self._product(text)
@@ -460,6 +500,17 @@ class RuleIntentParser:
             if self._has(text, "全部", "所有", "都赎回"):
                 slots.pop("amount", None)
                 slots.pop("product", None)
+
+        elif intent == "card.repay":
+            credit_card = self._card(text)
+            if credit_card:
+                slots["card"] = credit_card
+            match = re.search(r"(?:用|从)(.+?)(?:来)?(?:还|偿还)", text)
+            if match:
+                slots["from_card"] = match.group(1).strip()
+            amount = parse_amount(text)
+            if amount is not None:
+                slots["amount"] = amount
 
         elif intent == "card.limit_adjust":
             amount = parse_amount(text)
@@ -613,10 +664,13 @@ class RuleIntentParser:
         )
         if match is None:
             match = re.search(
-                r"用(活期账户|活期|储蓄卡|信用卡|借记卡|零钱|钱包)",
+                r"用([^，,。；;\s]{1,16}?(?:卡|账户|活期|零钱|钱包))",
                 text,
             )
-        return match.group(1) if match else ""
+        if match is None:
+            return ""
+        value = match.group(1)
+        return "" if value in {"银行卡", "卡"} else value
 
     @staticmethod
     def _clean_name(name: str) -> str:

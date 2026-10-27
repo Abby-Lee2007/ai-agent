@@ -8,6 +8,16 @@ import re
 from datetime import timedelta
 from typing import Any
 
+from finagent.data.card_ledger import (
+    card_asset_total,
+    ensure_card_account,
+    hash_card_password,
+    linked_account,
+    sync_card_from_account,
+    update_card_balance,
+    update_credit_usage,
+    verify_card_password,
+)
 from finagent.data.models import Card
 from finagent.data.provenance import source_badge
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, render_table
@@ -73,9 +83,16 @@ class CardListTool(Tool):
         cards = _cards(ctx)
         if not cards:
             return ToolResult(True, "您名下暂无卡片。", summary="无卡片")
+        for card in cards:
+            sync_card_from_account(ctx.store, card)
         rows = []
         for c in cards:
-            limit = f"{c.credit_limit:,.0f} / 已用 {c.used:,.0f}" if c.kind == "credit" else f"日限额 {c.daily_limit:,.0f}"
+            if c.kind == "credit":
+                limit = f"额度 {c.credit_limit:,.0f} / 已用 {c.used:,.0f}"
+                balance = f"可用 {c.available:,.0f}"
+            else:
+                limit = f"日限额 {c.daily_limit:,.0f}"
+                balance = f"{c.balance:,.2f}（可用 {c.available:,.2f}）"
             switches = "".join(
                 [
                     "线上✓ " if c.online_enabled else "线上✗ ",
@@ -84,11 +101,17 @@ class CardListTool(Tool):
                 ]
             )
             source = source_badge(c.source, c.is_live, c.is_demo)
-            rows.append([KIND_LABEL.get(c.kind, c.kind), f"尾号{c.tail}", STATUS_LABEL.get(c.status, c.status),
-                         limit, switches, source])
+            rows.append([
+                KIND_LABEL.get(c.kind, c.kind), f"尾号{c.tail}",
+                STATUS_LABEL.get(c.status, c.status), balance, limit,
+                switches, source,
+            ])
         lines = [
             f"您名下共有 {len(cards)} 张卡片：",
-            render_table(["卡种", "卡号", "状态", "额度/限额", "交易开关", "来源"], rows),
+            render_table(
+                ["卡种", "卡号", "状态", "余额/可用", "额度/限额", "交易开关", "来源"],
+                rows,
+            ),
         ]
         return ToolResult(True, "\n".join(lines), data={"count": len(cards)}, summary=f"共 {len(cards)} 张卡片")
 
@@ -408,19 +431,28 @@ class CardBindTool(Tool):
             brand=bank_name,
             tail=tail,
             status="active",
+            balance=0.0,
             daily_limit=20000.0,
             single_limit=5000.0,
+            payment_password_hash=hash_card_password(str(password)),
             overseas_enabled=False,
             issued_at=ctx.clock.iso(),
             note=f"{bank_name}储蓄卡（绑定）",
         )
         ctx.store.cards[card.card_id] = card
         ctx.store.touch(card)
+        ensure_card_account(
+            ctx.store,
+            card,
+            account_kind="current",
+            account_name=f"{bank_name}储蓄卡账户",
+        )
         ctx.store.log("card.bind", card_id=card.card_id, bank=bank_name, tail=tail)
         lines = [
             f"绑定成功：{bank_name} 储蓄卡（尾号 {tail}）",
             f"  卡号：**** **** **** {tail}（仅保存后四位，完整卡号与密码不入库）",
             f"  预留手机号：{phone_digits[:3]}****{phone_digits[-4:]}",
+            f"  当前余额：{card.balance:,.2f} 元（演示环境新绑定卡初始余额为 0）",
             f"  单笔限额 {card.single_limit:,.0f} 元，日限额 {card.daily_limit:,.0f} 元",
             "  说明：这是模拟绑卡流程；真实绑卡由银行侧完成短信/密码验证，本原型仅做演示。",
         ]
@@ -535,6 +567,12 @@ class CardApplyTool(Tool):
         )
         ctx.store.cards[card.card_id] = card
         ctx.store.touch(card)
+        ensure_card_account(
+            ctx.store,
+            card,
+            account_kind="current" if kind == "virtual" else "credit",
+            account_name=f"{bank_name}{KIND_LABEL[kind]}账户",
+        )
         task = ctx.store.add_task(
             user_id=user.user_id,
             kind="reminder",
@@ -596,8 +634,10 @@ class CardApplyTool(Tool):
             brand=bank_name,
             tail=sequence,
             status="active",
+            balance=0.0,
             daily_limit=20_000.0,
             single_limit=5_000.0,
+            payment_password_hash=hash_card_password(str(card_password)),
             online_enabled=True,
             overseas_enabled=False,
             contactless_enabled=True,
@@ -606,6 +646,12 @@ class CardApplyTool(Tool):
         )
         ctx.store.cards[card.card_id] = card
         ctx.store.touch(card)
+        ensure_card_account(
+            ctx.store,
+            card,
+            account_kind="current",
+            account_name=f"{bank_name}{account_class}账户",
+        )
         ctx.store.log(
             "card.open_debit",
             card_id=card.card_id,
@@ -622,6 +668,7 @@ class CardApplyTool(Tool):
             f"  预留手机号：{phone_digits[:3]}****{phone_digits[-4:]}",
             f"  取款密码：已设置并二次确认（强度 {password_check['strength']}，"
             f"{password_check['score']}/100；明文密码未保存）",
+            f"  当前余额：{card.balance:,.2f} 元",
             "  当前状态：正常（仅为本原型生成的模拟卡）",
             f"  单笔限额 {card.single_limit:,.0f} 元，日限额 {card.daily_limit:,.0f} 元",
             "  已同步到「资料与卡片设置」。",
@@ -734,6 +781,7 @@ class CardApplyTool(Tool):
                 brand=bank_name,
                 tail="****",
                 status="pending",
+                balance=0.0,
                 credit_limit=reference_limit,
                 daily_limit=reference_limit,
                 single_limit=min(reference_limit / 5, 5_000.0),
@@ -745,6 +793,12 @@ class CardApplyTool(Tool):
             )
             ctx.store.cards[card.card_id] = card
             ctx.store.touch(card)
+            ensure_card_account(
+                ctx.store,
+                card,
+                account_kind="credit",
+                account_name=f"{bank_name}信用卡账户",
+            )
             task = ctx.store.add_task(
                 user_id=ctx.user_id,
                 kind="reminder",
@@ -890,6 +944,111 @@ class CardApplyTool(Tool):
             "score_adjust": score_adjust,
             "quality": quality,
         }
+
+
+class CreditCardRepayTool(Tool):
+    """Repay a credit card from one of the customer's deposit cards."""
+
+    name = "card.repay"
+    category = "卡片管理"
+    description = "使用本人借记卡偿还信用卡账单，需要付款卡交易密码"
+    risk_level = "medium"
+    requires_confirmation = True
+    params = [
+        ToolParam("card", "string", True, "待还款信用卡，如 信用卡/尾号8877"),
+        ToolParam("from_card", "string", True, "付款借记卡，如 工资卡/尾号6222"),
+        ToolParam("amount", "number", True, "还款金额（元）"),
+        ToolParam("payment_password", "string", True, "付款卡 6 位交易密码"),
+    ]
+    examples = ["用工资卡还信用卡3000元", "从尾号6222还信用卡1000块"]
+
+    def run(  # type: ignore[override]
+        self,
+        ctx: ToolContext,
+        card: str,
+        from_card: str,
+        amount: Any,
+        payment_password: str,
+    ) -> ToolResult:
+        from finagent.tools.transfer_tools import resolve_payment_card
+
+        try:
+            value = round(float(amount), 2)
+        except (TypeError, ValueError):
+            return ToolResult(False, "还款金额无法识别。")
+        if value <= 0:
+            return ToolResult(False, "还款金额必须大于 0。")
+        target = _find_card(ctx, card)
+        source = resolve_payment_card(ctx, from_card)
+        if target is None or target.kind != "credit":
+            return ToolResult(False, "没有找到待还款的信用卡。")
+        if source is None:
+            return ToolResult(False, "没有找到可用的付款借记卡。")
+        if target.status != "active":
+            return ToolResult(False, f"信用卡当前状态为 {STATUS_LABEL.get(target.status, target.status)}，不能还款。")
+        if not verify_card_password(source, payment_password):
+            return ToolResult(False, "付款卡交易密码验证失败，信用卡还款未执行。")
+        if source.available < value:
+            return ToolResult(
+                False,
+                f"付款卡余额不足：可用 {source.available:,.2f} 元，需要 {value:,.2f} 元。",
+            )
+        if value > target.used:
+            return ToolResult(
+                False,
+                f"还款金额超过信用卡当前欠款 {target.used:,.2f} 元。",
+            )
+        decision = ctx.risk.check_operation(
+            "card.repay",
+            {"amount": value, "account": source.card_id},
+            ctx.user,
+            account=source,
+        )
+        if decision.blocked:
+            return ToolResult(False, "信用卡还款未执行：" + decision.summary())
+
+        source_before = source.balance
+        used_before = target.used
+        update_card_balance(ctx.store, source, source_before - value)
+        update_credit_usage(ctx.store, target, used_before - value)
+        txn = ctx.store.add_transaction(
+            user_id=ctx.user_id,
+            account_id=source.account_id,
+            amount=-value,
+            merchant=f"{target.brand}信用卡还款",
+            category="信用卡还款",
+            channel="本行还款",
+            counterparty=f"信用卡尾号{target.tail}",
+            note="信用卡账单还款",
+            tags=["credit_card_repayment", f"card:{target.card_id}"],
+        )
+        asset_total_after = card_asset_total(ctx.store, ctx.user_id)
+        lines = [
+            f"信用卡还款成功：{value:,.2f} 元",
+            f"  付款卡：{source.brand}（尾号 {source.tail}） "
+            f"{source_before:,.2f} → {source.balance:,.2f} 元",
+            f"  信用卡：尾号 {target.tail} 已用额度 "
+            f"{used_before:,.2f} → {target.used:,.2f} 元",
+            f"  信用卡可用额度：{target.available:,.2f} 元",
+            f"  还款流水：{txn.txn_id}",
+            f"  银行卡资产总额：{asset_total_after:,.2f} 元",
+        ]
+        if decision.reasons:
+            lines.append("  风控提示：" + decision.summary())
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            data={
+                "credit_card_id": target.card_id,
+                "payment_card_id": source.card_id,
+                "amount": value,
+                "credit_used_after": target.used,
+                "payment_card_balance_after": source.balance,
+                "txn_id": txn.txn_id,
+                "asset_total_after": asset_total_after,
+            },
+            summary=f"已用 {source.brand} 尾号 {source.tail} 还款 {value:,.2f} 元",
+        )
 
 
 class CardLimitAdjustTool(Tool):
@@ -1097,10 +1256,14 @@ class CardReportLostTool(Tool):
             card_id=ctx.store.next_id("cards"),
             user_id=ctx.user_id,
             kind=target.kind,
+            account_id=target.account_id,
             brand=target.brand,
             tail="****",
             status="pending",
+            balance=target.balance,
             credit_limit=target.credit_limit,
+            used=target.used,
+            payment_password_hash=target.payment_password_hash,
             daily_limit=target.daily_limit,
             single_limit=target.single_limit,
             issued_at=ctx.clock.iso(),

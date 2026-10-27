@@ -23,10 +23,13 @@ from finagent.tools import (
     CardListTool,
     CardReportLostTool,
     CardUnlockTool,
+    CreditCardRepayTool,
     DailyBriefTool,
+    GiftRecommendTool,
     GoalCreateTool,
     GoalListTool,
     HelpTool,
+    InternalTransferTool,
     ListScheduledTransferTool,
     PortfolioTool,
     ProductRecommendTool,
@@ -94,6 +97,7 @@ def build_default_registry() -> ToolRegistry:
             AboutTool(),
             # 智能转账
             TransferTool(),
+            InternalTransferTool(),
             ScheduledTransferTool(),
             SplitBillTool(),
             ListScheduledTransferTool(),
@@ -115,6 +119,7 @@ def build_default_registry() -> ToolRegistry:
             CardListTool(),
             CardApplyTool(),
             CardBindTool(),
+            CreditCardRepayTool(),
             CardLimitAdjustTool(),
             CardControlTool(),
             CardFreezeTool(),
@@ -128,6 +133,7 @@ def build_default_registry() -> ToolRegistry:
             # 跨场景联动
             GoalCreateTool(),
             GoalListTool(),
+            GiftRecommendTool(),
             ScheduleGiftTool(),
             DailyBriefTool(),
         ]

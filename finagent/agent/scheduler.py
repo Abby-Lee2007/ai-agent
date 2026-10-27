@@ -65,6 +65,9 @@ class Scheduler:
                     payee=payload.get("payee", ""),
                     amount=payload.get("amount", 0),
                     note=payload.get("note", task.title),
+                    channel=payload.get("channel", "phone"),
+                    account=payload.get("account", ""),
+                    payment_verified=bool(payload.get("payment_verified", False)),
                 )
                 task.status = "done" if result.ok else "failed"
                 task.executed_at = self.clock.iso()

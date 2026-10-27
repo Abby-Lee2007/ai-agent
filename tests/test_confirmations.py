@@ -10,24 +10,30 @@ class TestBirthdayConfirmation(unittest.TestCase):
     def setUp(self):
         self.agent = make_agent()
 
-    def test_birthday_requires_explicit_date_even_when_profile_has_it(self):
+    def test_birthday_uses_profile_and_confirms_only_after_gift_selection(self):
         reply = self.agent.handle("我老婆快生日了，帮我准备一下")
 
         self.assertEqual(reply.kind, "question")
         self.assertIsNotNone(self.agent.session.pending)
-        self.assertIn("birthday", self.agent.session.pending.missing)
+        self.assertNotIn("birthday", self.agent.session.pending.missing)
+        self.assertIn("2026-11-20", reply.text)
         self.assertEqual(self.agent.store.goals_of("u_001", status="active"), [])
 
-        reply = self.agent.handle("11月20日")
+        for answer in ("沿用资料", "无", "1000"):
+            reply = self.agent.handle(answer)
+        self.assertEqual(reply.kind, "question")
+        self.assertEqual(self.agent.session.pending.kind, "gift_choice")
+
+        reply = self.agent.handle("第1个")
         self.assertEqual(reply.kind, "confirm")
-        self.assertEqual(self.agent.session.pending.kind, "data_confirm")
-        self.assertIn("关键信息", reply.text)
+        self.assertEqual(self.agent.session.pending.kind, "confirm")
+        self.assertIn("请回复「确认」", reply.text)
         self.assertIn("2026-11-20", reply.text)
 
         reply = self.agent.handle("确认")
         self.assertTrue(reply.ok)
         self.assertEqual(reply.kind, "executed")
-        self.assertEqual(len(reply.trace), 3)
+        self.assertGreaterEqual(len(reply.trace), 2)
 
 
 class TestQuestionnaireConfirmation(unittest.TestCase):
@@ -64,7 +70,7 @@ class TestActionDataConfirmation(unittest.TestCase):
         reply = agent.handle("给王强转1块，用微信，从不存在卡")
 
         self.assertFalse(reply.ok)
-        self.assertIn("付款账户", reply.text)
+        self.assertIn("付款银行卡", reply.text)
         self.assertAlmostEqual(agent.store.primary_account("u_001").balance, before, places=2)
 
     def test_transfer_review_shows_resolved_payee_channel_and_payer(self):
@@ -78,11 +84,12 @@ class TestActionDataConfirmation(unittest.TestCase):
         self.assertEqual(agent.session.pending.kind, "data_confirm")
         self.assertIn("王强", reply.text)
         self.assertIn("微信", reply.text)
-        self.assertIn("活期账户", reply.text)
+        self.assertIn("付款银行卡", reply.text)
         self.assertIn("6222", reply.text)
         self.assertAlmostEqual(account.balance, before, places=2)
 
         reply = agent.handle("确认")
+        reply = agent.handle("246810")
         self.assertTrue(reply.ok)
         self.assertAlmostEqual(account.balance, before - 1.0, places=2)
 
@@ -153,11 +160,13 @@ class TestActionDataConfirmation(unittest.TestCase):
         agent = make_agent()
 
         reply = agent.handle("买1万块稳利债券A")
+        self.assertEqual(reply.kind, "question")
+        reply = agent.handle("用工资卡")
 
         self.assertEqual(reply.kind, "confirm")
         self.assertEqual(agent.session.pending.kind, "data_confirm")
         self.assertIn("稳利债券A", reply.text)
-        self.assertIn("活期账户", reply.text)
+        self.assertIn("付款银行卡", reply.text)
         self.assertIn("6222", reply.text)
 
     def test_aa_review_shows_channel_total_and_share(self):
@@ -190,6 +199,7 @@ class TestActionDataConfirmation(unittest.TestCase):
             if holding.product_id == product.product_id
         )
         agent.handle("买1万块稳利债券A")
+        agent.handle("用工资卡")
 
         review = agent.handle("确认")
         self.assertEqual(review.kind, "question")
@@ -205,7 +215,9 @@ class TestActionDataConfirmation(unittest.TestCase):
         self.assertAlmostEqual(current, before, places=2)
 
         agent.clock.advance(hours=24)
-        done = agent.handle("确认")
+        auth = agent.handle("确认")
+        self.assertEqual(auth.kind, "question")
+        done = agent.handle("246810")
         self.assertTrue(done.ok)
         self.assertEqual(done.kind, "executed")
         after = sum(

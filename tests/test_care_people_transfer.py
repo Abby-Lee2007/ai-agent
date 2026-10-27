@@ -88,6 +88,11 @@ class TestCarePeopleTransfer(unittest.TestCase):
                     "确认",
                     request_id=f"care-transfer-confirm-{channel}",
                 )
+                done = service.send_message(
+                    session_id,
+                    "246810",
+                    request_id=f"care-transfer-password-{channel}",
+                )
                 self.assertTrue(done["reply"]["ok"])
                 self.assertIn("转账成功", done["reply"]["text"])
 

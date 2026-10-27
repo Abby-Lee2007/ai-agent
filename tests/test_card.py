@@ -13,7 +13,9 @@ class TestCardManagement(unittest.TestCase):
     def test_card_list(self):
         reply = self.agent.handle("我有哪些卡")
         self.assertEqual(reply.intent, "card.list")
-        self.assertEqual(reply.data["count"], 3)
+        self.assertEqual(reply.data["count"], 4)
+        self.assertIn("32,860.52", reply.text)
+        self.assertIn("150,000.00", reply.text)
 
     def test_add_existing_card_and_open_new_card_are_different_intents(self):
         bind_agent = make_agent()
@@ -346,6 +348,24 @@ class TestCardManagement(unittest.TestCase):
         run_to_completion(self.agent, self.agent.handle("我的卡丢了，帮我挂失"))
         reply = run_to_completion(self.agent, self.agent.handle("解冻信用卡"))
         self.assertFalse(reply.ok)
+
+    def test_credit_card_repayment_uses_debit_card_and_updates_both(self):
+        debit = self.agent.store.find_card("u_001", "工资卡")
+        credit = self.agent.store.find_card("u_001", "信用卡")
+        debit_before = debit.balance
+        used_before = credit.used
+
+        reply = self.agent.handle("用工资卡还信用卡3000元")
+        self.assertEqual(reply.kind, "confirm")
+        reply = self.agent.handle("确认")
+        self.assertEqual(self.agent.session.pending.kind, "payment_auth")
+        reply = self.agent.handle("246810")
+
+        self.assertTrue(reply.ok)
+        self.assertAlmostEqual(debit.balance, debit_before - 3000, places=2)
+        self.assertAlmostEqual(credit.used, used_before - 3000, places=2)
+        self.assertIn("信用卡还款成功", reply.text)
+        self.assertIn("银行卡资产总额", reply.text)
 
 
 if __name__ == "__main__":

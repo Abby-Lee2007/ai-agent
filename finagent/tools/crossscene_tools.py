@@ -10,10 +10,11 @@
 """
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from finagent.data.models import User
+from finagent.data.models import MerchantOffer, User
 from finagent.data.providers import MerchantOfferProvider
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, format_money, render_table
 from finagent.tools.transfer_tools import resolve_account
@@ -118,6 +119,140 @@ def lookup_person(ctx: ToolContext, name: str) -> Tuple[Optional[User], Optional
                     upcoming = date(today.year + 1, 3, 1)
             birthday = upcoming
     return person, birthday
+
+
+def lookup_person_preferences(ctx: ToolContext, name: str) -> Dict[str, Any]:
+    """Read gift preferences and restrictions from the editable care-person profile."""
+    prefs = ctx.user.preferences or {}
+    keyword = (name or "").strip()
+    if keyword in {"老婆", "妻子", "爱人", "配偶", "老公", "丈夫"}:
+        keyword = str(prefs.get("spouse") or keyword)
+    for item in prefs.get("care_people") or []:
+        if not isinstance(item, dict):
+            continue
+        person_name = str(item.get("name") or "").strip()
+        relation = str(item.get("relation") or "").strip()
+        if (
+            person_name == keyword
+            or (person_name and person_name in name)
+            or (relation and relation in name)
+        ):
+            return {
+                "favorite_gift": list(item.get("favorite_gift") or []),
+                "avoid": list(item.get("avoid") or []),
+                "relation": relation,
+            }
+    return {
+        "favorite_gift": list(prefs.get("favorite_gift") or []),
+        "avoid": list(prefs.get("avoid") or []),
+        "relation": "配偶" if name in {"老婆", "妻子", "爱人"} else "",
+    }
+
+
+GIFT_OFFER_LABELS = {
+    "OFFER000005": "定制相册",
+    "OFFER000006": "银饰礼盒",
+    "OFFER000007": "双人手作体验",
+    "OFFER000008": "纪念照片书",
+    "OFFER000009": "定制饰品",
+}
+
+
+def offer_product_label(offer: MerchantOffer) -> str:
+    return GIFT_OFFER_LABELS.get(offer.offer_id, f"{offer.merchant}{offer.item}")
+
+
+def ensure_gift_offer_catalog(ctx: ToolContext) -> None:
+    """Backfill non-flower, non-food gifts for editable preference filtering."""
+    catalog = [
+        ("OFFER000005", "时光纪", "礼物", 269.0, "定制相册"),
+        ("OFFER000006", "拾光银饰", "礼物", 499.0, "银饰礼盒"),
+        ("OFFER000007", "周末手作", "礼物", 399.0, "双人手作体验"),
+        ("OFFER000008", "纸上时光", "礼物", 329.0, "纪念照片书"),
+        ("OFFER000009", "匠作工坊", "礼物", 599.0, "定制饰品"),
+    ]
+    for offer_id, merchant, item, price, label in catalog:
+        GIFT_OFFER_LABELS[offer_id] = label
+        if offer_id in ctx.store.merchant_offers:
+            continue
+        offer = MerchantOffer(
+            offer_id=offer_id,
+            merchant=merchant,
+            item=item,
+            price=price,
+            inventory=20,
+            delivery_cities=[ctx.user.city],
+            delivery_radius_km=20.0,
+            available_from="2026-01-01",
+            available_to="2027-12-31",
+            source="catalog:gift-demo",
+            is_demo=True,
+        )
+        offer.updated_at = ctx.clock.iso()
+        ctx.store.merchant_offers[offer.offer_id] = offer
+        ctx.store.touch(offer)
+
+
+def remember_gift_preferences(
+    ctx: ToolContext,
+    person: str,
+    preferences: str,
+    avoid: str,
+) -> None:
+    """Persist newly supplied gift preferences to the related care-person profile."""
+    user = ctx.user
+    prefs = dict(user.preferences or {})
+    people = list(prefs.get("care_people") or [])
+    target = None
+    target_index = -1
+    spouse_name = str(prefs.get("spouse") or "")
+    for index, item in enumerate(people):
+        if not isinstance(item, dict):
+            continue
+        if (
+            str(item.get("name") or "") in {person, spouse_name}
+            or str(item.get("relation") or "") in {"配偶", "老婆", "妻子", "爱人"}
+        ):
+            target = dict(item)
+            target_index = index
+            break
+
+    def append_values(existing: Any, value: str, ignored: set[str]) -> List[str]:
+        if isinstance(existing, list):
+            values = [str(item).strip() for item in existing if str(item).strip()]
+        else:
+            values = [
+                item.strip()
+                for item in re.split(r"[,，、]", str(existing or ""))
+                if item.strip()
+            ]
+        cleaned = str(value or "").strip()
+        if cleaned and cleaned not in ignored and cleaned not in values:
+            values.append(cleaned)
+        return values
+
+    next_favorites = append_values(
+        (target or {}).get("favorite_gift", prefs.get("favorite_gift")),
+        preferences,
+        {"沿用资料", "没有补充", "无"},
+    )
+    next_avoid = append_values(
+        (target or {}).get("avoid", prefs.get("avoid")),
+        avoid,
+        {"无", "没有", "没有过敏", "无过敏"},
+    )
+    if target is not None and target_index >= 0:
+        target["favorite_gift"] = next_favorites
+        target["avoid"] = next_avoid
+        people[target_index] = target
+        prefs["care_people"] = people
+    else:
+        prefs["favorite_gift"] = next_favorites
+        prefs["avoid"] = next_avoid
+    user.preferences = prefs
+    user.source = "user:profile"
+    user.updated_at = ctx.clock.iso()
+    ctx.store.touch(user)
 
 
 class GoalCreateTool(Tool):
@@ -247,6 +382,250 @@ class GoalListTool(Tool):
         )
 
 
+class GiftRecommendTool(Tool):
+    """Recommend gift bundles without placing an order."""
+
+    name = "crossscene.gift_recommend"
+    category = "跨场景联动"
+    description = "结合对象偏好、禁忌和预算生成可切换的生日礼物方案"
+    risk_level = "low"
+    params = [
+        ToolParam("person", "string", True, "收礼人"),
+        ToolParam("birthday", "string", True, "生日日期"),
+        ToolParam("budget", "number", True, "礼物预算"),
+        ToolParam("preferences", "string", False, "补充喜好"),
+        ToolParam("avoid", "string", False, "过敏或禁忌"),
+        ToolParam("offset", "integer", False, "换一批偏移量"),
+    ]
+    examples = ["给我老婆推荐生日礼物", "换一批生日礼物"]
+
+    def run(  # type: ignore[override]
+        self,
+        ctx: ToolContext,
+        person: str,
+        birthday: str,
+        budget: Any,
+        preferences: str = "",
+        avoid: str = "",
+        offset: int = 0,
+    ) -> ToolResult:
+        target, parsed_birthday = lookup_person(ctx, person)
+        display_name = target.name if target else person
+        profile = lookup_person_preferences(ctx, person)
+        remember_gift_preferences(ctx, display_name, preferences, avoid)
+        try:
+            max_budget = round(float(budget), 2)
+        except (TypeError, ValueError):
+            return ToolResult(False, "礼物预算无法识别。")
+        if max_budget <= 0:
+            return ToolResult(False, "礼物预算必须大于 0。")
+        birthday_day = parse_date(str(birthday), ctx.clock.today(), base=parsed_birthday)
+        if birthday_day is None:
+            return ToolResult(False, "生日日期无法识别，请重新输入。")
+        delivery_day = birthday_day - timedelta(days=2)
+        avoid_text = " ".join([
+            " ".join(profile.get("avoid") or []),
+            str(avoid or ""),
+        ])
+        preference_text = " ".join([
+            " ".join(profile.get("favorite_gift") or []),
+            str(preferences or ""),
+        ])
+
+        ensure_gift_offer_catalog(ctx)
+        offers = []
+        for offer in ctx.store.merchant_offers.values():
+            if offer.inventory <= 0:
+                continue
+            if offer.delivery_cities and ctx.user.city not in offer.delivery_cities:
+                continue
+            if offer.available_from and delivery_day.isoformat() < offer.available_from:
+                continue
+            if offer.available_to and delivery_day.isoformat() > offer.available_to:
+                continue
+            offers.append(offer)
+        flowers = sorted(
+            [item for item in offers if item.item == "鲜花"],
+            key=lambda item: item.price,
+        )
+        cakes = sorted(
+            [item for item in offers if item.item == "蛋糕"],
+            key=lambda item: item.price,
+        )
+        gifts = sorted(
+            [item for item in offers if item.item == "礼物"],
+            key=lambda item: item.price,
+        )
+        if any(word in avoid_text for word in ("花粉", "鲜花", "花过敏")):
+            flowers = []
+        if any(word in avoid_text for word in ("蛋糕", "甜食", "奶", "蛋过敏", "麸质")):
+            cakes = []
+
+        options: List[Dict[str, Any]] = []
+
+        def add_option(name: str, items: List[Any], reason: str) -> None:
+            if not items:
+                return
+            total = round(sum(item.price for item in items), 2)
+            key = tuple(item.offer_id for item in items)
+            if total > max_budget or any(option["key"] == key for option in options):
+                return
+            options.append({
+                "key": key,
+                "name": name,
+                "items": [
+                    {
+                        "item": item.item,
+                        "label": offer_product_label(item),
+                        "offer_id": item.offer_id,
+                        "merchant": item.merchant,
+                        "price": item.price,
+                    }
+                    for item in items
+                ],
+                "total": total,
+                "reason": reason,
+            })
+
+        if flowers and cakes:
+            flower_label = offer_product_label(flowers[0])
+            cake_label = offer_product_label(cakes[0])
+            premium_flower = offer_product_label(flowers[-1])
+            premium_cake = offer_product_label(cakes[-1])
+            add_option(
+                f"{flower_label} + {cake_label}",
+                [flowers[0], cakes[0]],
+                "经典组合，兼顾仪式感和分享氛围",
+            )
+            add_option(
+                f"{premium_flower} + {premium_cake}",
+                [flowers[-1], cakes[-1]],
+                "预算内品质升级，适合重视仪式感的对象",
+            )
+        if flowers:
+            add_option(
+                offer_product_label(flowers[0]),
+                [flowers[0]],
+                "简洁稳妥，预算占用较低",
+            )
+            if len(flowers) > 1:
+                add_option(
+                    offer_product_label(flowers[-1]),
+                    [flowers[-1]],
+                    "更精致的花材与包装",
+                )
+        if cakes:
+            add_option(
+                offer_product_label(cakes[0]),
+                [cakes[0]],
+                "适合喜欢甜品或需要与家人朋友分享",
+            )
+            if len(cakes) > 1:
+                add_option(
+                    offer_product_label(cakes[-1]),
+                    [cakes[-1]],
+                    "预算内提升口味和造型",
+                )
+        if gifts:
+            gift_reasons = [
+                "避开鲜花和食物禁忌，适合长期留存",
+                "预算内提升质感和纪念意义",
+                "适合记录共同经历，实用性较强",
+            ]
+            for index, gift in enumerate(gifts[:3]):
+                add_option(
+                    offer_product_label(gift),
+                    [gift],
+                    gift_reasons[index],
+                )
+            if len(gifts) >= 2:
+                first_gift = gifts[0]
+                second_gift = gifts[2] if len(gifts) >= 3 else gifts[1]
+                add_option(
+                    f"{offer_product_label(first_gift)} + {offer_product_label(second_gift)}",
+                    [first_gift, second_gift],
+                    "两份无花粉、无食物风险的礼物组合",
+                )
+            if len(gifts) >= 4:
+                first_gift = gifts[1]
+                second_gift = gifts[3]
+                add_option(
+                    f"{offer_product_label(first_gift)} + {offer_product_label(second_gift)}",
+                    [first_gift, second_gift],
+                    "兼顾纪念意义和实用体验",
+                )
+        if not options:
+            return ToolResult(
+                False,
+                f"在预算 {max_budget:,.2f} 元和当前禁忌条件下没有可预约礼物，"
+                "请提高预算或调整禁忌条件。",
+                data={"gift_choice": None},
+            )
+
+        start = int(offset or 0) % len(options)
+        rotated = options[start:] + options[:start]
+        visible = rotated[:3]
+        for index, option in enumerate(visible, start=1):
+            option["index"] = index
+        rows = [
+            [
+                str(option["index"]),
+                option["name"],
+                " + ".join(item["label"] for item in option["items"]),
+                f"{option['total']:,.2f}",
+                "、".join(sorted({item["merchant"] for item in option["items"]})),
+                option["reason"],
+            ]
+            for option in visible
+        ]
+        known_preferences = "、".join(profile.get("favorite_gift") or []) or "未记录"
+        known_avoid = "、".join(profile.get("avoid") or []) or "无"
+        lines = [
+            f"为「{display_name}」准备的生日礼物候选（预算 {max_budget:,.2f} 元）：",
+            f"  生日：{birthday_day.isoformat()}；计划提前 2 天（{delivery_day.isoformat()}）配送",
+            f"  已知偏好：{known_preferences}；过敏/禁忌：{known_avoid}",
+        ]
+        if preferences:
+            lines.append(f"  本次补充喜好：{preferences}")
+        if avoid:
+            lines.append(f"  本次补充禁忌：{avoid}")
+        lines.extend([
+            render_table(
+                ["#", "方案", "包含", "预计总价", "商户", "推荐理由"],
+                rows,
+            ),
+            "请回复「第1个」「第2个」或「第3个」选择方案；也可以回复「换一批」继续浏览。",
+            "在你明确选择前不会锁定资金，也不会创建任何礼物预约。",
+        ])
+        context = {
+            "person": person,
+            "display_name": display_name,
+            "birthday": birthday_day.isoformat(),
+            "budget": max_budget,
+            "preferences": preferences,
+            "avoid": avoid,
+            "offset": (start + len(visible)) % len(options),
+            "options": visible,
+        }
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            data={
+                "gift_choice": context,
+                "options": [
+                    {
+                        "index": option["index"],
+                        "name": option["name"],
+                        "total": option["total"],
+                        "items": option["items"],
+                    }
+                    for option in visible
+                ],
+            },
+            summary=f"已为{display_name}生成 {len(visible)} 组生日礼物方案",
+        )
+
+
 class ScheduleGiftTool(Tool):
     """预约下单（跨场景执行环节）。"""
 
@@ -259,6 +638,7 @@ class ScheduleGiftTool(Tool):
         ToolParam("item", "string", True, "礼物类型，如 鲜花 / 蛋糕"),
         ToolParam("date", "string", True, "执行日期，如 2026-11-18 / 生日前2天"),
         ToolParam("budget", "number", False, "预算（元）"),
+        ToolParam("offer_id", "string", False, "已选定的商户方案编号"),
         ToolParam("note", "string", False, "贺卡留言"),
     ]
     examples = ["生日前2天给老婆订一束花", "生日当天订蛋糕"]
@@ -271,6 +651,7 @@ class ScheduleGiftTool(Tool):
         item: str,
         date: str,
         budget: Any = None,
+        offer_id: str = "",
         note: str = "",
     ) -> ToolResult:
         store = ctx.store
@@ -290,12 +671,14 @@ class ScheduleGiftTool(Tool):
             if getattr(ctx, "providers", None) is not None
             else MerchantOfferProvider(store)
         )
-        offer = merchant_provider.find_offer(
-            item=item,
-            budget=max_budget,
-            delivery_date=run_day.isoformat(),
-            city=ctx.user.city,
-        )
+        offer = store.merchant_offers.get(offer_id) if offer_id else None
+        if offer is None:
+            offer = merchant_provider.find_offer(
+                item=item,
+                budget=max_budget,
+                delivery_date=run_day.isoformat(),
+                city=ctx.user.city,
+            )
         if offer is None:
             return ToolResult(
                 False,

@@ -48,13 +48,19 @@ class TestAgentSessionService(unittest.TestCase):
             message="确认",
             request_id="retry-safe-confirm",
         )
+        completed = self.service.send_message(
+            session_id=session_id,
+            message="246810",
+            request_id="retry-safe-password",
+        )
         after_first = account.balance
         second = self.service.send_message(
             session_id=session_id,
-            message="确认",
-            request_id="retry-safe-confirm",
+            message="246810",
+            request_id="retry-safe-password",
         )
 
+        self.assertTrue(second["replayed"])
         self.assertEqual(completed["reply"]["text"], second["reply"]["text"])
         self.assertAlmostEqual(after_first, before - 1.0, places=2)
         self.assertAlmostEqual(account.balance, after_first, places=2)
