@@ -1197,6 +1197,8 @@
       font: inherit;
     }
     .settings-field.wide { grid-column: 1 / -1; }
+    .care-person .settings-grid { align-items: start; }
+    .care-person .settings-field { min-width: 0; }
     .settings-hint {
       display: block;
       margin-top: 5px;
@@ -2810,6 +2812,7 @@
         bankCard.maxLength = 23;
         bankCard.placeholder = "请输入完整 16-19 位银行卡号";
         const bankCardField = makeSettingsField("银行卡号（完整卡号）", bankCard);
+        bankCardField.classList.add("wide");
         const bankCardHint = document.createElement("small");
         bankCardHint.className = "settings-hint bank-card-hint";
         bankCardHint.textContent = "请输入完整卡号（16-19 位，通常以 62 开头），保存后仅展示后四位。";
@@ -2817,9 +2820,13 @@
         const gifts = makeInput("text", (person.favorite_gift || []).join(","));
         gifts.dataset.field = "favorite_gift";
         gifts.placeholder = "鲜花,蛋糕";
+        const giftsField = makeSettingsField("偏好礼物", gifts);
+        giftsField.classList.add("wide");
         const avoid = makeInput("text", (person.avoid || []).join(","));
         avoid.dataset.field = "avoid";
         avoid.placeholder = "海鲜";
+        const avoidField = makeSettingsField("需要避开", avoid);
+        avoidField.classList.add("wide");
         grid.append(
           makeSettingsField("姓名", name),
           makeSettingsField("关系", relation),
@@ -2830,8 +2837,8 @@
           makeSettingsField("支付宝账号", alipay),
           makeSettingsField("开户银行", bankName),
           bankCardField,
-          makeSettingsField("偏好礼物", gifts),
-          makeSettingsField("需要避开", avoid),
+          giftsField,
+          avoidField,
         );
         row.append(head, grid);
         carePeopleList.appendChild(row);
