@@ -54,6 +54,7 @@ RE_RECEIPT_PATH = re.compile(
 
 RELATION_WORDS = ["老婆", "老公", "爱人", "妻子", "丈夫", "妈妈", "爸爸", "母亲", "父亲",
                   "房东", "老师", "老板", "女朋友", "男朋友", "未婚妻", "未婚夫"]
+GENERIC_PERSON_VALUES = {"他人", "别人", "对方", "某人", "有人", "某个人", "谁"}
 
 # 同义说法归一：用户不会总用我们预设的动词
 SYNONYMS = [
@@ -685,10 +686,12 @@ class RuleIntentParser:
                 return word
         match = RE_NAME_AFTER_GIVE.search(text)
         if match:
-            return self._clean_name(match.group(1))
+            name = self._clean_name(match.group(1))
+            return name if name not in GENERIC_PERSON_VALUES else None
         match = RE_NAME_BEFORE_VERB.search(text)
         if match:
-            return self._clean_name(match.group(1))
+            name = self._clean_name(match.group(1))
+            return name if name not in GENERIC_PERSON_VALUES else None
         return None
 
     @staticmethod

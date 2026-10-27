@@ -10,6 +10,25 @@ class TestSmartTransfer(unittest.TestCase):
     def setUp(self):
         self.agent = make_agent()
 
+    def test_generic_transfer_shortcut_asks_for_payee(self):
+        reply = self.agent.handle("给他人转账")
+
+        self.assertEqual(reply.intent, "transfer.send")
+        self.assertEqual(reply.kind, "question")
+        self.assertEqual(self.agent.session.pending.missing[0], "payee")
+        self.assertNotIn("payee", self.agent.session.pending.slots)
+        self.assertIn("谁", reply.text)
+
+        reply = self.agent.handle("他人")
+        self.assertEqual(reply.kind, "question")
+        self.assertEqual(self.agent.session.pending.missing[0], "payee")
+        self.assertNotIn("payee", self.agent.session.pending.slots)
+
+        reply = self.agent.handle("王强")
+        self.assertEqual(reply.kind, "question")
+        self.assertEqual(self.agent.session.pending.slots.get("payee"), "王强")
+        self.assertEqual(self.agent.session.pending.missing[0], "amount")
+
     def test_transfer_by_alias_and_note(self):
         reply = send_money(self.agent, "给老婆转2000块，备注生日礼物")
         self.assertEqual(reply.intent, "transfer.send")

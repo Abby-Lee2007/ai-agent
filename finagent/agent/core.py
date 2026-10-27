@@ -33,7 +33,7 @@ from finagent.agent.subscription_lifecycle import process_subscription_lifecycle
 from finagent.data.store import Clock, DataStore
 from finagent.data.market import MarketDataProvider
 from finagent.data.providers import build_data_providers
-from finagent.nlu.intent_parser import IntentParser
+from finagent.nlu.intent_parser import GENERIC_PERSON_VALUES, IntentParser
 from finagent.nlu.intent_parser import normalize_synonyms
 from finagent.nlu.intent_schema import Intent
 from finagent.nlu.membership_parser import (
@@ -1619,6 +1619,8 @@ class BankingAgent:
                 if len(text) > 20:
                     return False
                 if NOISE_VALUE_RE.search(text):
+                    return False
+                if slot in {"payee", "person"} and text in GENERIC_PERSON_VALUES:
                     return False
         return True
 
