@@ -230,6 +230,154 @@
       overflow-wrap: normal;
       scrollbar-width: thin;
     }
+    .subscription-copy {
+      margin: 0 0 10px;
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .subscription-table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      scrollbar-width: thin;
+    }
+    .subscription-table {
+      width: 100%;
+      min-width: 720px;
+      border-collapse: collapse;
+      table-layout: fixed;
+      color: var(--ink);
+      font-size: 12.5px;
+    }
+    .subscription-table th,
+    .subscription-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: middle;
+    }
+    .subscription-table th {
+      color: var(--muted);
+      background: var(--surface-soft);
+      font-size: 11px;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+    .subscription-table td {
+      white-space: nowrap;
+    }
+    .subscription-table th:nth-child(1) { width: 27%; }
+    .subscription-table th:nth-child(2) { width: 15%; }
+    .subscription-table th:nth-child(3) { width: 15%; }
+    .subscription-table th:nth-child(4) { width: 13%; }
+    .subscription-table th:nth-child(5) { width: 13%; }
+    .subscription-table th:nth-child(6) { width: 17%; }
+    .subscription-table tbody tr:last-child td { border-bottom: 0; }
+    .subscription-table tbody tr:hover td { background: #fbfdfc; }
+    .subscription-table tbody tr.inactive td { background: #fffaf4; }
+    .subscription-service {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .subscription-service strong {
+      font-size: 12.5px;
+      overflow-wrap: anywhere;
+    }
+    .subscription-service span {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: normal;
+    }
+    .subscription-service .subscription-service-alert {
+      color: var(--warning);
+      font-weight: 700;
+    }
+    .subscription-amount {
+      text-align: right !important;
+      font-family: "Cascadia Mono", "Consolas", monospace;
+      font-variant-numeric: tabular-nums;
+      font-weight: 750;
+    }
+    .subscription-price-note {
+      display: block;
+      margin-top: 2px;
+      color: var(--warning);
+      font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+      font-size: 10.5px;
+      font-weight: 500;
+    }
+    .subscription-renewal {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 750;
+    }
+    .subscription-renewal.is-on {
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+    }
+    .subscription-renewal.is-off {
+      color: var(--danger);
+      background: #fdecea;
+    }
+    .subscription-renew-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 5px;
+      white-space: normal !important;
+    }
+    .subscription-resume {
+      min-width: 72px;
+      height: 26px;
+      padding: 0 8px;
+      border: 1px solid #b8d7cf;
+      border-radius: 4px;
+      color: var(--accent-strong);
+      background: var(--surface);
+      font-size: 11px;
+      font-weight: 750;
+    }
+    .subscription-resume:hover,
+    .subscription-resume:focus-visible {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      outline: none;
+    }
+    .subscription-state-note {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 10.5px;
+    }
+    .subscription-state-note.is-active { color: var(--accent-strong); }
+    .subscription-state-note.is-error { color: var(--danger); }
+    .subscription-pending {
+      margin-top: 5px;
+      padding: 5px 7px;
+      border-left: 2px solid var(--warning);
+      border-radius: 3px;
+      color: var(--warning);
+      background: var(--warning-soft);
+      font-size: 10.5px;
+      line-height: 1.45;
+    }
+    .subscription-note {
+      margin: 9px 2px 0;
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.55;
+    }
+    .subscription-note strong { color: var(--warning); }
     .anomaly-intro {
       margin-bottom: 10px;
       font-weight: 650;
@@ -1194,6 +1342,154 @@
       }
     }
 
+    function formatSubscriptionMoney(value) {
+      const amount = Number(value);
+      return Number.isFinite(amount)
+        ? amount.toLocaleString("zh-CN", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        })
+        : "0.00";
+    }
+
+    function subscriptionCycleLabel(item) {
+      const interval = Number(item.interval_days);
+      if (Number.isFinite(interval) && interval > 0) {
+        return `约 ${Math.round(interval)} 天`;
+      }
+      return ({
+        monthly: "每月",
+        yearly: "每年",
+        weekly: "每周"
+      })[item.cycle] || "-";
+    }
+
+    function renderSubscriptionContent(container, text, reply) {
+      const items = Array.isArray(reply?.data?.items) ? reply.data.items : [];
+      const introText = (text || "").split("\n").find((line) => line.trim()) || "订阅清单";
+      const intro = document.createElement("p");
+      intro.className = "subscription-copy";
+      intro.textContent = introText.trim();
+      container.appendChild(intro);
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "subscription-table-wrap";
+      const table = document.createElement("table");
+      table.className = "subscription-table";
+
+      const thead = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      ["订阅服务", "金额", "到期时间", "自动续费", "周期", "最近扣费"].forEach((label) => {
+        const cell = document.createElement("th");
+        cell.scope = "col";
+        cell.textContent = label;
+        headerRow.appendChild(cell);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      items.forEach((item) => {
+        const row = document.createElement("tr");
+        if (item.status === "cancelled" || item.auto_renew === false) {
+          row.classList.add("inactive");
+        }
+
+        const serviceCell = document.createElement("td");
+        const service = document.createElement("div");
+        service.className = "subscription-service";
+        const merchant = document.createElement("strong");
+        merchant.textContent = item.merchant || "未知订阅";
+        const category = document.createElement("span");
+        category.textContent = item.category || "订阅服务";
+        service.append(merchant, category);
+        if (item.hiked) {
+          const alert = document.createElement("span");
+          alert.className = "subscription-service-alert";
+          alert.textContent = "近期涨价";
+          service.appendChild(alert);
+        }
+        serviceCell.appendChild(service);
+
+        const amountCell = document.createElement("td");
+        amountCell.className = "subscription-amount";
+        amountCell.textContent = `¥ ${formatSubscriptionMoney(item.amount)}`;
+        if (item.hiked && item.previous_amount != null) {
+          const previous = document.createElement("span");
+          previous.className = "subscription-price-note";
+          previous.textContent = `原 ¥ ${formatSubscriptionMoney(item.previous_amount)}`;
+          amountCell.appendChild(previous);
+        }
+
+        const expiryCell = document.createElement("td");
+        expiryCell.textContent = item.expires_at || item.next_charge_date || "-";
+
+        const renewCell = document.createElement("td");
+        renewCell.className = "subscription-renew-cell";
+        const renewal = document.createElement("span");
+        const autoRenew = item.auto_renew === true;
+        renewal.className = `subscription-renewal ${autoRenew ? "is-on" : "is-off"}`;
+        renewal.textContent = autoRenew ? "是" : "否";
+        renewCell.appendChild(renewal);
+        if (["cancelled", "expired", "renewal_failed"].includes(item.status)) {
+          const state = document.createElement("span");
+          state.className = `subscription-state-note ${
+            item.status === "renewal_failed" ? "is-error" : ""
+          }`.trim();
+          state.textContent = ({
+            cancelled: "已取消",
+            expired: "已到期",
+            renewal_failed: "续费失败"
+          })[item.status];
+          renewCell.appendChild(state);
+          const resume = document.createElement("button");
+          resume.type = "button";
+          resume.className = "subscription-resume";
+          resume.textContent = "恢复续费";
+          resume.addEventListener("click", () => {
+            sendMessage(`恢复${item.merchant}自动续费`);
+          });
+          renewCell.appendChild(resume);
+        } else if (item.status === "active") {
+          const state = document.createElement("span");
+          state.className = "subscription-state-note is-active";
+          state.textContent = "生效中";
+          renewCell.appendChild(state);
+        }
+        if (Number(item.pending_term_months) > 0) {
+          const pending = document.createElement("div");
+          pending.className = "subscription-pending";
+          pending.textContent = [
+            `下期：${item.pending_term_months} 个月 / ¥ ${formatSubscriptionMoney(item.pending_amount)}`,
+            `${item.pending_effective_at || "当前到期后"} 生效`
+          ].join("\n");
+          renewCell.appendChild(pending);
+        }
+
+        const cycleCell = document.createElement("td");
+        cycleCell.textContent = subscriptionCycleLabel(item);
+
+        const lastChargeCell = document.createElement("td");
+        lastChargeCell.textContent = item.last_date || item.last_charge_date || "-";
+
+        row.append(serviceCell, amountCell, expiryCell, renewCell, cycleCell, lastChargeCell);
+        tbody.appendChild(row);
+      });
+      table.appendChild(tbody);
+      wrapper.appendChild(table);
+      container.appendChild(wrapper);
+
+      const hiked = items.filter((item) => item.hiked).map((item) => item.merchant);
+      if (hiked.length) {
+        const note = document.createElement("p");
+        note.className = "subscription-note";
+        const label = document.createElement("strong");
+        label.textContent = "涨价提醒：";
+        note.append(label, document.createTextNode(hiked.join("、")));
+        container.appendChild(note);
+      }
+    }
+
     function appendMessage(role, text, reply = null) {
       const article = document.createElement("article");
       article.className = `message ${role}`;
@@ -1221,10 +1517,17 @@
       }
 
       const content = document.createElement("div");
+      const subscriptionItems = ["subscription.detect", "subscription.list"].includes(reply?.intent)
+        ? (reply.data?.items || [])
+        : [];
       const anomalyItems = reply?.intent === "bill.anomaly"
         ? (reply.data?.items || [])
         : [];
-      if (Array.isArray(anomalyItems) && anomalyItems.length) {
+      if (Array.isArray(subscriptionItems) && subscriptionItems.length) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide", "subscription-bubble");
+        renderSubscriptionContent(content, text, reply);
+      } else if (Array.isArray(anomalyItems) && anomalyItems.length) {
         content.className = "bubble-content";
         bubble.classList.add("wide");
         renderAnomalyContent(content, text, reply);

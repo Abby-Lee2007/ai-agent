@@ -174,6 +174,114 @@ try {
   assert(desktop.title === "AI Banking Agent", "H5 标题不正确");
   assert(desktop.scrollWidth <= desktop.viewport[0], "桌面页面出现横向滚动");
   assert(desktop.composerOverlap === false, "输入框与发送按钮重叠");
+  await sendPrompt(cdp, "帮我看看有哪些自动续费", "到期时间");
+  const subscriptionTable = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const table = bubble?.querySelector(".subscription-table");
+    const wrapper = bubble?.querySelector(".subscription-table-wrap");
+    const rows = [...(table?.querySelectorAll("tbody tr") || [])];
+    const headers = [...(table?.querySelectorAll("thead th") || [])].map((cell) => cell.textContent.trim());
+    const columnPositions = rows.map((row) =>
+      [...row.querySelectorAll("td")].map((cell) => Math.round(cell.getBoundingClientRect().left))
+    );
+    const firstRow = rows[0];
+    const amountCell = firstRow?.querySelector("td:nth-child(2)");
+    const bubbleRect = bubble?.getBoundingClientRect();
+    return {
+      structured: Boolean(table),
+      rowCount: rows.length,
+      headers,
+      cellCounts: rows.map((row) => row.querySelectorAll("td").length),
+      columnsConsistent: columnPositions.length > 1
+        && columnPositions.every((positions) =>
+          positions.every((left, index) => Math.abs(left - columnPositions[0][index]) <= 1)
+        ),
+      amountRightAligned: amountCell ? getComputedStyle(amountCell).textAlign === "right" : false,
+      bubbleInsideViewport: bubbleRect
+        ? bubbleRect.left >= 0 && bubbleRect.right <= innerWidth + 1
+        : false,
+      hasScrollWrapper: Boolean(wrapper),
+      fitsDesktop: Boolean(wrapper) && table.scrollWidth <= wrapper.clientWidth + 1,
+      pageFits: document.documentElement.scrollWidth <= innerWidth
+    };
+  })()`);
+  assert(subscriptionTable.structured, "自动续费结果没有生成结构化表格");
+  assert(subscriptionTable.rowCount > 0, "自动续费表格没有数据行");
+  assert(subscriptionTable.headers.includes("到期时间"), "自动续费表格缺少到期时间列");
+  assert(subscriptionTable.headers.includes("自动续费"), "自动续费表格缺少自动续费列");
+  assert(subscriptionTable.cellCounts.every((count) => count === 6), "自动续费表格列数不一致");
+  assert(subscriptionTable.columnsConsistent, "自动续费表格各行列未对齐");
+  assert(subscriptionTable.amountRightAligned, "自动续费金额列没有右对齐");
+  assert(subscriptionTable.bubbleInsideViewport, "自动续费表格气泡超出桌面视口");
+  assert(subscriptionTable.hasScrollWrapper, "自动续费表格缺少横向滚动容器");
+  assert(subscriptionTable.fitsDesktop, "桌面端自动续费表格不应依赖横向滚动");
+  assert(subscriptionTable.pageFits, "自动续费表格导致页面横向滚动");
+  await screenshot(cdp, "desktop-subscriptions.png");
+  await sendPrompt(cdp, "取消腾讯视频会员", "腾讯视频VIP");
+  await sendPrompt(cdp, "确认", "已取消");
+  await sendPrompt(cdp, "我的订阅都有什么", "已取消");
+  const resumeAction = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const rows = [...(bubble?.querySelectorAll(".subscription-table tbody tr") || [])];
+    const row = rows.find((item) => item.textContent.includes("腾讯视频VIP"));
+    const button = row?.querySelector(".subscription-resume");
+    return {
+      hasButton: Boolean(button),
+      buttonText: button?.textContent.trim() || "",
+      cancellationVisible: row?.textContent.includes("已取消") || false
+    };
+  })()`);
+  assert(resumeAction.hasButton, "已取消订阅缺少恢复续费按钮");
+  assert(resumeAction.buttonText === "恢复续费", "恢复续费按钮文案不正确");
+  assert(resumeAction.cancellationVisible, "已取消订阅状态没有显示");
+  await evaluate(cdp, `(() => {
+    const rows = [...document.querySelectorAll(".message.agent .subscription-table tbody tr")];
+    const row = rows.reverse().find((item) => item.textContent.includes("腾讯视频VIP"));
+    row?.querySelector(".subscription-resume")?.click();
+    return true;
+  })()`);
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent.includes("恢复「腾讯视频VIP」")`,
+  );
+  await sendPrompt(cdp, "确认", "已恢复");
+  await sendPrompt(cdp, "我的订阅都有什么", "自动续费");
+  const resumedSubscription = await evaluate(cdp, `(() => {
+    const bubbles = [...document.querySelectorAll(".message.agent .bubble")];
+    const bubble = [...bubbles].reverse().find((item) => item.querySelector(".subscription-table"));
+    const rows = [...(bubble?.querySelectorAll(".subscription-table tbody tr") || [])];
+    const row = rows.find((item) => item.textContent.includes("腾讯视频VIP"));
+    return {
+      found: Boolean(row),
+      active: row?.textContent.includes("生效中") || false,
+      autoRenew: row?.querySelector(".subscription-renewal")?.textContent.trim() === "是",
+      hasResumeButton: Boolean(row?.querySelector(".subscription-resume"))
+    };
+  })()`);
+  assert(resumedSubscription.found, "恢复后订阅列表缺少腾讯视频VIP");
+  assert(resumedSubscription.active, "恢复后订阅状态没有变为生效中");
+  assert(resumedSubscription.autoRenew, "恢复后自动续费状态没有变为是");
+  assert(!resumedSubscription.hasResumeButton, "恢复后仍显示恢复续费按钮");
+  await sendPrompt(cdp, "把腾讯视频改成12个月续费，续费价288元", "下期服务：12 个月");
+  await sendPrompt(cdp, "确认", "下期周期：12 个月");
+  await sendPrompt(cdp, "我的订阅都有什么", "订阅共");
+  const pendingPlan = await evaluate(cdp, `(() => {
+    const bubbles = [...document.querySelectorAll(".message.agent .bubble")];
+    const bubble = [...bubbles].reverse().find((item) => item.querySelector(".subscription-table"));
+    const rows = [...(bubble?.querySelectorAll(".subscription-table tbody tr") || [])];
+    const row = rows.find((item) => item.textContent.includes("腾讯视频VIP"));
+    const pending = row?.querySelector(".subscription-pending");
+    return {
+      visible: Boolean(pending),
+      text: pending?.textContent.replace(/\\s+/g, " ").trim() || "",
+      currentExpiryPreserved: row?.textContent.includes("2026-11-08") || false
+    };
+  })()`);
+  assert(pendingPlan.visible, "订阅列表没有显示下期计划");
+  assert(pendingPlan.text.includes("下期：12 个月"), "下期计划周期显示不正确");
+  assert(pendingPlan.text.includes("288.00"), "下期计划续费价显示不正确");
+  assert(pendingPlan.currentExpiryPreserved, "下期计划覆盖了当前到期时间");
+  await screenshot(cdp, "desktop-subscription-resume.png");
   await sendPrompt(cdp, "我还有多少钱", "总资产");
   await evaluate(cdp, `document.querySelector("#profile-settings-button").click()`);
   await waitFor(cdp, `document.querySelector("#profile-settings-overlay")?.classList.contains("show")`);
@@ -299,6 +407,33 @@ try {
   await screenshot(cdp, "desktop.png");
 
   await openChat(cdp, 390, 844, true);
+  await sendPrompt(cdp, "帮我看看有哪些自动续费", "到期时间");
+  const mobileSubscription = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const table = bubble?.querySelector(".subscription-table");
+    const wrapper = bubble?.querySelector(".subscription-table-wrap");
+    const bubbleRect = bubble?.getBoundingClientRect();
+    const wrapperRect = wrapper?.getBoundingClientRect();
+    return {
+      structured: Boolean(table),
+      hasScrollWrapper: Boolean(wrapper),
+      pageFits: document.documentElement.scrollWidth <= innerWidth,
+      bubbleInsideViewport: bubbleRect
+        ? bubbleRect.left >= 0 && bubbleRect.right <= innerWidth + 1
+        : false,
+      wrapperInsideBubble: Boolean(bubbleRect && wrapperRect)
+        && wrapperRect.left >= bubbleRect.left - 1
+        && wrapperRect.right <= bubbleRect.right + 1,
+      canScroll: Boolean(wrapper) && table.scrollWidth > wrapper.clientWidth
+    };
+  })()`);
+  assert(mobileSubscription.structured, "移动端自动续费结果没有生成结构化表格");
+  assert(mobileSubscription.hasScrollWrapper, "移动端自动续费表格缺少横向滚动容器");
+  assert(mobileSubscription.pageFits, "移动端自动续费表格导致页面横向滚动");
+  assert(mobileSubscription.bubbleInsideViewport, "移动端自动续费气泡超出视口");
+  assert(mobileSubscription.wrapperInsideBubble, "移动端自动续费表格容器超出气泡");
+  assert(mobileSubscription.canScroll, "移动端自动续费表格无法横向查看完整列");
+  await screenshot(cdp, "mobile-subscriptions.png");
   await sendPrompt(cdp, "我有哪些卡", "信用卡");
   await sendPrompt(cdp, "帮我看看有没有异常交易", "高危");
   const mobileAnomaly = await evaluate(cdp, `(() => {

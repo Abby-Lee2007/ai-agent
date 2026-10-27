@@ -238,6 +238,22 @@ class SubscriptionListTool(Tool):
             f"月度自动续费合计约 {monthly:,.2f} 元：",
             render_table(["商户", "类别", "金额", "到期时间", "自动续费", "状态", "来源"], rows),
         ]
+        pending = [s for s in subs if s.pending_term_months > 0]
+        if pending:
+            lines.append("下期计划：")
+            lines.append(render_table(
+                ["商户", "下期计划", "续费价", "生效时间"],
+                [
+                    [
+                        s.merchant,
+                        f"下期：{s.pending_term_months} 个月",
+                        f"{s.pending_amount:,.2f}",
+                        s.pending_effective_at or "-",
+                    ]
+                    for s in pending
+                ],
+                indent="  ",
+            ))
         return ToolResult(
             True,
             "\n".join(lines),
@@ -260,6 +276,10 @@ class SubscriptionListTool(Tool):
                             s.price_history
                             and s.amount > max(s.price_history[:-1] or [s.amount]) * 1.2
                         ),
+                        "pending_term_months": s.pending_term_months,
+                        "pending_amount": s.pending_amount,
+                        "pending_auto_renew": s.pending_auto_renew,
+                        "pending_effective_at": s.pending_effective_at,
                     }
                     for s in subs
                 ],

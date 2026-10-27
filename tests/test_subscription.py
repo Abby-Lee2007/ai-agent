@@ -165,6 +165,23 @@ class TestSubscription(unittest.TestCase):
         self.assertTrue(target.pending_auto_renew)
         self.assertEqual(target.pending_effective_at, current_expiry)
 
+    def test_subscription_list_exposes_pending_plan(self):
+        run_to_completion(
+            self.agent,
+            self.agent.handle("把腾讯视频改成12个月续费，续费价288元"),
+        )
+
+        reply = self.agent.handle("我的订阅都有什么")
+        row = next(
+            item for item in reply.data["items"]
+            if item["merchant"] == "腾讯视频VIP"
+        )
+        self.assertEqual(row["pending_term_months"], 12)
+        self.assertEqual(row["pending_amount"], 288.0)
+        self.assertTrue(row["pending_auto_renew"])
+        self.assertEqual(row["pending_effective_at"], "2026-11-08")
+        self.assertIn("下期：12 个月", reply.text)
+
     def test_cancel_unknown_subscription(self):
         reply = self.agent.handle("取消奈飞会员")
         if reply.kind == "question":
