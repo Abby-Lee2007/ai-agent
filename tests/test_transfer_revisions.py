@@ -28,6 +28,7 @@ class TestTransferRevisions(unittest.TestCase):
         self.assertIn("微信", revised.text)
 
         done = agent.handle("确认")
+        done = agent.handle("246810")
 
         self.assertTrue(done.ok)
         self.assertAlmostEqual(

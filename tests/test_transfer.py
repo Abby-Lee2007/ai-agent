@@ -44,9 +44,58 @@ class TestSmartTransfer(unittest.TestCase):
 
     def test_balance_is_debited(self):
         account = self.agent.store.primary_account("u_001")
+        card = self.agent.store.find_card("u_001", "工资卡")
         before = account.balance
-        send_money(self.agent, "给王强转500块")
+        card_before = card.balance
+        reply = send_money(self.agent, "给王强转500块")
         self.assertAlmostEqual(account.balance, before - 500, places=2)
+        self.assertAlmostEqual(card.balance, card_before - 500, places=2)
+        self.assertAlmostEqual(reply.data["asset_total_after"], 184060.52 - 500, places=2)
+
+    def test_internal_card_transfer_moves_balance_without_changing_total(self):
+        source = self.agent.store.find_card("u_001", "工资卡")
+        target = self.agent.store.find_card("u_001", "定期存单")
+        source_before = source.balance
+        target_before = target.balance
+
+        reply = self.agent.handle("从工资卡转1000到定期卡")
+        self.assertEqual(reply.kind, "confirm")
+        reply = self.agent.handle("确认")
+        self.assertEqual(self.agent.session.pending.kind, "payment_auth")
+        reply = self.agent.handle("246810")
+
+        self.assertTrue(reply.ok)
+        self.assertAlmostEqual(source.balance, source_before - 1000, places=2)
+        self.assertAlmostEqual(target.balance, target_before + 1000, places=2)
+        self.assertTrue(reply.data["asset_total_unchanged"])
+
+    def test_internal_transfer_shortcut_with_spoken_particle(self):
+        source = next(
+            card for card in self.agent.store.cards_of("u_001") if card.tail == "6688"
+        )
+        target = self.agent.store.find_card("u_001", "工资卡")
+        source_before = source.balance
+        target_before = target.balance
+
+        reply = self.agent.handle("从定期卡转20到工资卡中")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("6688", reply.text)
+        reply = self.agent.handle("确认")
+        reply = self.agent.handle("246810")
+
+        self.assertTrue(reply.ok)
+        self.assertAlmostEqual(source.balance, source_before - 20, places=2)
+        self.assertAlmostEqual(target.balance, target_before + 20, places=2)
+
+    def test_wrong_payment_password_does_not_move_money(self):
+        card = self.agent.store.find_card("u_001", "工资卡")
+        before = card.balance
+        self.agent.handle("给王强转500块，用微信")
+        self.agent.handle("确认")
+        reply = self.agent.handle("000000")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("交易密码不正确", reply.text)
+        self.assertAlmostEqual(card.balance, before, places=2)
 
     def test_small_transfer_completes_after_data_review(self):
         reply = send_money(self.agent, "给王强转500块")
@@ -108,14 +157,19 @@ class TestTransferRisk(unittest.TestCase):
         self.assertTrue("余额不足" in reply.text or "限额" in reply.text)
 
     def test_large_transfer_requires_confirm_then_sms(self):
-        reply = send_money(self.agent, "给老婆转25000块")
+        reply = self.agent.handle("给老婆转25000块，用微信")
+        reply = self.agent.handle("确认")
+        self.assertEqual(reply.kind, "question")
+        reply = self.agent.handle("246810")
         self.assertEqual(reply.kind, "verify")
         reply = self.agent.handle("123456")
         self.assertTrue(reply.ok)
         self.assertEqual(reply.kind, "executed")
 
     def test_wrong_sms_code_rejected(self):
-        send_money(self.agent, "给老婆转25000块")
+        self.agent.handle("给老婆转25000块，用微信")
+        self.agent.handle("确认")
+        self.agent.handle("246810")
         reply = self.agent.handle("000000")
         self.assertEqual(reply.kind, "verify")
         self.assertIn("不正确", reply.text)

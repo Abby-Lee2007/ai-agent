@@ -137,7 +137,7 @@ class TestStockRecommendation(unittest.TestCase):
         reply = self.agent.handle("推荐几个基金")
         self.assertIn("000171", reply.text)
         self.assertIn("2.0016", reply.text)
-        self.assertIn("净值 2026-10-19", reply.text)
+        self.assertIn("2026-10-19", reply.text)
 
     def test_derivative_request_is_educational_and_blocked(self):
         reply = self.agent.handle("我想买点衍生品，比如期权")

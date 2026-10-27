@@ -11,6 +11,74 @@ from tests.support import make_store
 
 
 class TestProfileSettings(unittest.TestCase):
+    def test_risk_assessment_result_is_written_back_to_profile(self):
+        service = AgentSessionService(make_store(), llm_mode="off")
+        session_id = service.create_session(user_id="u_001", channel="h5")["session_id"]
+        service.send_message(session_id, "推荐几个理财产品", request_id="risk-start")
+        for index in range(7):
+            service.send_message(session_id, "b", request_id=f"risk-answer-{index}")
+
+        profile = service.get_profile_settings(session_id)
+        self.assertIn("C", profile["user"]["risk_profile"])
+        self.assertGreaterEqual(profile["user"]["risk_score"], 1)
+        self.assertTrue(profile["user"]["risk_assessed_at"])
+        self.assertGreater(profile["user"]["risk_assessment_score"], 0)
+        self.assertEqual(
+            profile["user"]["risk_assessment_method"],
+            "basic_questionnaire_v1",
+        )
+
+    def test_legacy_risk_level_is_backfilled_when_session_reloads(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "agent.db"
+            first = AgentSessionService(
+                make_store(),
+                llm_mode="off",
+                store_factory=make_store,
+                repository=SQLiteRepository(db_path),
+            )
+            session_id = first.create_session(user_id="u_001", channel="h5")["session_id"]
+            record = first._sessions[session_id]
+            record.agent.risk_level = 2
+            record.agent.risk_assessed_at = "2026-10-27T12:00:00"
+            first._persist_session(record)
+
+            second = AgentSessionService(
+                make_store(),
+                llm_mode="off",
+                store_factory=make_store,
+                repository=SQLiteRepository(db_path),
+            )
+            profile = second.get_profile_settings(session_id)
+
+        self.assertIn("C2", profile["user"]["risk_profile"])
+        self.assertEqual(profile["user"]["risk_score"], 2)
+        self.assertEqual(
+            profile["user"]["risk_assessed_at"],
+            "2026-10-27T12:00:00",
+        )
+
+    def test_profile_card_note_is_visible_to_chat_immediately(self):
+        service = AgentSessionService(make_store(), llm_mode="off")
+        session_id = service.create_session(user_id="u_001", channel="h5")["session_id"]
+        profile = service.get_profile_settings(session_id)
+        savings_card = next(card for card in profile["cards"] if card["tail"] == "6688")
+        service.update_card_settings(
+            session_id,
+            savings_card["card_id"],
+            {"note": "日常消费卡"},
+        )
+
+        reply = service.send_message(
+            session_id,
+            "从工资卡转200到日常消费卡中",
+            request_id="internal-transfer-after-card-edit",
+        )["reply"]
+
+        self.assertEqual(reply["kind"], "confirm")
+        self.assertIn("6688", reply["text"])
+        self.assertNotIn("没有找到付款卡或收款卡", reply["text"])
+
     def test_bound_card_appears_in_profile_settings(self):
         service = AgentSessionService(make_store(), llm_mode="off")
         session_id = service.create_session(user_id="u_001", channel="h5")["session_id"]
@@ -96,6 +164,8 @@ class TestProfileSettings(unittest.TestCase):
                 session_id,
                 card_id,
                 {
+                    "kind": "credit",
+                    "tail": "0000",
                     "daily_limit": 30000,
                     "single_limit": 8000,
                     "online_enabled": False,
@@ -104,6 +174,8 @@ class TestProfileSettings(unittest.TestCase):
             )
             self.assertEqual(updated["daily_limit"], 30000)
             self.assertFalse(updated["online_enabled"])
+            self.assertEqual(updated["kind"], profile["cards"][0]["kind"])
+            self.assertEqual(updated["tail"], profile["cards"][0]["tail"])
 
             created = first.create_card_settings(
                 session_id,
@@ -130,6 +202,24 @@ class TestProfileSettings(unittest.TestCase):
         self.assertEqual(restored_card["daily_limit"], 30000)
         self.assertFalse(restored_card["online_enabled"])
         self.assertTrue(any(item["tail"] == "9999" for item in restored["cards"]))
+
+    def test_seed_card_corruption_is_repaired_without_losing_note(self):
+        store = make_store()
+        savings_card = store.cards["CARD000004"]
+        savings_card.kind = "credit"
+        savings_card.tail = "****"
+        savings_card.account_id = "ACC000003"
+        savings_card.status = "pending"
+        savings_card.note = "日常消费卡"
+
+        store.ensure_card_ledger()
+
+        self.assertEqual(savings_card.kind, "debit")
+        self.assertEqual(savings_card.tail, "6688")
+        self.assertEqual(savings_card.account_id, "ACC000002")
+        self.assertEqual(savings_card.status, "active")
+        self.assertEqual(savings_card.note, "日常消费卡")
+        self.assertEqual(store.cards["CARD000003"].tail, "3011")
 
     def test_birthday_surprise_uses_updated_spouse_date_in_hint(self):
         with tempfile.TemporaryDirectory() as temp_dir:

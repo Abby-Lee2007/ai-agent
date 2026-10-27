@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 from config import LLMConfig
+from finagent.data.card_ledger import card_asset_total, sync_card_from_account
 from finagent.data.provenance import source_badge
 from finagent.tools.base import Tool, ToolContext, ToolResult, render_table
 
@@ -26,28 +27,60 @@ class BalanceTool(Tool):
     examples = ["我还有多少钱", "查一下余额"]
 
     def run(self, ctx: ToolContext) -> ToolResult:  # type: ignore[override]
-        accounts = ctx.providers.accounts.of(ctx.user_id) if ctx.providers else ctx.store.accounts_of(ctx.user_id)
+        cards = (
+            ctx.providers.cards.of(ctx.user_id)
+            if ctx.providers
+            else ctx.store.cards_of(ctx.user_id)
+        )
         rows = []
-        total = 0.0
-        for acc in accounts:
-            source = source_badge(acc.source, acc.is_live, acc.is_demo)
-            if acc.kind == "credit":
-                rows.append([acc.name or KIND_LABEL.get(acc.kind, acc.kind), f"尾号{acc.tail}",
-                             f"已用 {acc.balance:,.2f}", f"可用 {acc.available:,.2f}", source])
+        credit_used = 0.0
+        linked_account_ids = set()
+        for card in cards:
+            sync_card_from_account(ctx.store, card)
+            if card.account_id:
+                linked_account_ids.add(card.account_id)
+            source = source_badge(card.source, card.is_live, card.is_demo)
+            label = f"{card.brand} {'信用卡' if card.kind == 'credit' else '银行卡'}"
+            if card.kind == "credit":
+                credit_used += card.used
+                rows.append([
+                    label, f"尾号{card.tail}", f"已用 {card.used:,.2f}",
+                    f"可用 {card.available:,.2f}", source,
+                ])
             else:
-                total += acc.balance
-                locked = f"（锁定 {acc.locked:,.2f}）" if acc.locked else ""
-                rows.append([acc.name or KIND_LABEL.get(acc.kind, acc.kind), f"尾号{acc.tail}",
-                             f"{acc.balance:,.2f}{locked}", f"可用 {acc.available:,.2f}", source])
+                rows.append([
+                    label, f"尾号{card.tail}", f"{card.balance:,.2f}",
+                    f"可用 {card.available:,.2f}", source,
+                ])
+        total = card_asset_total(ctx.store, ctx.user_id)
         lines = [
-            f"总资产 {total:,.2f} 元：",
-            render_table(["账户", "卡号", "余额/已用", "可用", "来源"], rows),
+            f"总资产（银行卡余额口径）{total:,.2f} 元；信用卡欠款不计入资产：",
+            render_table(["卡片", "卡号", "余额/已用", "可用", "来源"], rows),
         ]
+        if credit_used:
+            lines.append(f"信用卡已用额度合计 {credit_used:,.2f} 元，属于负债，不计入总资产。")
+        other_accounts = [
+            account for account in ctx.store.accounts_of(ctx.user_id)
+            if account.account_id not in linked_account_ids
+        ]
+        if other_accounts:
+            other_rows = [
+                [
+                    account.name or KIND_LABEL.get(account.kind, account.kind),
+                    f"尾号{account.tail}",
+                    f"{account.balance:,.2f}",
+                    source_badge(account.source, account.is_live, account.is_demo),
+                ]
+                for account in other_accounts
+            ]
+            lines.append("")
+            lines.append("未绑定银行卡的账户（不计入银行卡资产总额）：")
+            lines.append(render_table(["账户", "卡号", "余额", "来源"], other_rows))
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"total": round(total, 2)},
-            summary=f"总资产 {total:,.2f} 元",
+            data={"total": round(total, 2), "credit_used": round(credit_used, 2)},
+            summary=f"总资产（银行卡余额口径）{total:,.2f} 元",
         )
 
 

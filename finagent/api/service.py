@@ -200,6 +200,7 @@ class AgentSessionService:
             user = store.get_user(record.user_id)
             if user is None:
                 raise ValueError(f"用户不存在：{record.user_id}")
+            store.ensure_card_ledger()
             prefs = user.preferences or {}
             return {
                 "session_id": session_id,
@@ -213,6 +214,10 @@ class AgentSessionService:
                     "monthly_income": user.monthly_income,
                     "birthday": user.birthday,
                     "risk_profile": user.risk_profile,
+                    "risk_score": user.risk_score,
+                    "risk_assessed_at": prefs.get("risk_assessed_at", ""),
+                    "risk_assessment_score": prefs.get("risk_assessment_total", 0),
+                    "risk_assessment_method": prefs.get("risk_assessment_method", ""),
                     "verified": user.verified,
                     "source": user.source,
                     "updated_at": user.updated_at,
@@ -442,17 +447,28 @@ class AgentSessionService:
 
     def create_card_settings(self, session_id: str, values: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
+            from finagent.data.card_ledger import (
+                DEMO_CARD_PASSWORD,
+                ensure_card_account,
+                hash_card_password,
+            )
+
             record = self._get_or_load(session_id)
             store = record.agent.store
+            kind = str(values.get("kind") or "virtual")
+            balance = self._positive_number(values.get("balance"), 0.0)
+            credit_limit = self._positive_number(values.get("credit_limit"), 0.0)
             card = Card(
                 card_id=store.next_id("cards"),
                 user_id=record.user_id,
-                kind=str(values.get("kind") or "virtual"),
+                kind=kind,
                 brand=str(values.get("brand") or "演示银行"),
                 tail=self._card_tail(values.get("tail")),
                 status=str(values.get("status") or "active"),
-                credit_limit=self._positive_number(values.get("credit_limit"), 0.0),
+                balance=0.0 if kind in {"credit", "supplementary"} else balance,
+                credit_limit=credit_limit,
                 used=self._positive_number(values.get("used"), 0.0),
+                payment_password_hash=hash_card_password(DEMO_CARD_PASSWORD),
                 daily_limit=self._positive_number(values.get("daily_limit"), 20000.0),
                 single_limit=self._positive_number(values.get("single_limit"), 5000.0),
                 online_enabled=bool(values.get("online_enabled", True)),
@@ -464,6 +480,12 @@ class AgentSessionService:
             )
             store.cards[card.card_id] = card
             store.touch(card)
+            ensure_card_account(
+                store,
+                card,
+                account_kind="credit" if kind in {"credit", "supplementary"} else "current",
+                account_name=f"{card.brand} {card.tail} 账户",
+            )
             store.log("card.profile_created", card_id=card.card_id)
             self._persist_session(record)
             return asdict(card)
@@ -480,11 +502,10 @@ class AgentSessionService:
             card = store.cards.get(card_id)
             if card is None or card.user_id != record.user_id:
                 raise ValueError(f"卡片不存在：{card_id}")
-            for field in ("kind", "brand", "status", "note"):
+            # Card type and tail identify the linked bank account and are immutable.
+            for field in ("brand", "status", "note"):
                 if values.get(field) is not None:
                     setattr(card, field, str(values[field]).strip()[:100])
-            if values.get("tail") is not None:
-                card.tail = self._card_tail(values["tail"])
             for field, default in (
                 ("credit_limit", card.credit_limit),
                 ("used", card.used),
@@ -629,6 +650,25 @@ class AgentSessionService:
         agent.risk_inference_confirmed_at = str(
             data.get("risk_inference_confirmed_at") or ""
         )
+        if agent.risk_level is not None:
+            from finagent.risk.questionnaire import CUSTOMER_LABELS
+
+            user = store.get_user(agent.user_id)
+            if user is not None:
+                prefs = dict(user.preferences or {})
+                prefs.update({
+                    "risk_profile_label": CUSTOMER_LABELS.get(agent.risk_level, ""),
+                    "risk_score": agent.risk_level,
+                    "risk_assessed_at": agent.risk_assessed_at,
+                    "risk_assessment_method": prefs.get(
+                        "risk_assessment_method", "legacy_session_restore"
+                    ),
+                })
+                user.risk_profile = CUSTOMER_LABELS.get(agent.risk_level, user.risk_profile)
+                user.risk_score = agent.risk_level
+                user.preferences = prefs
+                user.updated_at = store.clock.iso()
+                store.touch(user)
         agent.restore_paused_questionnaire(data.get("paused_questionnaire"))
         agent.session.history = list(data.get("history") or [])
         agent.session.transcript = list(data.get("transcript") or [])

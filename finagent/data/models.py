@@ -144,11 +144,14 @@ class Card:
     card_id: str
     user_id: str
     kind: str                  # debit 借记卡 / credit 信用卡 / virtual 虚拟卡 / supplementary 附属卡
+    account_id: str = ""       # 与账务账户一一绑定，保证卡余额与总资产同源
     brand: str = "银联"
     tail: str = ""
     status: str = "active"     # active / frozen 冻结 / lost 挂失 / cancelled 销卡 / pending 待激活
+    balance: float = 0.0       # 借记卡/虚拟卡可用资金；信用卡不使用该字段
     credit_limit: float = 0.0
     used: float = 0.0
+    payment_password_hash: str = ""
     daily_limit: float = 20_000.0
     single_limit: float = 5_000.0
     online_enabled: bool = True
@@ -160,6 +163,17 @@ class Card:
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     is_live: bool = False
     is_demo: bool = True
+
+    @property
+    def available(self) -> float:
+        """可用余额或可用信用额度。"""
+        if self.kind == "credit":
+            return max(self.credit_limit - self.used, 0.0)
+        return max(self.balance, 0.0)
+
+    @property
+    def is_asset_card(self) -> bool:
+        return self.kind in {"debit", "virtual"}
 
 
 # --------------------------------------------------------------------------

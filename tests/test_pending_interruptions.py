@@ -27,11 +27,14 @@ class TestPendingInterruptions(unittest.TestCase):
         self.assertEqual(reply.intent, "account.balance")
         self.assertIsNone(agent.session.pending)
 
-    def test_birthday_slot_can_be_interrupted_by_balance_query(self):
+    def test_birthday_preference_slot_can_be_interrupted_by_balance_query(self):
         agent = make_agent()
         prompt = agent.handle("我老婆快生日了，帮我准备一下")
         self.assertEqual(prompt.kind, "question")
-        self.assertEqual(agent.session.pending.missing, ["birthday"])
+        self.assertEqual(
+            agent.session.pending.missing,
+            ["preferences", "avoid", "budget"],
+        )
 
         reply = agent.handle("我还有多少钱")
 
@@ -42,7 +45,8 @@ class TestPendingInterruptions(unittest.TestCase):
     def test_verify_step_can_be_interrupted_by_card_query(self):
         agent = make_agent()
         agent.handle("给妈妈转25000块，用微信")
-        verify = agent.handle("确认")
+        agent.handle("确认")
+        verify = agent.handle("246810")
         self.assertEqual(verify.kind, "verify")
 
         reply = agent.handle("我有哪些卡")
@@ -55,6 +59,7 @@ class TestPendingInterruptions(unittest.TestCase):
         agent = make_agent()
         agent.risk_level = 1
         agent.handle("买1万块稳利债券A")
+        agent.handle("用工资卡")
         cooling = agent.handle("确认")
         self.assertEqual(agent.session.pending.kind, "risk_cooling")
 

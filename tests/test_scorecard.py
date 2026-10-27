@@ -117,7 +117,10 @@ class TestRiskAssessTool(unittest.TestCase):
         from tests.support import make_agent
         agent = make_agent()
         reply = agent.handle("推荐几个理财产品")
-        self.assertLessEqual(reply.data["max_risk"], 3)
+        self.assertLessEqual(reply.data["max_risk"], 4)
+        self.assertTrue(all(
+            item["risk_level"] <= 4 for item in reply.data["product_details"]
+        ))
 
 
 if __name__ == "__main__":

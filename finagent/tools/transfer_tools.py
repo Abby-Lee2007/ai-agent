@@ -7,10 +7,17 @@
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any, List, Optional
 
-from finagent.data.models import Account
+from finagent.data.card_ledger import (
+    card_asset_total,
+    linked_account,
+    update_card_balance,
+    verify_card_password,
+)
+from finagent.data.models import Account, Card
 from finagent.data.providers import build_data_providers
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, render_table
 from finagent.utils import parse_date
@@ -44,6 +51,46 @@ def resolve_account(ctx: ToolContext, keyword: str = "") -> Optional[Account]:
     return providers.accounts.resolve(ctx.user_id, keyword)
 
 
+def resolve_payment_card(ctx: ToolContext, keyword: str = "") -> Optional[Card]:
+    """Resolve a spendable bank card while keeping old account labels usable."""
+    providers = ctx.providers or build_data_providers(ctx.store)
+    cards = [
+        card for card in providers.cards.of(ctx.user_id)
+        if card.kind in {"debit", "virtual"} and card.status == "active"
+    ]
+    key = (keyword or "").strip()
+    key = re.sub(r"(?:卡中|卡里|卡上|里面|中|里|上)$", "卡", key)
+    key = key.strip("从给到 ")
+    if not key:
+        return next(
+            (card for card in cards if linked_account(ctx.store, card) and
+             linked_account(ctx.store, card).kind == "current"),
+            cards[0] if cards else None,
+        )
+    aliases = {
+        "活期": "current", "工资卡": "current", "储蓄卡": "savings",
+        "定期": "savings", "钱包": "wallet", "零钱": "wallet",
+        "虚拟卡": "virtual",
+    }
+    for label, account_kind in aliases.items():
+        if label in key:
+            for card in cards:
+                if account_kind == "virtual" and card.kind == "virtual":
+                    return card
+                account = linked_account(ctx.store, card)
+                if account and account.kind == account_kind:
+                    return card
+    digits = "".join(ch for ch in key if ch.isdigit())
+    for card in cards:
+        if card.card_id == key:
+            return card
+        if digits and card.tail == digits[-4:]:
+            return card
+        if key and (key in card.brand or key in card.note):
+            return card
+    return None
+
+
 class TransferTool(Tool):
     """立即转账。"""
 
@@ -56,7 +103,8 @@ class TransferTool(Tool):
         ToolParam("amount", "number", True, "转账金额（元）"),
         ToolParam("channel", "string", True, "收款方式", enum=["phone", "wechat", "alipay", "bank"]),
         ToolParam("note", "string", False, "转账备注"),
-        ToolParam("account", "string", False, "付款账户，如 活期/信用卡/零钱，默认活期"),
+        ToolParam("account", "string", False, "付款银行卡，如 工资卡/尾号6222，默认活期卡"),
+        ToolParam("payment_password", "string", True, "付款卡 6 位交易密码"),
     ]
     examples = ["给老婆转2000块，用微信", "转500给13700003333，用支付宝", "给房东转3800房租，用银行卡"]
 
@@ -68,6 +116,8 @@ class TransferTool(Tool):
         channel: str = "",
         note: str = "",
         account: str = "",
+        payment_password: str = "",
+        payment_verified: bool = False,
     ) -> ToolResult:
         user = ctx.user
         store = ctx.store
@@ -77,7 +127,7 @@ class TransferTool(Tool):
         except (TypeError, ValueError):
             return ToolResult(False, f"金额「{amount}」无法识别，请用数字金额，例如 500 或 1.5万。")
 
-        payer = resolve_account(ctx, account)
+        payer = resolve_payment_card(ctx, account)
         payee_obj = providers.payees.find(user.user_id, payee)
         channel = (channel or "phone").strip().lower()
         if channel not in CHANNEL_LABELS:
@@ -89,7 +139,20 @@ class TransferTool(Tool):
             return ToolResult(False, "转账未执行：" + decision.summary(), data={"blocked": True})
 
         if payer is None:
-            return ToolResult(False, "没有找到可用的付款账户。")
+            return ToolResult(False, "没有找到可用的付款银行卡，请指定工资卡、尾号或银行卡名称。")
+        if payer.kind == "credit":
+            return ToolResult(False, "当前不支持信用卡直接对外转账，请选择借记卡付款。")
+        if not payment_verified and not verify_card_password(payer, payment_password):
+            return ToolResult(
+                False,
+                "付款卡交易密码验证失败，转账未执行。",
+                data={"reason": "bad_payment_password"},
+            )
+        if payer.available < value:
+            return ToolResult(
+                False,
+                f"付款卡余额不足：可用 {payer.available:,.2f} 元，需要 {value:,.2f} 元。",
+            )
 
         # 收款人不在通讯录时，先落库为常用联系人（后续可按备注直接转）
         if payee_obj is None:
@@ -126,15 +189,17 @@ class TransferTool(Tool):
             note=(note or "转账") + f"（{CHANNEL_LABELS[channel]}）",
             tags=["transfer", channel],
         )
-        payer.balance = round(payer.balance - value, 2)
-        ctx.store.touch(payer, payee_obj)
+        update_card_balance(ctx.store, payer, payer.balance - value)
+        ctx.store.touch(payee_obj)
         self._credit_payee(ctx, payee_obj, value)
+        asset_total_after = card_asset_total(ctx.store, ctx.user_id)
 
         lines = [
             f"转账成功（{CHANNEL_LABELS[channel]}）：{value:,.2f} 元已转给「{payee_obj.name}」",
             f"  收款账号：{target_account}",
-            f"  付款账户：{payer.name}（尾号 {payer.tail}）  可用余额 {payer.available:,.2f} 元",
+            f"  付款银行卡：{payer.brand}（尾号 {payer.tail}）  余额 {payer.balance:,.2f} 元",
             f"  流水号：{txn.txn_id}",
+            f"  银行卡资产总额：{asset_total_after:,.2f} 元",
         ]
         if note:
             lines.append(f"  备注：{note}")
@@ -148,6 +213,9 @@ class TransferTool(Tool):
                 "payee": payee_obj.name,
                 "amount": value,
                 "account": payer.account_id,
+                "card_id": payer.card_id,
+                "card_balance": payer.balance,
+                "asset_total_after": asset_total_after,
                 "risk": decision.summary(),
             },
             summary=f"已向{payee_obj.name}转账 {value:,.2f} 元",
@@ -176,6 +244,115 @@ class TransferTool(Tool):
                 return
 
 
+class InternalTransferTool(Tool):
+    """Move funds between two cards owned by the same customer."""
+
+    name = "transfer.internal"
+    category = "智能转账"
+    description = "在本人不同银行卡之间划转资金，需要付款卡交易密码"
+    risk_level = "medium"
+    params = [
+        ToolParam("from_card", "string", True, "付款银行卡"),
+        ToolParam("to_card", "string", True, "收款银行卡"),
+        ToolParam("amount", "number", True, "划转金额（元）"),
+        ToolParam("payment_password", "string", True, "付款卡 6 位交易密码"),
+        ToolParam("note", "string", False, "划转备注"),
+    ]
+    examples = ["从工资卡转1000到定期卡", "尾号6222转500到3011"]
+
+    def run(  # type: ignore[override]
+        self,
+        ctx: ToolContext,
+        from_card: str,
+        to_card: str,
+        amount: Any,
+        payment_password: str,
+        note: str = "",
+    ) -> ToolResult:
+        try:
+            value = round(float(amount), 2)
+        except (TypeError, ValueError):
+            return ToolResult(False, "划转金额无法识别。")
+        if value <= 0:
+            return ToolResult(False, "划转金额必须大于 0。")
+        source = resolve_payment_card(ctx, from_card)
+        target = resolve_payment_card(ctx, to_card)
+        if source is None or target is None:
+            return ToolResult(False, "没有找到付款卡或收款卡，请使用银行卡名称、尾号或绑定备注。")
+        if source.card_id == target.card_id:
+            return ToolResult(False, "付款卡和收款卡不能是同一张卡。")
+        if not verify_card_password(source, payment_password):
+            return ToolResult(False, "付款卡交易密码验证失败，本行内部转账未执行。")
+        if source.available < value:
+            return ToolResult(
+                False,
+                f"付款卡余额不足：可用 {source.available:,.2f} 元，需要 {value:,.2f} 元。",
+            )
+        decision = ctx.risk.check_operation(
+            "transfer.send",
+            {"amount": value, "account": source.card_id},
+            ctx.user,
+            account=source,
+        )
+        if decision.blocked:
+            return ToolResult(False, "内部转账未执行：" + decision.summary())
+
+        source_before = source.balance
+        target_before = target.balance
+        update_card_balance(ctx.store, source, source_before - value)
+        update_card_balance(ctx.store, target, target_before + value)
+        out_txn = ctx.store.add_transaction(
+            user_id=ctx.user_id,
+            account_id=source.account_id,
+            amount=-value,
+            merchant=f"本人 {target.brand} 尾号{target.tail}",
+            category="转账",
+            channel="本行转账",
+            counterparty=f"本人尾号{target.tail}",
+            note=note or "本人银行卡内部划转",
+            tags=["internal_transfer", "internal_transfer_out"],
+        )
+        in_txn = ctx.store.add_transaction(
+            user_id=ctx.user_id,
+            account_id=target.account_id,
+            amount=value,
+            merchant=f"本人 {source.brand} 尾号{source.tail}",
+            category="转账",
+            channel="本行转账",
+            counterparty=f"本人尾号{source.tail}",
+            note=note or "本人银行卡内部划转",
+            tags=["internal_transfer", "internal_transfer_in"],
+        )
+        asset_total_after = card_asset_total(ctx.store, ctx.user_id)
+        lines = [
+            f"本人银行卡内部划转成功：{value:,.2f} 元",
+            f"  转出卡：{source.brand}（尾号 {source.tail}） "
+            f"{source_before:,.2f} → {source.balance:,.2f} 元",
+            f"  转入卡：{target.brand}（尾号 {target.tail}） "
+            f"{target_before:,.2f} → {target.balance:,.2f} 元",
+            f"  转出流水：{out_txn.txn_id}；转入流水：{in_txn.txn_id}",
+            f"  银行卡资产总额：{asset_total_after:,.2f} 元（内部划转不改变总额）。",
+        ]
+        if decision.reasons:
+            lines.append("  风控提示：" + decision.summary())
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            data={
+                "amount": value,
+                "from_card_id": source.card_id,
+                "to_card_id": target.card_id,
+                "from_balance": source.balance,
+                "to_balance": target.balance,
+                "out_txn_id": out_txn.txn_id,
+                "in_txn_id": in_txn.txn_id,
+                "asset_total_unchanged": True,
+                "asset_total_after": asset_total_after,
+            },
+            summary=f"已在本人银行卡间划转 {value:,.2f} 元",
+        )
+
+
 class ScheduledTransferTool(Tool):
     """定时转账。"""
 
@@ -190,6 +367,8 @@ class ScheduledTransferTool(Tool):
         ToolParam("channel", "string", True, "收款方式", enum=["phone", "wechat", "alipay", "bank"]),
         ToolParam("repeat", "string", False, "重复方式", enum=["once", "monthly", "weekly"]),
         ToolParam("note", "string", False, "转账备注"),
+        ToolParam("account", "string", False, "付款银行卡，如 工资卡/尾号6222"),
+        ToolParam("payment_password", "string", True, "付款卡 6 位交易密码"),
     ]
     examples = ["下个月5号自动给房东转3800房租", "明天给妈妈转2000"]
 
@@ -202,6 +381,8 @@ class ScheduledTransferTool(Tool):
         channel: str = "",
         repeat: str = "once",
         note: str = "",
+        account: str = "",
+        payment_password: str = "",
     ) -> ToolResult:
         user = ctx.user
         store = ctx.store
@@ -225,6 +406,11 @@ class ScheduledTransferTool(Tool):
         repeat_label = {"once": "一次性", "monthly": "每月", "weekly": "每周"}.get(repeat, "一次性")
         channel = (channel or "phone").strip().lower()
         channel_label = CHANNEL_LABELS.get(channel, CHANNEL_LABELS["phone"])
+        payer = resolve_payment_card(ctx, account)
+        if payer is None:
+            return ToolResult(False, "没有找到可用的付款银行卡。")
+        if not verify_card_password(payer, payment_password):
+            return ToolResult(False, "付款卡交易密码验证失败，定时转账未创建。")
         task = providers.tasks.add(
             user_id=user.user_id,
             kind="scheduled_transfer",
@@ -236,12 +422,15 @@ class ScheduledTransferTool(Tool):
                 "amount": value,
                 "channel": channel,
                 "note": note or "定时转账",
+                "account": payer.card_id,
+                "payment_verified": True,
             },
             repeat=repeat,
         )
         lines = [
             f"定时转账已创建：{repeat_label}向「{payee_obj.name}」转 {value:,.2f} 元（{channel_label}）",
             f"  首次执行：{run_day.isoformat()}",
+            f"  付款银行卡：{payer.brand}（尾号 {payer.tail}）",
             f"  计划编号：{task.task_id}",
             "  每次执行前会校验余额与收款账号状态；失败会生成提醒，不会静默跳过。",
             "  到期后由 Agent 自动执行，也可用 /advance 命令把时间快进来演示。",

@@ -51,12 +51,21 @@ def run_to_completion(
     reply,
     confirm_text: str = "确认",
     code: str = "123456",
+    payment_password: str = "246810",
     limit: int = 4,
 ):
     """把"二次确认 / 短信验证"一路走完，返回最终回复。"""
     steps = 0
-    while reply.kind in {"confirm", "verify"} and steps < limit:
-        reply = agent.handle(code if reply.kind == "verify" else confirm_text)
+    while steps < limit:
+        pending = agent.session.pending
+        if reply.kind == "confirm":
+            reply = agent.handle(confirm_text)
+        elif reply.kind == "verify":
+            reply = agent.handle(code)
+        elif pending is not None and pending.kind == "payment_auth":
+            reply = agent.handle(payment_password)
+        else:
+            break
         steps += 1
     return reply
 
@@ -80,5 +89,5 @@ def send_money(agent: BankingAgent, text: str, channel: str = "微信"):
         reply = agent.handle(channel)
         pending = agent.session.pending
     if reply.kind == "confirm" and pending is not None and pending.kind == "data_confirm":
-        reply = agent.handle("确认")
+        reply = run_to_completion(agent, reply)
     return reply

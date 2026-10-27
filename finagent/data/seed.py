@@ -11,6 +11,7 @@ import random
 from datetime import date, datetime
 from typing import List, Tuple
 
+from finagent.data.card_ledger import DEMO_CARD_PASSWORD, hash_card_password
 from finagent.data.models import (
     Account,
     Card,
@@ -194,10 +195,12 @@ def _add_cards(store) -> None:
             card_id="CARD000001",
             user_id="u_001",
             kind="credit",
+            account_id="ACC000003",
             brand="银联",
             tail="8877",
             credit_limit=50000.0,
             used=12340.0,
+            payment_password_hash=hash_card_password(DEMO_CARD_PASSWORD),
             daily_limit=20000.0,
             single_limit=5000.0,
             overseas_enabled=True,
@@ -208,8 +211,11 @@ def _add_cards(store) -> None:
             card_id="CARD000002",
             user_id="u_001",
             kind="debit",
+            account_id="ACC000001",
             brand="银联",
             tail="6222",
+            balance=32860.52,
+            payment_password_hash=hash_card_password(DEMO_CARD_PASSWORD),
             daily_limit=50000.0,
             single_limit=20000.0,
             overseas_enabled=True,
@@ -220,18 +226,36 @@ def _add_cards(store) -> None:
             card_id="CARD000003",
             user_id="u_001",
             kind="virtual",
+            account_id="ACC000004",
             brand="微众银行",
             tail="3011",
+            balance=1200.00,
+            payment_password_hash=hash_card_password(DEMO_CARD_PASSWORD),
             daily_limit=5000.0,
             single_limit=1000.0,
             contactless_enabled=False,
             issued_at="2026-02-11T00:00:00",
             note="网购专用虚拟卡",
         ),
+        Card(
+            card_id="CARD000004",
+            user_id="u_001",
+            kind="debit",
+            account_id="ACC000002",
+            brand="微众银行",
+            tail="6688",
+            balance=150000.00,
+            payment_password_hash=hash_card_password(DEMO_CARD_PASSWORD),
+            daily_limit=20000.0,
+            single_limit=20000.0,
+            overseas_enabled=False,
+            issued_at="2021-08-16T00:00:00",
+            note="定期存单",
+        ),
     ]
     for c in cards:
         store.cards[c.card_id] = _mark_demo(c, store)
-    store.counters["cards"] = 3
+    store.counters["cards"] = 4
 
 
 def _add_payees(store) -> None:

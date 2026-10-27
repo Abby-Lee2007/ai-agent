@@ -492,6 +492,111 @@
       line-height: 1.55;
     }
     .subscription-note strong { color: var(--warning); }
+    .wealth-summary {
+      white-space: pre-line;
+      line-height: 1.65;
+      margin-bottom: 14px;
+    }
+    .wealth-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .wealth-card {
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfdfc;
+      min-width: 0;
+    }
+    .wealth-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .wealth-card-title {
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .wealth-risk {
+      flex: 0 0 auto;
+      padding: 2px 7px;
+      border: 1px solid #b7d6cd;
+      border-radius: 999px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .wealth-meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 5px 10px;
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 11.5px;
+    }
+    .wealth-meta span { min-width: 0; overflow-wrap: anywhere; }
+    .wealth-meta strong {
+      color: var(--ink);
+      font-weight: 700;
+    }
+    .wealth-description {
+      margin-top: 10px;
+      color: #394b47;
+      font-size: 12px;
+      line-height: 1.65;
+    }
+    .wealth-card-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 11px;
+    }
+    .wealth-source {
+      color: var(--muted);
+      font-size: 10.5px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+    .wealth-select {
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      border: 0;
+      border-radius: 6px;
+      color: #fff;
+      background: var(--accent-strong);
+      cursor: pointer;
+      font-size: 11.5px;
+      font-weight: 750;
+    }
+    .wealth-footer {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.65;
+    }
+    .wealth-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 12px;
+    }
+    .wealth-filter {
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: #fff;
+      cursor: pointer;
+      font-size: 11.5px;
+      font-weight: 700;
+    }
+    .wealth-filter:hover { background: var(--accent-soft); border-color: #9ec7bd; }
     .anomaly-intro {
       margin-bottom: 10px;
       font-weight: 650;
@@ -1090,6 +1195,7 @@
         max-width: calc(100% - 40px);
       }
       .bubble-content.formatted-response { font-size: 11.5px; }
+      .wealth-grid { grid-template-columns: 1fr; }
       .composer-area { padding: 9px 12px max(10px, env(safe-area-inset-bottom)); }
       .send { min-width: 62px; }
       .composer-note { display: none; }
@@ -1152,6 +1258,8 @@
             <li>大额操作需要输入演示验证码。</li>
             <li>储蓄卡开户与信用卡申请使用不同资料和审核流程。</li>
             <li>信用卡申请会核验已上传流水，或明确使用演示流水。</li>
+            <li>转账和信用卡还款需要付款卡交易密码，大额操作还要短信验证。</li>
+            <li>理财推荐不会自动下单；选定产品和付款卡并完成身份验证后才会申购。</li>
             <li>直接输入“确认”或“取消”继续流程。</li>
           </ul>
         </section>
@@ -1231,6 +1339,8 @@
               <label class="settings-field">年龄<input name="age" type="number" min="18" max="100"></label>
               <label class="settings-field">职业<input name="occupation"></label>
               <label class="settings-field">月收入<input name="monthly_income" type="number" min="0" step="0.01"></label>
+              <label class="settings-field">风险评级<input name="risk_profile" readonly></label>
+              <label class="settings-field">最近测评<input name="risk_assessed_at" readonly></label>
               <label class="settings-field wide">我的生日<input name="birthday" type="date"></label>
             </div>
           </section>
@@ -1838,6 +1948,103 @@
       }
     }
 
+    function renderWealthRecommendation(container, text, reply) {
+      const products = Array.isArray(reply?.data?.product_details)
+        ? reply.data.product_details
+        : [];
+      const cutoff = (text || "").indexOf("统一产品清单：");
+      const summary = document.createElement("div");
+      summary.className = "wealth-summary";
+      summary.textContent = cutoff > 0
+        ? text.slice(0, cutoff).trim()
+        : "已按风险等级生成产品清单：";
+      container.appendChild(summary);
+
+      const grid = document.createElement("div");
+      grid.className = "wealth-grid";
+      products.forEach((product) => {
+        const card = document.createElement("section");
+        card.className = "wealth-card";
+
+        const head = document.createElement("div");
+        head.className = "wealth-card-head";
+        const title = document.createElement("div");
+        title.className = "wealth-card-title";
+        title.textContent = `${product.index}. ${product.name}`;
+        const risk = document.createElement("span");
+        risk.className = "wealth-risk";
+        risk.textContent = product.risk_label || `R${product.risk_level}`;
+        head.append(title, risk);
+
+        const meta = document.createElement("div");
+        meta.className = "wealth-meta";
+        [
+          ["代码", product.code || "-"],
+          ["类型", product.category || "-"],
+          ["参考", `${product.metric || "-"} ${product.change && product.change !== "-" ? product.change : ""}`.trim()],
+          ["起投", `${Number(product.min_amount || 0).toLocaleString("zh-CN")} 元`],
+        ].forEach(([label, value]) => {
+          const item = document.createElement("span");
+          item.textContent = `${label}：`;
+          const strong = document.createElement("strong");
+          strong.textContent = value;
+          item.appendChild(strong);
+          meta.appendChild(item);
+        });
+
+        const description = document.createElement("div");
+        description.className = "wealth-description";
+        description.textContent = product.description || "";
+
+        const foot = document.createElement("div");
+        foot.className = "wealth-card-foot";
+        const source = document.createElement("span");
+        source.className = "wealth-source";
+        source.textContent = `${product.data_source || "演示参数"}｜${product.liquidity || ""}`;
+        const select = document.createElement("button");
+        select.type = "button";
+        select.className = "wealth-select";
+        select.textContent = "选择购买";
+        select.title = `选择第 ${product.index} 只产品并补充金额、付款卡`;
+        select.addEventListener("click", () => {
+          if (busy) return;
+          sendMessage(`购买第${product.index}只`);
+        });
+        foot.append(source, select);
+        card.append(head, meta, description, foot);
+        grid.appendChild(card);
+      });
+      container.appendChild(grid);
+
+      const filters = document.createElement("div");
+      filters.className = "wealth-filters";
+      const prompts = {
+        "存款": "推荐存款产品",
+        "债券": "推荐债券产品",
+        "基金": "推荐基金产品",
+        "换一批": "换一批理财产品",
+      };
+      (reply?.data?.filter_options || []).forEach((label) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "wealth-filter";
+        button.textContent = label;
+        button.addEventListener("click", () => {
+          if (!busy) sendMessage(prompts[label] || `推荐${label}产品`);
+        });
+        filters.appendChild(button);
+      });
+      if (filters.childElementCount) container.appendChild(filters);
+
+      const footer = document.createElement("div");
+      footer.className = "wealth-footer";
+      footer.textContent = reply?.data?.purchase_prompt
+        ? "推荐不构成投资建议。选择产品后，还需要填写金额和付款银行卡，并经过确认、交易密码及必要的短信验证。"
+        : "当前资金安排不适合继续申购，建议先补足应急金。";
+      container.appendChild(footer);
+    }
+
+
     function appendMessage(role, text, reply = null) {
       const article = document.createElement("article");
       article.className = `message ${role}`;
@@ -1871,10 +2078,17 @@
       const anomalyItems = reply?.intent === "bill.anomaly"
         ? (reply.data?.items || [])
         : [];
+      const wealthProducts = reply?.intent === "wealth.recommend"
+        ? (reply.data?.product_details || [])
+        : [];
       if (Array.isArray(subscriptionItems) && subscriptionItems.length) {
         content.className = "bubble-content";
         bubble.classList.add("wide", "subscription-bubble");
         renderSubscriptionContent(content, text, reply);
+      } else if (Array.isArray(wealthProducts) && wealthProducts.length) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        renderWealthRecommendation(content, text, reply);
       } else if (Array.isArray(anomalyItems) && anomalyItems.length) {
         content.className = "bubble-content";
         bubble.classList.add("wide");
@@ -1998,7 +2212,14 @@
           appendMessage("agent", result.error, { kind: "error", intent: "session" });
         } else if (result.reply) {
           appendMessage("agent", result.reply.text, result.reply);
-          awaitingSecret = /(请(?:重新)?设置[^。\n]*6 位数字[^。\n]*密码|请再次输入同一密码|请再次输入取款密码|请输入该卡的取款密码)/.test(
+          if (
+            result.reply.intent === "wealth.risk_assess"
+            || result.reply.intent === "wealth.recommend"
+            || result.reply.intent === "wealth.subscribe"
+          ) {
+            await refreshProfileSummary();
+          }
+          awaitingSecret = /(请(?:重新)?设置[^。\n]*6 位数字[^。\n]*密码|请再次输入同一密码|请再次输入取款密码|请输入该卡的取款密码|输入付款银行卡的 6 位交易密码|输入 6 位交易密码)/.test(
             result.reply.text || ""
           );
         } else {
@@ -2206,6 +2427,8 @@
         monthly_income: user.monthly_income,
         birthday: user.birthday,
         notify_channel: prefs.notify_channel,
+        risk_profile: `${user.risk_profile || "未测评"}${user.risk_score ? `（${user.risk_score}/5）` : ""}`,
+        risk_assessed_at: user.risk_assessed_at || "尚未完成",
       });
       customerName.textContent = user.name || "演示客户";
       customerSubtitle.textContent = `${user.city || "深圳"} · ${user.risk_profile || "平衡型投资者"}`;
@@ -2228,6 +2451,24 @@
       renderCarePeople(carePeople);
       renderGoalEditors(profile.goals || []);
       renderCardEditors(profile.cards || []);
+    }
+
+    async function refreshProfileSummary() {
+      if (!sessionId) return;
+      try {
+        const response = await fetchWithAuth(
+          `/v1/profile?session_id=${encodeURIComponent(sessionId)}`
+        );
+        if (!response.ok) return;
+        const profile = await response.json();
+        const user = profile.user || {};
+        customerName.textContent = user.name || "演示客户";
+        const riskLabel = user.risk_profile || "未完成风险测评";
+        const score = user.risk_score ? `（${user.risk_score}/5）` : "";
+        customerSubtitle.textContent = `${user.city || "深圳"} · ${riskLabel}${score}`;
+      } catch {
+        // Keep the last known summary when the optional profile refresh fails.
+      }
     }
 
     function collectCarePeople() {
@@ -2472,7 +2713,15 @@
         grid.className = "settings-grid";
         const brand = makeInput("text", card.brand);
         const tail = makeInput("text", card.tail);
+        tail.readOnly = true;
         tail.maxLength = 4;
+        const balance = makeInput("number", card.kind === "credit" ? card.used : card.balance);
+        balance.readOnly = true;
+        const available = makeInput("number", Math.max(
+          card.kind === "credit" ? Number(card.credit_limit || 0) - Number(card.used || 0) : Number(card.balance || 0),
+          0
+        ));
+        available.readOnly = true;
         const daily = makeInput("number", card.daily_limit);
         const single = makeInput("number", card.single_limit);
         const note = makeInput("text", card.note);
@@ -2488,9 +2737,18 @@
           option.selected = card.status === value;
           status.append(option);
         });
+        const kindValue = document.createElement("input");
+        kindValue.value = ({
+          debit: "借记卡", credit: "信用卡", virtual: "虚拟卡",
+          supplementary: "附属卡"
+        })[card.kind] || card.kind;
+        kindValue.readOnly = true;
         grid.append(
+          makeSettingsField("卡类型（不可修改）", kindValue),
           makeSettingsField("发卡行", brand),
-          makeSettingsField("尾号", tail),
+          makeSettingsField("尾号（不可修改）", tail),
+          makeSettingsField(card.kind === "credit" ? "已用额度（只读）" : "卡余额（只读）", balance),
+          makeSettingsField("可用（只读）", available),
           makeSettingsField("状态", status),
           makeSettingsField("日限额", daily),
           makeSettingsField("单笔限额", single),
@@ -2593,7 +2851,14 @@
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.message || "读取资料失败");
         renderProfileSettings(payload);
-        profileStatus.textContent = "资料已加载，可直接修改。";
+        const cardTotal = (payload.cards || [])
+          .filter((card) => !["credit", "supplementary"].includes(card.kind))
+          .filter((card) => !["pending", "cancelled"].includes(card.status))
+          .reduce((sum, card) => sum + Number(card.balance || 0), 0);
+        profileStatus.textContent = `资料已加载。银行卡资产总额 ${cardTotal.toLocaleString("zh-CN", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        })} 元。`;
       } catch (error) {
         profileStatus.textContent = error.message || "读取资料失败";
       }
@@ -2812,7 +3077,7 @@
       error.textContent = "业务分类加载失败";
       capabilityCategories.appendChild(error);
     });
-    ensureSession().catch(() => {
+    ensureSession().then(() => refreshProfileSummary()).catch(() => {
       serviceStatus.textContent = "接口不可用";
       appendMessage("agent", "无法连接 Agent 服务，请确认 API 已启动。", { kind: "error", intent: "network" });
     });
