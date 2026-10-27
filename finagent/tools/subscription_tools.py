@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 
 from finagent.data.models import Subscription
 from finagent.data.provenance import source_badge
+from finagent.data.subscription_alias import select_subscription
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, render_table
 
 
@@ -114,12 +115,12 @@ class SubscriptionDetectTool(Tool):
         detected = detect_subscriptions(ctx)
         if not detected:
             return ToolResult(True, "没有从流水里识别到周期性扣费。", summary="未识别到订阅")
-        existing = {s.merchant: s for s in _subscriptions(ctx, status="")}
+        existing_subscriptions = _subscriptions(ctx, status="")
         rows = []
         monthly_total = 0.0
         auto_renew_count = 0
         for item in detected:
-            subscription = existing.get(item["merchant"])
+            subscription = select_subscription(existing_subscriptions, item["merchant"])
             if subscription is not None:
                 item["expires_at"] = subscription.expires_at or subscription.next_charge_date
                 item["auto_renew"] = bool(
@@ -157,7 +158,7 @@ class SubscriptionDetectTool(Tool):
 
         # 把识别结果同步到订阅表，保证后续"取消订阅"能按商户找到记录
         for item in detected:
-            if item["merchant"] in existing:
+            if select_subscription(existing_subscriptions, item["merchant"]) is not None:
                 continue
             next_charge_date = (date.fromisoformat(item["last_date"]) + timedelta(days=30)).isoformat()
             sub = Subscription(
@@ -174,7 +175,7 @@ class SubscriptionDetectTool(Tool):
             )
             ctx.store.touch(sub)
             ctx.store.subscriptions[sub.sub_id] = sub
-            existing[sub.merchant] = sub
+            existing_subscriptions.append(sub)
         return ToolResult(
             True,
             "\n".join(lines),
@@ -303,11 +304,7 @@ class SubscriptionCancelTool(Tool):
 
     def run(self, ctx: ToolContext, merchant: str) -> ToolResult:  # type: ignore[override]
         subs = _subscriptions(ctx)
-        target = None
-        for s in subs:
-            if merchant and (merchant in s.merchant or s.merchant in merchant):
-                target = s
-                break
+        target = select_subscription(subs, merchant)
         if target is None:
             names = "、".join(s.merchant for s in subs[:6]) or "暂无"
             return ToolResult(False, f"没有找到「{merchant}」的订阅。当前有：{names}")
@@ -366,14 +363,7 @@ class SubscriptionResumeTool(Tool):
 
     def run(self, ctx: ToolContext, merchant: str) -> ToolResult:  # type: ignore[override]
         subs = _subscriptions(ctx, status="")
-        target = None
-        for subscription in subs:
-            if merchant and (
-                merchant in subscription.merchant
-                or subscription.merchant in merchant
-            ):
-                target = subscription
-                break
+        target = select_subscription(subs, merchant)
         if target is None:
             names = "、".join(s.merchant for s in subs if s.status == "cancelled") or "暂无"
             return ToolResult(False, f"没有找到「{merchant}」的已取消订阅。可恢复：{names}")

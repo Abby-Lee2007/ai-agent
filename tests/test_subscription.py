@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import unittest
 
+from finagent.data.models import Subscription
 from tests.support import make_agent, run_to_completion
 
 
@@ -181,6 +182,27 @@ class TestSubscription(unittest.TestCase):
         self.assertTrue(row["pending_auto_renew"])
         self.assertEqual(row["pending_effective_at"], "2026-11-08")
         self.assertIn("下期：12 个月", reply.text)
+
+    def test_detect_uses_latest_active_alias_subscription(self):
+        duplicate = Subscription(
+            sub_id="SUB-ALIAS-QQ",
+            user_id="u_001",
+            merchant="QQ音乐",
+            amount=148.0,
+            term_months=12,
+            expires_at="2027-10-22",
+            next_charge_date="2027-10-22",
+            status="active",
+            auto_renew=True,
+        )
+        self.agent.store.subscriptions[duplicate.sub_id] = duplicate
+
+        reply = self.agent.handle("帮我看看有哪些自动续费")
+        row = next(
+            item for item in reply.data["items"]
+            if item["merchant"] == "QQ音乐绿钻"
+        )
+        self.assertEqual(row["expires_at"], "2027-10-22")
 
     def test_cancel_unknown_subscription(self):
         reply = self.agent.handle("取消奈飞会员")

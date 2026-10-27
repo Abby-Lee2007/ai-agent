@@ -226,6 +226,31 @@ try {
   assert(subscriptionTable.fitsDesktop, "桌面端自动续费表格不应依赖横向滚动");
   assert(subscriptionTable.pageFits, "自动续费表格导致页面横向滚动");
   await screenshot(cdp, "desktop-subscriptions.png");
+  const qqExpiryBefore = await evaluate(cdp, `(() => {
+    const bubbles = [...document.querySelectorAll(".message.agent .bubble")];
+    const bubble = [...bubbles].reverse().find((item) => item.querySelector(".subscription-table"));
+    const row = [...(bubble?.querySelectorAll(".subscription-table tbody tr") || [])]
+      .find((item) => item.textContent.includes("QQ音乐绿钻"));
+    return row?.querySelector("td:nth-child(3)")?.textContent.trim() || "";
+  })()`);
+  assert(qqExpiryBefore === "2026-11-12", "QQ音乐购买前到期时间不正确");
+  await sendPrompt(cdp, "充一个QQ音乐的年度会员", "请补充本次购买价格");
+  await sendPrompt(cdp, "148元", "自动续费");
+  await sendPrompt(cdp, "不自动续费", "会员充值订单");
+  await sendPrompt(cdp, "确认", "会员充值已执行");
+  await sendPrompt(cdp, "帮我看看有哪些自动续费", "共识别到");
+  const qqExpiryAfter = await evaluate(cdp, `(() => {
+    const bubbles = [...document.querySelectorAll(".message.agent .bubble")];
+    const bubble = [...bubbles].reverse().find((item) => item.querySelector(".subscription-table"));
+    const row = [...(bubble?.querySelectorAll(".subscription-table tbody tr") || [])]
+      .find((item) => item.textContent.includes("QQ音乐绿钻"));
+    return {
+      expiry: row?.querySelector("td:nth-child(3)")?.textContent.trim() || "",
+      autoRenew: row?.querySelector(".subscription-renewal")?.textContent.trim() || ""
+    };
+  })()`);
+  assert(qqExpiryAfter.expiry === "2027-11-12", "购买年会后检测结果未刷新到期时间");
+  assert(qqExpiryAfter.autoRenew === "否", "购买一次性年会后自动续费状态不正确");
   await sendPrompt(cdp, "取消腾讯视频会员", "腾讯视频VIP");
   await sendPrompt(cdp, "确认", "已取消");
   await sendPrompt(cdp, "我的订阅都有什么", "已取消");

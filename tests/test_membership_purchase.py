@@ -143,6 +143,30 @@ class TestMembershipPurchase(unittest.TestCase):
         self.assertEqual(matches[0].status, "active")
         self.assertTrue(matches[0].auto_renew)
 
+    def test_short_platform_alias_extends_existing_subscription(self):
+        tool = self.agent.registry.get("membership.purchase")
+        result = tool.run(
+            self.agent.context(),
+            items=[
+                {
+                    "platform": "QQ音乐",
+                    "term_months": 12,
+                    "purchase_price": 148,
+                    "auto_renew": False,
+                    "renewal_price": 0,
+                },
+            ],
+        )
+
+        self.assertTrue(result.ok, result.message)
+        matches = [
+            item for item in self.agent.store.subscriptions_of("u_001")
+            if item.merchant in {"QQ音乐", "QQ音乐绿钻"}
+        ]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].merchant, "QQ音乐绿钻")
+        self.assertEqual(matches[0].expires_at, "2027-11-12")
+
 
 if __name__ == "__main__":
     unittest.main()

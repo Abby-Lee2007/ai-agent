@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from finagent.data import seed as seed_module
+from finagent.data.subscription_alias import deduplicate_subscriptions
 from finagent.data.models import (
     Account,
     AaSheet,
@@ -738,6 +739,7 @@ class DataStore:
                             subscription.cycle,
                             0 if subscription.cycle == "weekly" else 1,
                         )
+                records = deduplicate_subscriptions(records)
             setattr(self, table, records)
         self.counters = data.get("counters", {}) or {}
         self.audit = data.get("audit", []) or []

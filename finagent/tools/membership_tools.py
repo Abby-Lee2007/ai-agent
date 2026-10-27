@@ -6,6 +6,10 @@ from datetime import date
 from typing import Any, Dict, List
 
 from finagent.data.models import Subscription
+from finagent.data.subscription_alias import (
+    select_subscription,
+    subscription_matches_platform,
+)
 from finagent.nlu.membership_parser import (
     apply_membership_options,
     validate_membership_items,
@@ -118,12 +122,11 @@ class MembershipPurchaseTool(Tool):
             try:
                 matching = [
                     sub for sub in ctx.store.subscriptions_of(ctx.user_id, status="")
-                    if sub.merchant == order_item.platform
+                    if subscription_matches_platform(sub, order_item.platform)
                 ]
-                subscription = next(
-                    (sub for sub in matching if sub.status == "active"),
-                    matching[0] if matching else None,
-                )
+                subscription = select_subscription(matching)
+                if subscription is not None:
+                    order_item.platform = subscription.merchant
                 start = _subscription_start(subscription, today)
                 expiry = add_months(start, order_item.term_months)
                 if subscription is None:
@@ -162,6 +165,9 @@ class MembershipPurchaseTool(Tool):
                     subscription.pending_effective_at = ""
                 subscription.account_id = account.account_id
                 ctx.store.touch(subscription)
+                for duplicate in matching:
+                    if duplicate.sub_id != subscription.sub_id:
+                        ctx.store.subscriptions.pop(duplicate.sub_id, None)
                 order_item.status = "fulfilled"
                 order_item.subscription_id = subscription.sub_id
                 order_item.result = (
@@ -263,16 +269,9 @@ class SubscriptionChangeCycleTool(Tool):
         if price <= 0:
             return ToolResult(False, "续费价格必须大于 0。")
 
-        target = next(
-            (
-                subscription
-                for subscription in ctx.store.subscriptions_of(ctx.user_id, status="active")
-                if merchant and (
-                    merchant in subscription.merchant
-                    or subscription.merchant in merchant
-                )
-            ),
-            None,
+        target = select_subscription(
+            ctx.store.subscriptions_of(ctx.user_id, status="active"),
+            merchant,
         )
         if target is None:
             return ToolResult(False, f"没有找到可调整周期的「{merchant}」订阅。")
