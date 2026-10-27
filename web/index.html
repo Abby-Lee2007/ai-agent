@@ -1197,6 +1197,13 @@
       font: inherit;
     }
     .settings-field.wide { grid-column: 1 / -1; }
+    .settings-hint {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
     .settings-actions {
       display: flex;
       align-items: center;
@@ -1479,6 +1486,14 @@
           <section class="settings-section">
             <h3>关心的人</h3>
             <p class="settings-note">自己的生日在上方“个人资料”中维护；这里同时维护生日提醒和转账收款账号。</p>
+            <datalist id="care-bank-options">
+              <option value="工商银行"></option>
+              <option value="农业银行"></option>
+              <option value="中国银行"></option>
+              <option value="建设银行"></option>
+              <option value="招商银行"></option>
+              <option value="交通银行"></option>
+            </datalist>
             <div id="care-people-list"></div>
             <button class="history-button" id="add-care-person" type="button">添加关心的人</button>
           </section>
@@ -2729,6 +2744,7 @@
         phone: row.querySelector('[data-field="phone"]')?.value || "",
         wechat: row.querySelector('[data-field="wechat"]')?.value || "",
         alipay: row.querySelector('[data-field="alipay"]')?.value || "",
+        bank_name: row.querySelector('[data-field="bank_name"]')?.value || "",
         bank_card: row.querySelector('[data-field="bank_card"]')?.value || "",
         favorite_gift: row.querySelector('[data-field="favorite_gift"]')?.value || "",
         avoid: row.querySelector('[data-field="avoid"]')?.value || "",
@@ -2784,10 +2800,19 @@
         const alipay = makeInput("text", person.alipay || "");
         alipay.dataset.field = "alipay";
         alipay.placeholder = "手机号或邮箱";
+        const bankName = makeInput("text", person.bank_name || "");
+        bankName.dataset.field = "bank_name";
+        bankName.setAttribute("list", "care-bank-options");
+        bankName.placeholder = "例如：工商银行";
         const bankCard = makeInput("text", person.bank_card || "");
         bankCard.dataset.field = "bank_card";
         bankCard.inputMode = "numeric";
-        bankCard.placeholder = "银行卡号，仅展示尾号";
+        bankCard.placeholder = "16-19 位数字，可用空格分隔";
+        const bankCardField = makeSettingsField("银行卡号", bankCard);
+        const bankCardHint = document.createElement("small");
+        bankCardHint.className = "settings-hint bank-card-hint";
+        bankCardHint.textContent = "需填写开户银行；银行卡号应为 16-19 位、通常以 62 开头，仅展示尾号。";
+        bankCardField.appendChild(bankCardHint);
         const gifts = makeInput("text", (person.favorite_gift || []).join(","));
         gifts.dataset.field = "favorite_gift";
         gifts.placeholder = "鲜花,蛋糕";
@@ -2802,7 +2827,8 @@
           makeSettingsField("手机号", phone),
           makeSettingsField("微信号", wechat),
           makeSettingsField("支付宝账号", alipay),
-          makeSettingsField("银行卡号", bankCard),
+          makeSettingsField("开户银行", bankName),
+          bankCardField,
           makeSettingsField("偏好礼物", gifts),
           makeSettingsField("需要避开", avoid),
         );
@@ -3167,6 +3193,7 @@
         phone: "",
         wechat: "",
         alipay: "",
+        bank_name: "",
         bank_card: "",
         favorite_gift: [],
         avoid: [],

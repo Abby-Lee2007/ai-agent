@@ -619,13 +619,14 @@ try {
     name: document.querySelector('[name="name"]')?.value,
     carePeople: document.querySelectorAll(".care-person").length,
     firstCareName: document.querySelector('.care-person [data-field="name"]')?.value,
-    careContactFields: ["phone", "wechat", "alipay", "bank_card"].every(
+    careContactFields: ["phone", "wechat", "alipay", "bank_name", "bank_card"].every(
       (field) => Boolean(document.querySelector(\`.care-person [data-field="\${field}"]\`))
     ),
     careContactLabels: [...document.querySelectorAll(".care-person .settings-field")]
       .map((label) => label.textContent)
-      .filter((text) => ["手机号", "微信号", "支付宝账号", "银行卡号"].some((name) => text.includes(name)))
+      .filter((text) => ["手机号", "微信号", "支付宝账号", "开户银行", "银行卡号"].some((name) => text.includes(name)))
       .length,
+    careBankHint: document.querySelector(".care-person .bank-card-hint")?.textContent || "",
     cardEditors: document.querySelectorAll(".cards-settings-section .card-editor").length,
     cardDeletes: document.querySelectorAll(".cards-settings-section .card-editor .history-delete").length,
     cardDeleteText: document.querySelector(".cards-settings-section .card-editor .history-delete")?.textContent,
@@ -653,7 +654,8 @@ try {
   assert(profilePanel.carePeople >= 1, "关心的人没有从预设资料生成");
   assert(profilePanel.firstCareName, "关心的人姓名没有加载");
   assert(profilePanel.careContactFields, "关心的人缺少转账联系方式输入框");
-  assert(profilePanel.careContactLabels === 4, "关心的人转账联系方式字段名不完整");
+  assert(profilePanel.careContactLabels === 5, "关心的人转账联系方式字段名不完整");
+  assert(profilePanel.careBankHint.includes("16-19 位"), "银行卡号缺少格式提示");
   assert(profilePanel.cardEditors >= 3, "银行卡设置没有加载预设卡片");
   assert(profilePanel.cardDeletes >= 3, "银行卡设置没有删除按钮");
   assert(profilePanel.goalEditors >= 1, "资料页没有加载资金目标");
@@ -772,6 +774,7 @@ try {
       phone: "13800138000",
       wechat: "ui_smoke_wechat",
       alipay: "ui_smoke@example.com",
+      bank_name: "工商银行",
       bank_card: "6222020000000007",
     };
     Object.entries(values).forEach(([field, value]) => {
@@ -795,6 +798,7 @@ try {
   assert(savedContacts.phone === "13800138000", "联系人手机号没有保存");
   assert(savedContacts.wechat === "ui_smoke_wechat", "联系人微信号没有保存");
   assert(savedContacts.alipay === "ui_smoke@example.com", "联系人支付宝没有保存");
+  assert(savedContacts.bank_name === "工商银行", "联系人开户银行没有保存");
   assert(savedContacts.bank_card_masked === "**** **** **** 0007", "联系人银行卡号没有保存");
   await evaluate(cdp, `document.querySelector("#profile-settings-close").click()`);
   await sendPrompt(cdp, "分析我这个月的账单", "消费分类排行");

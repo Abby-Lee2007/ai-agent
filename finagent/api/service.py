@@ -566,7 +566,7 @@ class AgentSessionService:
             if not isinstance(item, dict):
                 continue
             person = dict(item)
-            for field in ("phone", "wechat", "alipay", "bank_card"):
+            for field in ("phone", "wechat", "alipay", "bank_name", "bank_card"):
                 person.setdefault(field, "")
             bank_card = "".join(ch for ch in str(person.get("bank_card") or "") if ch.isdigit())
             person["bank_card_masked"] = (
@@ -590,12 +590,29 @@ class AgentSessionService:
             phone = "".join(ch for ch in str(item.get("phone") or "") if ch.isdigit())
             if phone and (len(phone) != 11 or not phone.startswith("1")):
                 raise ValueError(f"{name}的手机号格式不正确")
+            bank_name = str(item.get("bank_name") or "").strip()[:40]
             bank_card = "".join(ch for ch in str(item.get("bank_card") or "") if ch.isdigit())
-            if bank_card and (
-                not 12 <= len(bank_card) <= 19
-                or not luhn_ok(bank_card)
-            ):
-                raise ValueError(f"{name}的银行卡号格式不正确")
+            if bank_card:
+                if not bank_name:
+                    raise ValueError(
+                        f"{name}已填写银行卡号，请同时填写开户银行。"
+                        "银行卡号应为 16-19 位数字，可包含空格或短横线。"
+                    )
+                if not 16 <= len(bank_card) <= 19:
+                    raise ValueError(
+                        f"{name}的银行卡号格式不正确：应为 16-19 位数字，"
+                        f"当前为 {len(bank_card)} 位。"
+                    )
+                if not bank_card.startswith("62"):
+                    raise ValueError(
+                        f"{name}的银行卡号格式不正确：境内银联储蓄卡通常以 62 开头，"
+                        f"当前前两位为 {bank_card[:2]}。"
+                    )
+                if not luhn_ok(bank_card):
+                    raise ValueError(
+                        f"{name}的银行卡号未通过 Luhn 校验，通常是某一位数字输错。"
+                        f"当前为 {len(bank_card)} 位且以 62 开头，请逐位核对卡号。"
+                    )
             people.append({
                 "person_id": str(item.get("person_id") or f"CARE{index + 1:04d}")[:40],
                 "name": name[:40],
@@ -605,6 +622,7 @@ class AgentSessionService:
                 "phone": phone,
                 "wechat": str(item.get("wechat") or "").strip()[:100],
                 "alipay": str(item.get("alipay") or "").strip()[:100],
+                "bank_name": bank_name,
                 "bank_card": bank_card,
                 "bank_card_masked": (
                     f"**** **** **** {bank_card[-4:]}" if bank_card else ""

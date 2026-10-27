@@ -18,6 +18,7 @@ CONTACTS = {
     "phone": "13800138000",
     "wechat": "xiaoya_wx",
     "alipay": "13800138000",
+    "bank_name": "工商银行",
     "bank_card": "6222020000000007",
 }
 
@@ -46,6 +47,7 @@ class TestCarePeopleTransfer(unittest.TestCase):
             self.assertEqual(person["phone"], "13800138000")
             self.assertEqual(person["wechat"], "xiaoya_wx")
             self.assertEqual(person["alipay"], "13800138000")
+            self.assertEqual(person["bank_name"], "工商银行")
             self.assertEqual(person["bank_card"], "6222020000000007")
             self.assertEqual(person["bank_card_masked"], "**** **** **** 0007")
 
@@ -59,7 +61,39 @@ class TestCarePeopleTransfer(unittest.TestCase):
 
         restored_person = restored["preferences"]["care_people"][0]
         self.assertEqual(restored_person["wechat"], "xiaoya_wx")
+        self.assertEqual(restored_person["bank_name"], "工商银行")
         self.assertEqual(restored_person["bank_card_masked"], "**** **** **** 0007")
+
+    def test_care_person_bank_name_is_required_with_card(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, session_id = self._service(temp_dir)
+
+            with self.assertRaises(ValueError) as raised:
+                service.update_profile_settings(
+                    session_id,
+                    {"care_people": [{**CONTACTS, "bank_name": ""}]},
+                )
+
+        self.assertIn("开户银行", str(raised.exception))
+
+    def test_care_person_card_error_explains_luhn_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service, session_id = self._service(temp_dir)
+
+            with self.assertRaises(ValueError) as raised:
+                service.update_profile_settings(
+                    session_id,
+                    {
+                        "care_people": [{
+                            **CONTACTS,
+                            "bank_card": "623478567898787656",
+                        }]
+                    },
+                )
+
+        message = str(raised.exception)
+        self.assertIn("18 位", message)
+        self.assertIn("Luhn", message)
 
     def test_care_person_can_be_used_for_all_transfer_channels(self):
         cases = [
