@@ -265,8 +265,9 @@ try {
   await sendPrompt(cdp, "老师", "生日");
   await sendPrompt(cdp, "11月20日", "礼物偏好");
   await sendPrompt(cdp, "沿用资料", "过敏");
-  await sendPrompt(cdp, "无", "预算");
-  await sendPrompt(cdp, "1000", "第1个");
+  await sendPrompt(cdp, "对花粉和奶制品过敏", "预算");
+  await sendPrompt(cdp, "70", "没有可预约礼物");
+  await sendPrompt(cdp, "预算1000，没有禁忌", "第1个");
   await waitFor(
     cdp,
     `document.querySelector("#service-status")?.textContent === "接口就绪"

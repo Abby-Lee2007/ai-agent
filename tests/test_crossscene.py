@@ -240,6 +240,26 @@ class TestCrossScene(unittest.TestCase):
                 self.assertEqual(agent.session.pending.slots.get("item"), item)
                 self.assertEqual(agent.session.pending.missing, ["date"])
 
+    def test_failed_birthday_recommendation_can_retry_with_new_constraints(self):
+        reply = begin_birthday_recommendation(
+            self.agent,
+            budget="70",
+            avoid="对花粉和奶制品过敏",
+        )
+
+        self.assertFalse(reply.ok)
+        self.assertIn("没有可预约礼物", reply.text)
+        self.assertEqual(self.agent.session.pending.kind, "gift_recommend_retry")
+        self.assertEqual(self.agent.session.pending.slots.get("budget"), 70.0)
+
+        retried = self.agent.handle("预算1000，没有禁忌")
+
+        self.assertTrue(retried.ok, retried.text)
+        self.assertEqual(retried.intent, "crossscene.birthday_plan")
+        self.assertEqual(self.agent.session.pending.kind, "gift_choice")
+        self.assertEqual(self.agent.session.pending.slots.get("budget"), 1000.0)
+        self.assertEqual(self.agent.session.pending.slots.get("avoid"), "没有禁忌")
+
     def test_generic_graduation_gift_asks_for_item_and_custom_price(self):
         reply = self.agent.handle("明天毕业了我想给老师送个毕业礼物")
         self.assertEqual(reply.intent, "crossscene.gift_plan")

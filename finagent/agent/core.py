@@ -375,6 +375,9 @@ class BankingAgent:
         if pending is not None and pending.kind == "gift_choice":
             return self._handle_gift_choice(pending, text)
 
+        if pending is not None and pending.kind == "gift_recommend_retry":
+            return self._handle_gift_recommend_retry(pending, text)
+
         if pending is not None and pending.kind == "slot":
             return self._resume_from_slots(pending, text)
 
@@ -2220,7 +2223,16 @@ class BankingAgent:
                 offset=int(pending.slots.get("offset") or 0),
             )
             if not result.ok:
-                return AgentReply(result.message, ok=False, kind="error")
+                pending.kind = "gift_recommend_retry"
+                self.session.pending = pending
+                return AgentReply(
+                    result.message
+                    + "\n\n可以直接回复「预算1000」或「预算1000，没有禁忌」继续推荐。",
+                    intent=pending.intent,
+                    ok=False,
+                    kind="question",
+                    needs_input=True,
+                )
             choice = result.data.get("gift_choice") or {}
             pending.slots = dict(choice)
             self.session.pending = pending
@@ -2309,6 +2321,42 @@ class BankingAgent:
         )
         self.session.clear_pending()
         return self._gate_and_execute(plan)
+
+    def _handle_gift_recommend_retry(self, pending: Pending, text: str) -> AgentReply:
+        """Allow budget or preference changes after no gift options are available."""
+        if classify_control(text) == "deny":
+            self.session.clear_pending()
+            return AgentReply("好的，本次生日礼物推荐已取消，没有锁定资金。")
+        slots = dict(pending.slots)
+        amount = parse_amount(text)
+        if amount is not None:
+            slots["budget"] = float(amount)
+        cleaned = re.sub(
+            r"(?:预算|价格|提高到|改成|调整为)?\s*[¥￥]?\s*\d+(?:\.\d+)?\s*(?:元|块)?",
+            "",
+            text,
+        ).strip(" ，,。；;")
+        if cleaned and any(word in cleaned for word in (
+            "过敏", "禁忌", "不要", "不能", "不吃", "避开", "没有", "无",
+        )):
+            slots["avoid"] = cleaned
+        elif cleaned and any(word in cleaned for word in ("喜欢", "偏好", "想要")):
+            slots["preferences"] = cleaned
+        if amount is None and not cleaned:
+            return AgentReply(
+                "请直接回复新的预算，例如「预算1000」，"
+                "也可以同时调整禁忌，例如「预算1000，没有禁忌」。",
+                intent=pending.intent,
+                kind="question",
+                needs_input=True,
+            )
+        self.session.clear_pending()
+        return self._continue_with_intent(Intent(
+            "crossscene.birthday_plan",
+            slots,
+            confidence=0.9,
+            source="retry",
+        ))
 
     def _handle_verify(self, pending: Pending, text: str) -> AgentReply:
         if classify_control(text) == "deny":
@@ -2434,6 +2482,24 @@ class BankingAgent:
                 break
         self.store.log("agent.execute", intent=plan.intent, tools=plan.tools(), ok=ok)
         text = "\n\n".join(messages) if len(plan.steps) > 1 else (messages[0] if messages else "操作已完成。")
+        gift_recommend_failed = not ok and any(
+            step.tool == "crossscene.gift_recommend" for step in plan.steps
+        )
+        if gift_recommend_failed:
+            self.session.pending = Pending(
+                kind="gift_recommend_retry",
+                intent=plan.intent,
+                slots=dict(plan.slots),
+            )
+            return AgentReply(
+                text + "\n\n可以直接回复「预算1000」或「预算1000，没有禁忌」继续推荐。",
+                intent=plan.intent,
+                ok=False,
+                kind="question",
+                trace=trace,
+                plan=plan.tools(),
+                needs_input=True,
+            )
         gift_choice = payload.get("gift_choice") if ok else None
         if gift_choice:
             self.session.pending = Pending(
