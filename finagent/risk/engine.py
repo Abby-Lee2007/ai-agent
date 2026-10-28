@@ -32,6 +32,7 @@ class RiskDecision:
     requires_confirmation: bool = False
     requires_verification: bool = False
     blocked: bool = False
+    cooling_minutes: int = 0
 
     def summary(self) -> str:
         if not self.reasons:
@@ -62,6 +63,8 @@ class RiskEngine:
     # 危险等级工具：即使金额很小也要二次确认
     HIGH_RISK_TOOLS = {
         "card.report_lost": "挂失属于不可逆操作，补卡后卡号会变更",
+        "risk.dispute": "争议提交后将进入银行模拟审核流程",
+        "account.reconcile_adjust": "手工调账会改变银行卡或关联账户的展示余额",
         "card.freeze": "冻结卡片会影响所有交易",
         "wealth.subscribe": "理财申购在确认后不可撤单",
         "wealth.redeem": "赎回后资金将回到活期账户",
@@ -179,6 +182,13 @@ class RiskEngine:
             decision.requires_confirmation = True
             decision.level = max(decision.level, "medium", key=["low", "medium", "high", "block"].index)
             decision.reasons.append(f"「{payee_keyword}」是首次转账的新收款人")
+            if amount >= RiskPolicy.NEW_PAYEE_COOLING_THRESHOLD:
+                decision.cooling_minutes = RiskPolicy.NEW_PAYEE_COOLING_MINUTES
+                decision.level = "high"
+                decision.reasons.append(
+                    f"新收款人金额超过 {RiskPolicy.NEW_PAYEE_COOLING_THRESHOLD:,.0f} 元，"
+                    f"进入 {RiskPolicy.NEW_PAYEE_COOLING_MINUTES} 分钟冷静期"
+                )
 
         # --- 身份验证 ---
         if amount >= RiskPolicy.VERIFY_THRESHOLD:

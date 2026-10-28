@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Optional
 from finagent.agent.core import AgentReply, BankingAgent
 from finagent.data.models import Card
 from finagent.data.store import DataStore
+from finagent.integrations.sandbox_adapters import execution_payload
 
 
 class SessionNotFound(KeyError):
@@ -191,6 +192,292 @@ class AgentSessionService:
                 result = store.delete_upload_batch(record.user_id, batch_id)
             self._persist_session(record)
             return result
+
+    def get_transaction_detail(self, session_id: str, txn_id: str) -> Dict[str, Any]:
+        with self._lock:
+            record = self._get_or_load(session_id)
+            txn = record.agent.store.transactions.get(txn_id)
+            if txn is None or txn.user_id != record.user_id:
+                raise ValueError(f"交易不存在：{txn_id}")
+            account = record.agent.store.accounts.get(txn.account_id)
+            card = next(
+                (
+                    item for item in record.agent.store.cards_of(record.user_id)
+                    if item.account_id == txn.account_id
+                ),
+                None,
+            )
+            return {
+                "session_id": session_id,
+                "transaction": {
+                    "txn_id": txn.txn_id,
+                    "timestamp": txn.timestamp,
+                    "amount": txn.amount,
+                    "merchant": txn.merchant,
+                    "category": txn.category,
+                    "channel": txn.channel,
+                    "counterparty": txn.counterparty,
+                    "note": txn.note,
+                    "status": txn.status,
+                    "lifecycle_status": txn.lifecycle_status,
+                    "submitted_at": txn.submitted_at or txn.timestamp,
+                    "completed_at": txn.completed_at or (
+                        txn.timestamp if txn.lifecycle_status == "completed" else ""
+                    ),
+                    "expected_arrival_at": txn.expected_arrival_at,
+                    "bank_reference": txn.bank_reference or f"BANK-{txn.txn_id[-10:].upper()}",
+                    "failure_reason": txn.failure_reason,
+                    "risk_notes": txn.risk_notes,
+                    "metadata": txn.metadata,
+                    "source": txn.source,
+                    "is_live": txn.is_live,
+                    "is_demo": txn.is_demo,
+                },
+                "account": {
+                    "account_id": account.account_id,
+                    "name": account.name,
+                    "tail": account.tail,
+                    "balance": account.balance,
+                    "available": account.available,
+                } if account else None,
+                "card": {
+                    "card_id": card.card_id,
+                    "brand": card.brand,
+                    "kind": card.kind,
+                    "tail": card.tail,
+                    "status": card.status,
+                } if card else None,
+            }
+
+    def handle_sandbox_callback(
+        self,
+        session_id: str,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Apply a signed provider callback through the unified state machine."""
+        execution_id = str(payload.get("execution_id") or "").strip()
+        status = str(payload.get("status") or "").strip().lower()
+        if not execution_id or not status:
+            raise ValueError("execution_id 和 status 不能为空")
+        with self._lock:
+            record = self._get_or_load(session_id)
+            execution = record.agent.sandbox.gateway.callback(
+                execution_id,
+                status=status,
+                provider_reference=str(payload.get("provider_reference") or ""),
+                reason=str(payload.get("reason") or ""),
+                payload=dict(payload.get("metadata") or {}),
+            )
+            self._persist_session(record)
+            transaction = record.agent.store.transactions.get(
+                execution.reference_id
+            )
+            detail = (
+                self.get_transaction_detail(session_id, transaction.txn_id)["transaction"]
+                if transaction is not None else None
+            )
+            return {
+                "session_id": session_id,
+                "execution": execution_payload(execution),
+                "transaction": detail,
+            }
+
+    def get_sandbox_status(self, session_id: str) -> Dict[str, Any]:
+        with self._lock:
+            record = self._get_or_load(session_id)
+            registry = record.agent.sandbox
+            return {
+                "session_id": session_id,
+                **registry.status(),
+                "executions": [
+                    execution_payload(item)
+                    for item in registry.gateway.list_for_user(record.user_id)
+                ],
+            }
+
+    def get_market_status(self, session_id: str) -> Dict[str, Any]:
+        with self._lock:
+            record = self._get_or_load(session_id)
+            return {
+                "session_id": session_id,
+                **record.agent.market.status(),
+            }
+
+    def simulate_forecast(
+        self,
+        session_id: str,
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        with self._lock:
+            record = self._get_or_load(session_id)
+            tool = record.agent.registry.get("forecast.cashflow")
+            if tool is None:
+                raise ValueError("现金流预测工具未注册")
+            result = tool.run(
+                record.agent.context(),
+                months=int(params.get("months") or 3),
+                purchase_amount=float(params.get("purchase_amount") or 0),
+                purchase_date=str(params.get("purchase_date") or ""),
+                income_change_pct=float(params.get("income_change_pct") or 0),
+                extra_monthly_expense=float(params.get("extra_monthly_expense") or 0),
+                investment_amount=float(params.get("investment_amount") or 0),
+                investment_return_pct=float(params.get("investment_return_pct") or 0),
+            )
+            reply = AgentReply(
+                result.message,
+                intent="forecast.cashflow",
+                ok=result.ok,
+                kind="executed" if result.ok else "error",
+                trace=[{
+                    "step": 1,
+                    "tool": "forecast.cashflow",
+                    "args": {
+                        key: value for key, value in params.items()
+                        if key not in {"session_id"}
+                    },
+                    "ok": result.ok,
+                    "summary": result.summary,
+                }],
+                data=dict(result.data or {}),
+            )
+            reply.data["workflow"] = {
+                "workflow_id": (
+                    f"{record.agent.current_workflow_id or 'WF-SIM'}-SCENARIO"
+                ),
+                "status": "completed" if result.ok else "blocked",
+                "intent": "forecast.cashflow",
+                "agents": ["understanding", "advisory", "execution"],
+                "steps": [{
+                    "tool": "forecast.cashflow",
+                    "ok": result.ok,
+                    "summary": result.summary,
+                }],
+                "next_action": "已完成",
+            }
+            return {
+                "session_id": session_id,
+                "reply": asdict(reply),
+            }
+
+    def get_financial_events(self, session_id: str) -> Dict[str, Any]:
+        with self._lock:
+            record = self._get_or_load(session_id)
+            tool = record.agent.registry.get("advisor.events")
+            if tool is None:
+                raise ValueError("事件中心工具未注册")
+            result = tool.run(record.agent.context(), action="list")
+            return {
+                "session_id": session_id,
+                "events": result.data.get("events", []),
+                "counts": result.data.get("counts", {}),
+            }
+
+    def get_pending_receipt(self, session_id: str) -> Dict[str, Any]:
+        with self._lock:
+            record = self._get_or_load(session_id)
+            cache = record.agent.scratch.get("receipt_cache") or {}
+            return {
+                "session_id": session_id,
+                "available": bool(cache.get("records")),
+                "source": cache.get("source", ""),
+                "backend": cache.get("backend", ""),
+                "backend_label": cache.get("backend_label", ""),
+                "records": cache.get("records", []),
+                "quality": cache.get("quality", {}),
+                "validation": cache.get("validation", {}),
+            }
+
+    def update_pending_receipt(
+        self,
+        session_id: str,
+        records: Any,
+    ) -> Dict[str, Any]:
+        from finagent.vision.receipt_parser import ParsedTransaction
+        from finagent.vision.receipt_reader import ReceiptResult
+
+        with self._lock:
+            record = self._get_or_load(session_id)
+            cache = record.agent.scratch.get("receipt_cache")
+            if not cache:
+                raise ValueError("当前会话没有待核对的账单")
+            def safe_confidence(value: Any, default: float = 1.0) -> float:
+                try:
+                    return max(0.0, min(float(value), 1.0))
+                except (TypeError, ValueError):
+                    return default
+
+            parsed = []
+            for item in records if isinstance(records, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                merchant = str(item.get("merchant") or "").strip()
+                try:
+                    amount = float(item.get("amount"))
+                except (TypeError, ValueError):
+                    continue
+                parsed.append(ParsedTransaction(
+                    date=str(item.get("date") or "").strip(),
+                    time=str(item.get("time") or "").strip(),
+                    merchant=merchant,
+                    amount=amount,
+                    category=str(item.get("category") or "其他").strip() or "其他",
+                    confidence=safe_confidence(item.get("confidence")),
+                    field_confidence={
+                        str(key): safe_confidence(value, 0.5)
+                        for key, value in (item.get("field_confidence") or {}).items()
+                        if value is not None
+                    },
+                    needs_review=[
+                        str(value)
+                        for value in (item.get("needs_review") or [])
+                    ],
+                    raw_line=str(item.get("raw_line") or ""),
+                ))
+            if not parsed:
+                raise ValueError("核对后的交易记录不能为空")
+            result = ReceiptResult(
+                ok=True,
+                backend=cache.get("backend", ""),
+                backend_label=cache.get("backend_label", ""),
+                records=parsed,
+                raw_text=str(cache.get("raw_text") or ""),
+                image_path=cache.get("source", ""),
+            )
+            cache["records"] = [item.to_payload() for item in parsed]
+            cache["quality"] = result.quality
+            cache["validation"] = result.validation
+            self._persist_session(record)
+            return {
+                "session_id": session_id,
+                "records": cache["records"],
+                "quality": result.quality,
+                "validation": result.validation,
+            }
+
+    def update_financial_event(
+        self,
+        session_id: str,
+        event_id: str,
+        action: str,
+    ) -> Dict[str, Any]:
+        with self._lock:
+            record = self._get_or_load(session_id)
+            tool = record.agent.registry.get("advisor.events")
+            if tool is None:
+                raise ValueError("事件中心工具未注册")
+            result = tool.run(
+                record.agent.context(),
+                action=action,
+                event_id=event_id,
+            )
+            self._persist_session(record)
+            return {
+                "session_id": session_id,
+                "ok": result.ok,
+                "message": result.message,
+                "events": result.data.get("events", []),
+                "counts": result.data.get("counts", {}),
+            }
 
     def get_profile_settings(self, session_id: str) -> Dict[str, Any]:
         """Return editable demo profile, surprise preferences, and cards."""

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import unittest
 
+from finagent.data.market import Quote
 from tests.support import make_agent, run_to_completion
 
 
@@ -58,6 +59,111 @@ class TestWealth(unittest.TestCase):
         self.assertTrue(all(
             item["category"] in {"国债", "可转债", "债券基金"}
             for item in switched.data["product_details"]
+        ))
+
+    def test_change_batch_returns_unseen_products_instead_of_reordering(self):
+        first = self.agent.handle("推荐几个理财产品")
+        first_ids = {item["product_id"] for item in first.data["product_details"]}
+        second = self.agent.handle("换一批理财产品")
+        second_ids = {item["product_id"] for item in second.data["product_details"]}
+
+        self.assertGreaterEqual(second.data["batch_number"], 2)
+        self.assertFalse(first_ids & second_ids)
+        self.assertEqual(
+            len(second.data["product_details"]),
+            second.data["display_count"],
+        )
+
+        third = self.agent.handle("换一批理财产品")
+        third_ids = {item["product_id"] for item in third.data["product_details"]}
+        self.assertFalse(second_ids & third_ids)
+        self.assertFalse(first_ids & third_ids)
+
+    def test_fund_request_excludes_bond_funds_and_keeps_fund_filter_on_next_batch(self):
+        first = self.agent.handle("推荐基金产品")
+        first_details = first.data["product_details"]
+
+        self.assertEqual(first.intent, "wealth.recommend")
+        self.assertTrue(first_details)
+        self.assertFalse(any(
+            "债券" in item["category"]
+            for item in first_details
+        ))
+        first_ids = {item["product_id"] for item in first_details}
+
+        second = self.agent.handle("换一批")
+        second_details = second.data["product_details"]
+        second_ids = {item["product_id"] for item in second_details}
+
+        self.assertEqual(second.data["asset_class"], "fund")
+        self.assertGreaterEqual(second.data["batch_number"], 2)
+        self.assertFalse(first_ids & second_ids)
+        self.assertFalse(any(
+            "债券" in item["category"]
+            for item in second_details
+        ))
+
+    def test_product_compare_is_a_distinct_decision_view(self):
+        reply = self.agent.handle("比较一下基金产品")
+
+        self.assertEqual(reply.intent, "wealth.compare")
+        self.assertTrue(reply.ok)
+        comparison = reply.data["comparison"]
+        self.assertGreaterEqual(len(comparison["products"]), 2)
+        self.assertGreaterEqual(len(comparison["criteria"]), 6)
+        self.assertFalse(comparison["purchase_prompt"])
+        self.assertNotIn("是否继续申购", reply.text)
+        self.assertIn("差异结论", reply.text)
+
+    def test_bond_fund_request_routes_to_bond_pool(self):
+        reply = self.agent.handle("推荐债券基金")
+
+        self.assertTrue(reply.ok)
+        self.assertTrue(all(
+            "债券" in item["category"]
+            for item in reply.data["product_details"]
+        ))
+
+    def test_live_fund_mode_uses_real_market_products_without_demo_fallback(self):
+        agent = make_agent()
+        agent.risk_level = 1
+
+        class StubMarket:
+            enabled = True
+
+            @staticmethod
+            def quotes(symbols):
+                return {
+                    symbol: Quote(
+                        symbol=symbol,
+                        name=symbol.upper(),
+                        price=100.0,
+                        prev_close=99.99,
+                        change=0.01,
+                        change_pct=0.01,
+                        timestamp="2026-10-28 10:00:00",
+                        source="测试公开行情",
+                    )
+                    for symbol in symbols
+                }
+
+            @staticmethod
+            def fund_nav(code):
+                return None
+
+        agent.market = StubMarket()
+        reply = agent.handle("推荐基金产品")
+        details = reply.data["product_details"]
+
+        self.assertTrue(details)
+        self.assertTrue(all(
+            item["category"] != "债券基金"
+            for item in details
+        ))
+        self.assertTrue(all(
+            "演示" not in item["data_source"]
+            and "未返回" not in item["data_source"]
+            for item in details
         ))
 
     def test_subscribe_preflight_blocks_below_minimum_before_card_auth(self):

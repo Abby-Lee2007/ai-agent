@@ -28,11 +28,14 @@ from finagent.agent.planner import (
     PlanStep,
 )
 from finagent.agent.registry import ToolRegistry, build_default_registry
+from finagent.agent.llm_planner import LLMToolPlanner
 from finagent.agent.scheduler import Scheduler
 from finagent.agent.subscription_lifecycle import process_subscription_lifecycle
 from finagent.data.store import Clock, DataStore
 from finagent.data.market import MarketDataProvider
+from finagent.data.licensed_market import build_market_router
 from finagent.data.providers import build_data_providers
+from finagent.integrations.sandbox_adapters import build_sandbox_registry
 from finagent.nlu.capability_catalog import resolve_capability_label
 from finagent.nlu.intent_parser import GENERIC_PERSON_VALUES, IntentParser
 from finagent.nlu.intent_parser import normalize_synonyms
@@ -135,8 +138,9 @@ class BankingAgent:
         self.user_id = user_id
         self.registry = registry or build_default_registry()
         self.planner = Planner(self.registry)
-        self.market = MarketDataProvider()
+        self.market = build_market_router()
         self.providers = build_data_providers(store, self.market)
+        self.sandbox = build_sandbox_registry(store, user_id, self.clock)
         upload_ledger = self.providers.accounts.upload_balance(user_id)
         store.migrate_upload_ledger(user_id, upload_ledger)
         self.risk = RiskEngine(store, self.clock, providers=self.providers)
@@ -154,6 +158,8 @@ class BankingAgent:
             llm=self.llm,
             mode=llm_mode or LLMConfig.MODE,
         )
+        self.llm_tool_planner = LLMToolPlanner(self.registry, self.llm)
+        self.planner.llm_planner = self.llm_tool_planner
         self.session = session or DialogueSession(user_id)
         # 会话级共享缓存：工具之间用它传递中间结果（例如"已识别、待导入"的账单）
         self.scratch: Dict[str, Any] = {}
@@ -167,6 +173,8 @@ class BankingAgent:
         self.paused_questionnaire: Optional[Pending] = None
         self.last_reply: Optional[AgentReply] = None
         self.reply_history: List[ReplyMemory] = []
+        self.workflow_sequence = 0
+        self.current_workflow_id = ""
 
     # ==================================================================
     # 对外入口
@@ -183,6 +191,8 @@ class BankingAgent:
         self.paused_questionnaire = None
         self.last_reply = None
         self.reply_history.clear()
+        self.workflow_sequence = 0
+        self.current_workflow_id = ""
 
     def export_reply_history(self) -> List[Dict[str, Any]]:
         return [
@@ -248,6 +258,7 @@ class BankingAgent:
         ctx.session["registry"] = self.registry
         ctx.session["llm"] = self.llm
         ctx.session["market"] = self.market
+        ctx.session["sandbox"] = self.sandbox
         ctx.session["llm_mode"] = self.parser.mode
         ctx.session["parser_source"] = self.parser.last_source
         ctx.session["risk_answers"] = self.risk_answers
@@ -260,6 +271,12 @@ class BankingAgent:
         return self.scheduler.run_due(self.user_id)
 
     def handle(self, text: str) -> AgentReply:
+        if self.session.pending is None or not self.current_workflow_id:
+            self.workflow_sequence += 1
+            self.current_workflow_id = (
+                f"WF-{self.clock.today().strftime('%Y%m%d')}-"
+                f"{self.workflow_sequence:04d}"
+            )
         lifecycle_messages = process_subscription_lifecycle(
             self.store,
             self.clock,
@@ -273,7 +290,52 @@ class BankingAgent:
                 if reply.text else f"订阅状态更新：\n{notice}"
             )
             reply.data["lifecycle_messages"] = lifecycle_messages
+        reply.data.setdefault("workflow", self._workflow_payload(reply))
         return reply
+
+    def _workflow_payload(self, reply: AgentReply) -> Dict[str, Any]:
+        status = {
+            "executed": "completed",
+            "reply": "completed",
+            "error": "blocked",
+            "confirm": "waiting_confirmation",
+            "verify": "waiting_verification",
+            "question": "collecting_information",
+        }.get(reply.kind, "in_progress")
+        agents = ["understanding"]
+        if reply.intent in {
+            "bill.anomaly", "risk.playbook", "card.freeze", "card.report_lost",
+            "transfer.send", "transfer.internal", "transfer.schedule", "card.repay",
+            "wealth.subscribe", "wealth.redeem",
+        }:
+            agents.append("risk")
+        if reply.intent in {
+            "forecast.cashflow", "advisor.proactive", "wealth.recommend",
+            "wealth.analytics", "bill.analyze", "bill.report",
+        }:
+            agents.append("advisory")
+        if reply.trace:
+            agents.append("execution")
+        return {
+            "workflow_id": self.current_workflow_id,
+            "status": status,
+            "intent": reply.intent or "unknown",
+            "agents": agents,
+            "steps": [
+                {
+                    "tool": item.get("tool"),
+                    "ok": bool(item.get("ok")),
+                    "summary": item.get("summary", ""),
+                }
+                for item in reply.trace
+            ],
+            "next_action": (
+                "等待用户确认" if reply.kind == "confirm"
+                else "等待身份验证" if reply.kind == "verify"
+                else "补充必要信息" if reply.kind == "question"
+                else "已完成"
+            ),
+        }
 
     def _handle_input(self, text: str) -> AgentReply:
         """处理一句用户输入。"""
@@ -292,10 +354,12 @@ class BankingAgent:
                 ok=False,
                 kind="error",
             )
+        reply.data.setdefault("workflow", self._workflow_payload(reply))
         self.session.remember_assistant(reply.text)
         self.session.transcript.append(
             {"turn": self.session.turn, "user": remembered_text, "agent": reply.text,
-             "intent": reply.intent, "tools": [t.get("tool") for t in reply.trace]}
+             "intent": reply.intent, "tools": [t.get("tool") for t in reply.trace],
+             "workflow_id": reply.data["workflow"]["workflow_id"]}
         )
         self.last_reply = reply
         if not self._is_why_question(raw):
@@ -339,6 +403,9 @@ class BankingAgent:
 
         if pending is not None and pending.kind == "risk_cooling":
             return self._handle_risk_cooling(pending, text)
+
+        if pending is not None and pending.kind == "transfer_cooling":
+            return self._handle_transfer_cooling(pending, text)
 
         if pending is not None and pending.kind == "data_confirm":
             control = classify_control(text)
@@ -445,11 +512,20 @@ class BankingAgent:
         """Prevent a high-risk confirmation from being silently discarded."""
         if (
             pending is None
-            or pending.kind not in {"confirm", "data_confirm"}
+            or pending.kind not in {"confirm", "data_confirm", "transfer_cooling"}
             or pending.intent not in self.NON_INTERRUPTIBLE_CONFIRM_INTENTS
             or classify_control(text) is not None
         ):
             return None
+        if pending.kind == "transfer_cooling":
+            return AgentReply(
+                "当前转账仍在安全冷静期，尚未执行。"
+                "请等待冷静期结束并回复「确认」，或回复「取消」放弃。",
+                intent=pending.intent,
+                kind="question",
+                needs_input=True,
+                plan=pending.plan.tools() if pending.plan is not None else [],
+            )
         action = "冻结" if pending.intent == "card.freeze" else "挂失"
         return AgentReply(
             f"当前「{action}卡片」操作尚未执行。"
@@ -1828,6 +1904,42 @@ class BankingAgent:
                 pending.slots["avoid"] = "无"
                 pending.missing = missing
                 return
+            if slot in {"preferences", "avoid"}:
+                profile_fields = self._birthday_profile_fields(text)
+                if profile_fields:
+                    for key, value in profile_fields.items():
+                        pending.slots[key] = value
+                    remaining_fields = [
+                        item for item in missing if item not in profile_fields
+                    ]
+                    if (
+                        slot == "preferences"
+                        and "avoid" in profile_fields
+                        and not self._has_explicit_birthday_avoid(text)
+                        and "avoid" not in remaining_fields
+                    ):
+                        # "不喜欢..." is useful profile context, but still ask
+                        # explicitly about allergies and other hard restrictions.
+                        remaining_fields.insert(0, "avoid")
+                    pending.missing = remaining_fields
+                    self._sync_birthday_profile(pending, ctx)
+                    return
+            if slot == "birthday":
+                # The user may correct the recipient while the agent is asking
+                # for a birthday, e.g. "老师" -> "老婆". Re-plan with the new
+                # person instead of treating that answer as an invalid date.
+                person = self.parser.rule._person(text)
+                parsed_birthday = self._extract_slot("birthday", text, ctx)
+                if person:
+                    pending.slots["person"] = person
+                    pending.slots.pop("birthday", None)
+                if parsed_birthday:
+                    pending.slots["birthday"] = parsed_birthday
+                    pending.missing = missing
+                    return
+                if person:
+                    pending.missing = []
+                    return
             value = self._extract_slot(slot, text, ctx)
             if value is None and slot in self.TEXT_SLOTS:
                 value = self._coerce_text(text)
@@ -1871,6 +1983,51 @@ class BankingAgent:
                 remaining.insert(0, slot)
         pending.missing = remaining
 
+    @staticmethod
+    def _birthday_profile_fields(text: str) -> Dict[str, str]:
+        """Split one natural-language answer into gift preferences and restrictions."""
+        parts = [
+            part.strip(" ，,。；;、")
+            for part in re.split(r"[、，,；;。\n]+", text or "")
+            if part.strip(" ，,。；;、")
+        ]
+        preference_parts: List[str] = []
+        avoid_parts: List[str] = []
+        avoid_markers = (
+            "过敏", "禁忌", "忌口", "不能吃", "不能闻", "不能接触", "不喜欢",
+        )
+        for part in parts:
+            if any(marker in part for marker in avoid_markers):
+                avoid_parts.append(part[:100])
+            else:
+                preference_parts.append(part[:100])
+        fields: Dict[str, str] = {}
+        if preference_parts:
+            fields["preferences"] = "、".join(preference_parts)[:200]
+        if avoid_parts:
+            fields["avoid"] = "、".join(avoid_parts)[:200]
+        return fields
+
+    @staticmethod
+    def _has_explicit_birthday_avoid(text: str) -> bool:
+        return any(
+            marker in (text or "")
+            for marker in (
+                "过敏", "禁忌", "忌口", "不能吃", "不能闻", "不能接触",
+            )
+        )
+
+    def _sync_birthday_profile(self, pending: Pending, ctx: ToolContext) -> None:
+        """Persist newly provided birthday preferences to the care-person profile."""
+        person = str(pending.slots.get("person") or "").strip()
+        preferences = str(pending.slots.get("preferences") or "").strip()
+        avoid = str(pending.slots.get("avoid") or "").strip()
+        if not person or not (preferences or avoid):
+            return
+        from finagent.tools.crossscene_tools import remember_gift_preferences
+
+        remember_gift_preferences(ctx, person, preferences, avoid)
+
     TEXT_SLOTS = {
         "payee", "person", "merchant", "card", "product", "name", "keyword",
         "from_card", "to_card", "account", "payee_account", "preferences", "avoid",
@@ -1886,6 +2043,8 @@ class BankingAgent:
             if not text:
                 return False
             if slot in cls.TEXT_SLOTS:
+                if slot in {"preferences", "avoid"}:
+                    return len(text) <= 200 and not NOISE_VALUE_RE.search(text)
                 if len(text) > 20:
                     if slot != "payee_account":
                         return False
@@ -1992,7 +2151,10 @@ class BankingAgent:
             if any(word in text for word in ("演示", "模拟", "示例", "没有流水", "无流水")):
                 return "demo"
             return None
-        if slot in {"employment", "credit_purpose", "branch", "preferences", "avoid"}:
+        if slot in {"preferences", "avoid"}:
+            cleaned = text.strip(" ，,。；;")
+            return cleaned[:200] or None
+        if slot in {"employment", "credit_purpose", "branch"}:
             return self._coerce_text(text) or None
         if slot in {"from_card", "to_card", "account"}:
             match = re.search(r"(?:用|从)?([^，,。；;\s]{1,20}(?:卡|账户|活期|零钱|钱包))", text)
@@ -2082,12 +2244,40 @@ class BankingAgent:
 
         requires_verification = any(d.requires_verification for d in decisions)
         requires_confirmation = any(d.requires_confirmation for d in decisions)
+        cooling_minutes = max((d.cooling_minutes for d in decisions), default=0)
         risk_notes = [d.summary() for d in decisions if d.reasons]
         cooling_product = self._cooling_product(plan)
         if cooling_product is not None:
             risk_notes.append(
                 f"客户评级 C1，目标产品「{cooling_product.name}」为 R2；"
                 "已签署风险不匹配警示提示，进入 24 小时冷静期"
+            )
+
+        if cooling_minutes > 0 and not data_confirmed:
+            available_at = (
+                self.clock.now() + timedelta(minutes=cooling_minutes)
+            ).isoformat(timespec="seconds")
+            self.session.pending = Pending(
+                kind="transfer_cooling",
+                intent=plan.intent,
+                plan=plan,
+                slots={
+                    **dict(plan.slots),
+                    "available_at": available_at,
+                    "cooling_minutes": cooling_minutes,
+                },
+            )
+            return AgentReply(
+                self._confirm_text(plan, risk_notes)
+                + f"\n\n这是首次向新收款人进行较大金额转账，"
+                  f"已启动 {cooling_minutes} 分钟安全冷静期。"
+                  f"冷静期持续到 {available_at}，期间不会执行转账。\n"
+                  "冷静期结束后回复「确认」继续，或回复「取消」放弃。",
+                intent=plan.intent,
+                kind="question",
+                needs_input=True,
+                plan=plan.tools(),
+                data={"cooling_until": available_at},
             )
 
         if plan.intent in DATA_CONFIRM_INTENTS and not data_confirmed:
@@ -2129,11 +2319,14 @@ class BankingAgent:
         if requires_verification:
             self.verify_attempts = 0
             self.session.pending = Pending(kind="verify", intent=plan.intent, plan=plan,
-                                           slots=dict(plan.slots))
+                                           slots={
+                                               **dict(plan.slots),
+                                               "verification": self._new_verification_state(),
+                                           })
+            verification = self.session.pending.slots["verification"]
             return AgentReply(
                 self._confirm_text(plan, risk_notes)
-                + f"\n\n该操作金额较大，需要验证身份。请输入手机收到的 6 位短信验证码"
-                  f"（演示环境固定为 {RiskPolicy.DEMO_SMS_CODE}）：",
+                + self._verification_prompt(verification),
                 intent=plan.intent, kind="verify", needs_input=True,
                 plan=plan.tools(),
             )
@@ -2236,6 +2429,69 @@ class BankingAgent:
             )
             return AgentReply(
                 "冷静期已结束，关键信息仍然保留。请输入付款银行卡的 6 位交易密码后再执行。",
+                intent=plan.intent,
+                kind="question",
+                needs_input=True,
+            )
+        return self._gate_and_execute(plan, data_confirmed=True)
+
+    def _handle_transfer_cooling(self, pending: Pending, text: str) -> AgentReply:
+        control = classify_control(text)
+        if control == "deny":
+            self.session.clear_pending()
+            return AgentReply("好的，本次转账已取消，没有发生资金变动。")
+        try:
+            available_at = datetime.fromisoformat(
+                str(pending.slots.get("available_at") or "")
+            )
+        except ValueError:
+            self.session.clear_pending()
+            return AgentReply("冷静期状态已失效，请重新发起转账。", ok=False, kind="error")
+        now = self.clock.now()
+        remaining = max(0, int((available_at - now).total_seconds()))
+        if "多久" in text or "还要等" in text:
+            minutes = max(1, (remaining + 59) // 60)
+            return AgentReply(
+                f"安全冷静期还需约 {minutes} 分钟，结束时间 {available_at.isoformat(timespec='seconds')}。",
+                kind="question",
+                needs_input=True,
+                data={"cooling_remaining_seconds": remaining},
+            )
+        if control != "confirm":
+            return AgentReply(
+                "新收款人安全冷静期仍在进行。请回复「确认」检查状态，"
+                "或回复「取消」放弃。",
+                kind="question",
+                needs_input=True,
+            )
+        if now < available_at:
+            minutes = max(1, (remaining + 59) // 60)
+            return AgentReply(
+                f"冷静期尚未结束，还需约 {minutes} 分钟。"
+                f"结束时间为 {available_at.isoformat(timespec='seconds')}。",
+                kind="question",
+                needs_input=True,
+            )
+        if pending.plan is None:
+            self.session.clear_pending()
+            return AgentReply("转账计划已失效，请重新发起。", ok=False, kind="error")
+        plan = pending.plan
+        self.store.log(
+            "risk.transfer_cooling_completed",
+            intent=plan.intent,
+            completed_at=self.clock.iso(),
+        )
+        self.session.clear_pending()
+        if plan.intent in self.PAYMENT_AUTH_INTENTS:
+            self.payment_password_attempts = 0
+            self.session.pending = Pending(
+                kind="payment_auth",
+                intent=plan.intent,
+                plan=plan,
+                slots=dict(plan.slots),
+            )
+            return AgentReply(
+                "安全冷静期已结束，关键信息仍保留。请输入付款银行卡的 6 位交易密码。",
                 intent=plan.intent,
                 kind="question",
                 needs_input=True,
@@ -2669,6 +2925,36 @@ class BankingAgent:
         if classify_control(text) == "deny":
             self.session.clear_pending()
             return AgentReply("好的，已验证操作已取消，资金没有变动。")
+        state = pending.slots.setdefault(
+            "verification",
+            self._new_verification_state(),
+        )
+        if any(word in text for word in ("重新发送", "没收到", "再发一次", "重发验证码")):
+            if int(state.get("resend_count", 0)) >= 3:
+                self.session.clear_pending()
+                return AgentReply(
+                    "验证码重新发送次数已达上限，本次操作已终止。",
+                    ok=False,
+                    kind="error",
+                )
+            state["resend_count"] = int(state.get("resend_count", 0)) + 1
+            state.update(self._new_verification_state())
+            pending.slots["verification"] = state
+            return AgentReply(
+                "验证码已重新发送。" + self._verification_prompt(state),
+                kind="verify",
+                needs_input=True,
+            )
+        try:
+            expires_at = datetime.fromisoformat(str(state.get("expires_at") or ""))
+        except ValueError:
+            expires_at = self.clock.now()
+        if self.clock.now() > expires_at:
+            return AgentReply(
+                "验证码已过期。回复「重新发送」获取新的验证码，或回复「取消」终止操作。",
+                kind="verify",
+                needs_input=True,
+            )
         interrupt = self._interrupt_intent(text)
         if interrupt is not None:
             self.session.clear_pending()
@@ -2677,12 +2963,21 @@ class BankingAgent:
         valid = code == RiskPolicy.DEMO_SMS_CODE
         if not valid:
             self.verify_attempts += 1
+            state["attempts"] = int(state.get("attempts", 0)) + 1
+            if int(state["attempts"]) >= 5:
+                self.session.clear_pending()
+                return AgentReply(
+                    "验证码错误次数过多，操作已锁定终止。",
+                    ok=False,
+                    kind="error",
+                )
             if self.verify_attempts >= self.MAX_VERIFY_ATTEMPTS:
                 self.session.clear_pending()
                 return AgentReply("验证码连续错误，操作已终止。如非本人操作，建议立即修改密码并冻结卡片。",
                                   ok=False, kind="error")
             return AgentReply(
-                f"验证码不正确，请重新输入 6 位数字（演示环境固定为 {RiskPolicy.DEMO_SMS_CODE}）。",
+                f"验证码不正确，还可尝试 {self.MAX_VERIFY_ATTEMPTS - self.verify_attempts} 次。"
+                f"（演示环境固定为 {RiskPolicy.DEMO_SMS_CODE}）",
                 kind="verify", needs_input=True,
             )
         if pending.plan is None:
@@ -2690,6 +2985,33 @@ class BankingAgent:
             return AgentReply("计划已失效，请重新说一次您的需求。", ok=False, kind="error")
         self.session.clear_pending()
         return self._execute(pending.plan, self.context())
+
+    def _new_verification_state(self) -> Dict[str, Any]:
+        now = self.clock.now()
+        expires = now + timedelta(minutes=2)
+        phone = self.user_id and self.store.get_user(self.user_id).phone or ""
+        return {
+            "sent_at": now.isoformat(timespec="seconds"),
+            "expires_at": expires.isoformat(timespec="seconds"),
+            "attempts": 0,
+            "resend_count": 0,
+            "method": "短信验证码",
+            "device": "Chrome H5 · 当前设备",
+            "location": self.store.get_user(self.user_id).city,
+            "phone_masked": (
+                f"{phone[:3]}****{phone[-4:]}" if len(phone) >= 7 else "预留手机号"
+            ),
+        }
+
+    @staticmethod
+    def _verification_prompt(state: Dict[str, Any]) -> str:
+        return (
+            "\n\n该操作金额较大，需要验证身份。"
+            f"验证码已发送至 {state.get('phone_masked', '预留手机号')}，"
+            f"设备：{state.get('device', '当前设备')}，地点：{state.get('location', '深圳')}。"
+            f"验证码 2 分钟内有效，演示环境固定为 {RiskPolicy.DEMO_SMS_CODE}。"
+            "未收到可回复「重新发送」。"
+        )
 
     def _handle_payment_auth(self, pending: Pending, text: str) -> AgentReply:
         if classify_control(text) == "deny":

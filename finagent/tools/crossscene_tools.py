@@ -34,7 +34,9 @@ def lookup_person(ctx: ToolContext, name: str) -> Tuple[Optional[User], Optional
     keyword = (name or "").strip()
 
     relation_keys = {
-        "老婆": "spouse", "妻子": "spouse", "爱人": "spouse", "老公": "spouse", "丈夫": "spouse",
+        "老婆": "spouse", "妻子": "spouse", "爱人": "spouse", "老公": "spouse",
+        "丈夫": "spouse", "配偶": "spouse", "太太": "spouse", "伴侣": "spouse",
+        "媳妇": "spouse",
         "妈妈": "mother", "母亲": "mother", "爸爸": "father", "父亲": "father",
     }
     key = relation_keys.get(keyword)
@@ -42,7 +44,9 @@ def lookup_person(ctx: ToolContext, name: str) -> Tuple[Optional[User], Optional
 
     birthday_raw = ""
     relation_groups = {
-        "spouse": {"老婆", "妻子", "爱人", "配偶", "丈夫", "老公"},
+        "spouse": {
+            "老婆", "妻子", "爱人", "配偶", "丈夫", "老公", "太太", "伴侣", "媳妇",
+        },
         "mother": {"妈妈", "母亲", "妈"},
         "father": {"爸爸", "父亲", "爸"},
     }
@@ -125,7 +129,10 @@ def lookup_person_preferences(ctx: ToolContext, name: str) -> Dict[str, Any]:
     """Read gift preferences and restrictions from the editable care-person profile."""
     prefs = ctx.user.preferences or {}
     keyword = (name or "").strip()
-    if keyword in {"老婆", "妻子", "爱人", "配偶", "老公", "丈夫"}:
+    spouse_words = {
+        "老婆", "妻子", "爱人", "配偶", "老公", "丈夫", "太太", "伴侣", "媳妇",
+    }
+    if keyword in spouse_words:
         keyword = str(prefs.get("spouse") or keyword)
     for item in prefs.get("care_people") or []:
         if not isinstance(item, dict):
@@ -145,7 +152,7 @@ def lookup_person_preferences(ctx: ToolContext, name: str) -> Dict[str, Any]:
     return {
         "favorite_gift": list(prefs.get("favorite_gift") or []),
         "avoid": list(prefs.get("avoid") or []),
-        "relation": "配偶" if name in {"老婆", "妻子", "爱人"} else "",
+        "relation": "配偶" if name in spouse_words else "",
     }
 
 
@@ -159,6 +166,167 @@ GIFT_OFFER_LABELS = {
     "OFFER000011": "大疆 Mini 4K 无人机",
     "OFFER000012": "大疆 Action 4 运动相机",
 }
+
+GIFT_CONCEPT_LIBRARY = {
+    "睡眠": (
+        ("真丝遮光睡眠眼罩", "减少光线干扰，适合改善睡眠环境，不涉及治疗功效"),
+        ("白噪音助眠音箱", "提供雨声、风扇声等稳定背景音，帮助减少环境噪声干扰"),
+        ("慢回弹记忆棉颈枕", "改善午休或床头阅读时的颈部承托，属于舒适型用品"),
+        ("睡眠友好床头阅读灯", "支持低亮度和暖色温调节，减少睡前强光刺激"),
+        ("棉麻亲肤家居服套装", "选择透气、宽松的居家穿着，提升睡前舒适感"),
+        ("可调节暖光夜灯", "适合起夜照明，避免开主灯影响再次入睡"),
+    ),
+    "编织": (
+        ("初学者毛线编织材料包", "含毛线、图解和基础工具，适合直接开始一个小作品"),
+        ("可水洗羊毛线套装", "材质更耐用，适合围巾、帽子等长期使用的手工作品"),
+        ("木质编织工具收纳套装", "把针、记号扣和量尺集中收纳，适合经常编织的人"),
+        ("编织花样图解手账", "可记录针法、尺寸和作品进度，兼具实用与纪念意义"),
+    ),
+    "长跑": (
+        ("轻量跑步腰包", "跑步时收纳手机、钥匙和能量胶，减少手持负担"),
+        ("专业跑步压缩袜", "关注长距离跑步的足部支撑和排汗体验"),
+        ("跑步奖牌展示架", "把完赛奖牌和号码布展示出来，纪念训练成果"),
+        ("运动补水套装", "包含便携水壶和补水用品，适合日常训练"),
+    ),
+    "第五人格": (
+        ("第五人格角色立牌", "围绕喜欢的游戏角色选择具体款式，适合桌面陈列"),
+        ("第五人格徽章盲盒", "有收藏和交换乐趣，适合作为轻量周边礼物"),
+        ("第五人格主题鼠标垫", "兼顾游戏主题和日常电脑使用"),
+        ("第五人格收藏卡册", "适合收集角色卡和纪念卡，方便长期保存"),
+    ),
+}
+
+GIFT_PRICE_ESTIMATES = {
+    "真丝遮光睡眠眼罩": (60, 180),
+    "白噪音助眠音箱": (99, 299),
+    "慢回弹记忆棉颈枕": (89, 259),
+    "睡眠友好床头阅读灯": (80, 260),
+    "棉麻亲肤家居服套装": (120, 399),
+    "可调节暖光夜灯": (39, 129),
+    "初学者毛线编织材料包": (50, 159),
+    "可水洗羊毛线套装": (80, 260),
+    "木质编织工具收纳套装": (60, 199),
+    "编织花样图解手账": (29, 99),
+    "轻量跑步腰包": (49, 169),
+    "专业跑步压缩袜": (59, 199),
+    "跑步奖牌展示架": (69, 239),
+    "运动补水套装": (79, 229),
+    "第五人格角色立牌": (35, 129),
+    "第五人格徽章盲盒": (29, 99),
+    "第五人格主题鼠标垫": (39, 139),
+    "第五人格收藏卡册": (49, 159),
+}
+
+GENERIC_GIFT_FORMS = (
+    ("主题定制徽章套装", "把兴趣元素做成可收藏的小物件"),
+    ("兴趣主题手账礼盒", "适合记录相关经历、计划和收藏"),
+    ("定制纪念摆件", "可选择相关图案和文字，适合长期陈列"),
+    ("实用兴趣装备套装", "从日常使用场景出发，挑选与兴趣相关的实用物品"),
+)
+
+
+def _preference_topics(text: str) -> List[str]:
+    cleaned = re.sub(r"(还喜欢|喜欢|爱好是|平时喜欢|本次偏好)", "", text or "")
+    parts = [
+        part.strip(" ，,。；;、")
+        for part in re.split(r"[、，,；;/]+", cleaned)
+        if part.strip(" ，,。；;、")
+    ]
+    topics = []
+    for part in parts:
+        if re.search(
+            r"(睡不好|睡眠质量|失眠|睡眠障碍|入睡困难|浅睡|易醒)",
+            part,
+        ):
+            topics.append("睡眠")
+            continue
+        for known in GIFT_CONCEPT_LIBRARY:
+            if known in part:
+                topics.append(known)
+        if part not in topics and not any(known in part for known in GIFT_CONCEPT_LIBRARY):
+            topics.append(part[:24])
+    return list(dict.fromkeys(topics))
+
+
+def build_external_gift_options(preference_text: str) -> List[Dict[str, Any]]:
+    """Create concrete, hobby-aware external gift ideas without fake prices."""
+    topics = _preference_topics(preference_text)
+    if not topics:
+        topics = [str(preference_text or "兴趣礼物").strip()[:24]]
+    options = []
+    seen_titles = set()
+    concept_groups = []
+    for topic in topics:
+        concepts = GIFT_CONCEPT_LIBRARY.get(topic, ())
+        if not concepts:
+            concepts = tuple(
+                (f"{topic}{form}", reason)
+                for form, reason in GENERIC_GIFT_FORMS
+            )
+        concept_groups.append((topic, concepts))
+    max_concepts = max((len(concepts) for _, concepts in concept_groups), default=0)
+    for concept_index in range(max_concepts):
+        for topic, concepts in concept_groups:
+            if concept_index >= len(concepts):
+                continue
+            title, reason = concepts[concept_index]
+            if title in seen_titles:
+                continue
+            seen_titles.add(title)
+            if not concepts:
+                estimate_min, estimate_max = (59, 259)
+            else:
+                estimate_min, estimate_max = GIFT_PRICE_ESTIMATES.get(
+                    title,
+                    (59, 259),
+                )
+            price_label = f"参考 ¥{estimate_min:,}-¥{estimate_max:,}"
+            options.append({
+                "key": (f"taobao:{title}",),
+                "name": title,
+                "items": [{
+                    "item": topic,
+                    "label": title,
+                    "offer_id": "",
+                    "merchant": "淘宝搜索",
+                    "price": 0.0,
+                    "price_pending": True,
+                    "price_estimate_min": estimate_min,
+                    "price_estimate_max": estimate_max,
+                    "price_label": price_label,
+                }],
+                "total": 0.0,
+                "price_estimate_min": estimate_min,
+                "price_estimate_max": estimate_max,
+                "price_label": price_label,
+                "price_source": "市场参考区间（非实时淘宝价格）",
+                "reason": f"围绕「{topic}」：{reason}；价格与库存请在淘宝页面核实",
+                "external_only": True,
+                "search_query": title,
+            })
+    return options
+
+
+def gift_price_display(option: Dict[str, Any]) -> str:
+    """Return a known price or a market reference range before Taobao handoff."""
+    label = str(option.get("price_label") or "").strip()
+    if label:
+        return label
+    try:
+        total = round(float(option.get("total") or 0), 2)
+    except (TypeError, ValueError):
+        total = 0.0
+    if total > 0:
+        return f"¥{total:,.2f}"
+    try:
+        estimate_min = int(option.get("price_estimate_min") or 0)
+        estimate_max = int(option.get("price_estimate_max") or 0)
+    except (TypeError, ValueError):
+        estimate_min, estimate_max = 0, 0
+    if estimate_min > 0 and estimate_max >= estimate_min:
+        return f"参考 ¥{estimate_min:,}-¥{estimate_max:,}"
+    return "市场参考 ¥59-¥259"
+
 
 FRUIT_AVOID_WORDS = (
     "水果", "芒果", "草莓", "桃", "苹果", "梨", "柑橘", "橙", "柚", "莓",
@@ -250,8 +418,21 @@ def remember_gift_preferences(
                 for item in re.split(r"[,，、]", str(existing or ""))
                 if item.strip()
             ]
-        cleaned = str(value or "").strip()
-        if cleaned and cleaned not in ignored and cleaned not in values:
+
+        def semantic_key(item: str) -> str:
+            return re.sub(r"(?:过敏|禁忌)$", "", item).strip()
+
+        pieces = [
+            item.strip(" ，,。；;")
+            for item in re.split(r"[,，、；;]\s*", str(value or ""))
+            if item.strip(" ，,。；;")
+        ]
+        for cleaned in pieces:
+            if not cleaned or cleaned in ignored:
+                continue
+            key = semantic_key(cleaned)
+            if any(semantic_key(item) == key for item in values):
+                continue
             values.append(cleaned)
         return values
 
@@ -451,9 +632,14 @@ class GiftRecommendTool(Tool):
             " ".join(profile.get("avoid") or []),
             str(avoid or ""),
         ])
+        profile_favorites = [
+            str(item).strip()
+            for item in (profile.get("favorite_gift") or [])
+            if str(item).strip() not in {"", "鲜花", "蛋糕"}
+        ]
         preference_text = " ".join([
-            " ".join(profile.get("favorite_gift") or []),
             str(preferences or ""),
+            " ".join(profile_favorites),
         ])
 
         ensure_gift_offer_catalog(ctx)
@@ -554,40 +740,16 @@ class GiftRecommendTool(Tool):
             })
 
         explicit_preference = str(preferences or "").strip()
-        preference_label = (
+        explicit_label = (
             explicit_preference
             if explicit_preference not in {"", "沿用资料", "无"}
             else ""
         )
-        if not preference_label and not matched_gifts:
-            profile_favorites = [
-                str(item).strip()
-                for item in (profile.get("favorite_gift") or [])
-                if str(item).strip() not in {"", "鲜花", "蛋糕"}
-            ]
-            preference_label = "、".join(profile_favorites)
+        preference_label = "、".join(
+            item for item in [explicit_label, *profile_favorites] if item
+        )
         if preference_label and not matched_gifts:
-            for suffix in ("生日礼物", "礼盒", "精选"):
-                query = f"{preference_label} {suffix}"
-                options.append({
-                    "key": (f"taobao:{query}",),
-                    "name": query,
-                    "items": [{
-                        "item": "礼物",
-                        "label": query,
-                        "offer_id": "",
-                        "merchant": "淘宝搜索",
-                        "price": 0.0,
-                        "price_pending": True,
-                    }],
-                    "total": 0.0,
-                    "reason": (
-                        f"按本次偏好「{preference_label}」生成；"
-                        "价格与库存请在淘宝页面核实"
-                    ),
-                    "external_only": True,
-                    "search_query": query,
-                })
+            options.extend(build_external_gift_options(preference_label))
 
         prefer_safe_gifts = fruit_risk or dairy_egg_risk or flower_risk or cake_risk
         prioritize_gifts = prefer_safe_gifts or bool(matched_gifts)
@@ -675,9 +837,11 @@ class GiftRecommendTool(Tool):
                 data={"gift_choice": None},
             )
 
+        batch_size = 3
         start = int(offset or 0) % len(options)
+        batch_reset = bool(int(offset or 0) > 0 and start == 0)
         rotated = options[start:] + options[:start]
-        visible = rotated[:3]
+        visible = rotated[:batch_size]
         for index, option in enumerate(visible, start=1):
             option["index"] = index
         rows = [
@@ -685,7 +849,7 @@ class GiftRecommendTool(Tool):
                 str(option["index"]),
                 option["name"],
                 " + ".join(item["label"] for item in option["items"]),
-                f"{option['total']:,.2f}",
+                gift_price_display(option),
                 "、".join(sorted({item["merchant"] for item in option["items"]})),
                 option["reason"],
             ]
@@ -702,9 +866,19 @@ class GiftRecommendTool(Tool):
             lines.append(f"  本次补充喜好：{preferences}")
         if avoid:
             lines.append(f"  本次补充禁忌：{avoid}")
+        if "睡眠" in _preference_topics(preference_label):
+            lines.append(
+                "  睡眠礼物只用于改善光线、噪声和舒适度，不宣称治疗失眠；"
+                "如长期睡眠困难，建议咨询专业医生。"
+            )
+        if batch_reset:
+            lines.append(
+                "  已浏览完当前所有可推荐礼物概念，"
+                "下一批重新从完整候选集开始。"
+            )
         lines.extend([
             render_table(
-                ["#", "方案", "包含", "预计总价", "商户", "推荐理由"],
+                ["#", "方案", "包含", "市场参考价", "商户", "推荐理由"],
                 rows,
             ),
             "请回复「第1个」「第2个」或「第3个」选择方案；也可以回复「换一批」继续浏览。",
@@ -721,6 +895,10 @@ class GiftRecommendTool(Tool):
             "known_preferences": list(profile.get("favorite_gift") or []),
             "known_avoid": list(profile.get("avoid") or []),
             "offset": (start + len(visible)) % len(options),
+            "batch_index": start // batch_size + 1,
+            "batch_reset": batch_reset,
+            "has_more": len(options) > len(visible),
+            "total_options": len(options),
             "options": visible,
         }
         return ToolResult(
@@ -728,6 +906,10 @@ class GiftRecommendTool(Tool):
             "\n".join(lines),
             data={
                 "gift_choice": context,
+                "batch_index": context["batch_index"],
+                "batch_reset": context["batch_reset"],
+                "has_more": context["has_more"],
+                "total_options": context["total_options"],
                 "options": [
                     {
                         "index": option["index"],
@@ -736,6 +918,10 @@ class GiftRecommendTool(Tool):
                         "items": option["items"],
                         "reason": option["reason"],
                         "external_only": bool(option.get("external_only")),
+                        "price_label": str(option.get("price_label") or ""),
+                        "price_estimate_min": option.get("price_estimate_min"),
+                        "price_estimate_max": option.get("price_estimate_max"),
+                        "price_source": str(option.get("price_source") or ""),
                         "search_query": str(option.get("search_query") or ""),
                     }
                     for option in visible
@@ -891,12 +1077,112 @@ class DailyBriefTool(Tool):
     category = "跨场景联动"
     description = "主动汇总今日待办：异常交易、即将扣费、待执行任务与目标进度"
     risk_level = "low"
-    params = []
+    params = [
+        ToolParam(
+            "data_mode",
+            "string",
+            False,
+            "材料确认状态；为空时先展示材料清单和提交通道",
+            enum=["", "confirmed"],
+        ),
+    ]
     examples = ["今天有什么要注意的", "帮我做个每日简报"]
 
-    def run(self, ctx: ToolContext) -> ToolResult:  # type: ignore[override]
+    def run(  # type: ignore[override]
+        self,
+        ctx: ToolContext,
+        data_mode: str = "",
+    ) -> ToolResult:
         store = ctx.store
         today = ctx.clock.today()
+        uploads = store.upload_batches_of(ctx.user_id)
+        if str(data_mode or "").strip().lower() != "confirmed":
+            latest_upload = uploads[0].filename if uploads else "尚未上传外部账单"
+            intake = {
+                "title": "生成每日简报前请确认材料",
+                "intro": (
+                    "每日简报不会凭空生成。系统会使用当前会话中的账户、流水、"
+                    "订阅、卡片和目标数据，并按下列材料清单标注来源。"
+                ),
+                "materials": [
+                    {
+                        "name": "近7天交易流水",
+                        "required": True,
+                        "status": "已接入演示流水" if store.transactions_of(ctx.user_id) else "待提交",
+                        "note": f"最近上传：{latest_upload}",
+                    },
+                    {
+                        "name": "银行卡与账户余额",
+                        "required": True,
+                        "status": "系统已接入",
+                        "note": "来自当前会话演示银行账户",
+                    },
+                    {
+                        "name": "订阅与自动代扣",
+                        "required": False,
+                        "status": "系统已接入",
+                        "note": "可从账单或演示订阅中识别",
+                    },
+                    {
+                        "name": "信用卡账单与还款日",
+                        "required": False,
+                        "status": "系统已接入",
+                        "note": "用于生成还款提醒",
+                    },
+                    {
+                        "name": "资金目标与待执行任务",
+                        "required": False,
+                        "status": "系统已接入",
+                        "note": "用于生成今日待办",
+                    },
+                ],
+                "channels": [
+                    {
+                        "type": "upload",
+                        "label": "上传账单截图 / CSV / Excel",
+                        "action": "upload",
+                    },
+                    {
+                        "type": "paste",
+                        "label": "粘贴账单文本",
+                        "action": "paste",
+                    },
+                    {
+                        "type": "confirm",
+                        "label": "使用当前已接入数据生成",
+                        "command": "确认",
+                    },
+                ],
+                "privacy": "上传文件识别后删除；结构化流水保存在当前会话中原型数据库。",
+            }
+            required_lines = "\n".join(
+                f"  · {'必选' if item['required'] else '可选'}｜{item['name']}：{item['status']}"
+                for item in intake["materials"]
+            )
+            message = (
+                "生成每日简报前，请先提交或确认材料：\n"
+                f"{required_lines}\n\n"
+                "提交通道：\n"
+                "  1. 点击输入框旁的回形针上传账单截图、CSV 或 Excel；\n"
+                "  2. 也可直接粘贴账单文本；\n"
+                "  3. 如果使用当前已接入的演示数据，请回复「确认」。\n\n"
+                "材料确认后才会生成简报，不会随机编造提醒。"
+            )
+            return ToolResult(
+                True,
+                message,
+                data={
+                    "daily_brief_intake": intake,
+                    "follow_up": {
+                        "intent": "crossscene.daily_brief",
+                        "tool": "crossscene.daily_brief",
+                        "args": {"data_mode": "confirmed"},
+                        "description": "使用已确认材料生成每日简报",
+                    },
+                },
+                summary="等待确认每日简报材料",
+            )
+
         sections: List[str] = []
         summary_bits: List[str] = []
 
@@ -961,11 +1247,30 @@ class DailyBriefTool(Tool):
         header = f"每日简报（{today.isoformat()}）"
         if summary_bits:
             header += "：" + "、".join(summary_bits)
-        message = header + "\n" + "\n\n".join(sections)
+        material_note = (
+            "数据口径：当前会话账户与流水、订阅、信用卡、目标和任务；"
+            f"最近上传记录 {len(uploads)} 批。"
+        )
+        message = header + "\n" + material_note + "\n\n" + "\n\n".join(sections)
         return ToolResult(
             True,
             message,
-            data={"anomalies": len(anomalies), "upcoming_subs": len(upcoming), "tasks": len(tasks)},
+            data={
+                "anomalies": len(anomalies),
+                "upcoming_subs": len(upcoming),
+                "tasks": len(tasks),
+                "materials_confirmed": True,
+                "material_summary": {
+                    "uploads": len(uploads),
+                    "accounts": len(ctx.providers.accounts.of(ctx.user_id)),
+                    "subscriptions": len(subscriptions),
+                    "credit_cards": len([
+                        card for card in ctx.providers.cards.of(ctx.user_id)
+                        if card.kind == "credit"
+                    ]),
+                },
+                "generated_from": "当前会话已确认数据",
+            },
             summary="；".join(summary_bits) if summary_bits else "今日没有需要特别关注的事项",
         )
 

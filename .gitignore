@@ -11,6 +11,7 @@ runtime_uploads/
 # 环境变量与密钥
 .env
 ui-artifacts/
+ui-artifacts-dev/
 .chrome-profile/
 .edge-profile/
 

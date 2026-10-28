@@ -120,6 +120,10 @@ class TestStockRecommendation(unittest.TestCase):
         reply = self.agent.handle("推荐几个基金")
         self.assertEqual(reply.data["asset_class"], "fund")
         self.assertNotIn("股票没有", reply.text)
+        self.assertFalse(any(
+            item["category"] == "债券基金"
+            for item in reply.data["product_details"]
+        ))
 
     def test_generic_wealth_request(self):
         reply = self.agent.handle("推荐几个理财产品")
@@ -134,7 +138,8 @@ class TestStockRecommendation(unittest.TestCase):
         self.assertIn("120.850", reply.text)
 
     def test_fund_request_shows_real_nav(self):
-        reply = self.agent.handle("推荐几个基金")
+        reply = self.agent.handle("推荐债券基金")
+        self.assertEqual(reply.data["asset_class"], "bond_fund")
         self.assertIn("000171", reply.text)
         self.assertIn("2.0016", reply.text)
         self.assertIn("2026-10-19", reply.text)

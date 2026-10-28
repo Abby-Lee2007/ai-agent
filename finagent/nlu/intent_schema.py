@@ -177,6 +177,21 @@ INTENTS: Dict[str, IntentSpec] = {
         "card.list", "卡片管理", "查看名下卡片与交易开关",
         [], ["我有哪些卡", "我的信用卡额度多少"],
     ),
+    "card.statement": IntentSpec(
+        "card.statement", "卡片管理",
+        "查看信用卡账单日、还款日、本期账单和费用",
+        [L("card", "信用卡名称或尾号")],
+        ["查看信用卡账单", "信用卡本期应还多少"],
+    ),
+    "card.timeline": IntentSpec(
+        "card.timeline", "卡片管理",
+        "查看卡片申请、审批和激活时间线",
+        [
+            L("card", "卡片名称或尾号"),
+            L("reveal", "是否一次性展示虚拟卡安全信息", False, "boolean"),
+        ],
+        ["查看卡片申请进度", "显示我的虚拟卡卡号"],
+    ),
     "card.apply": IntentSpec(
         "card.apply", "卡片管理", "申请新卡",
         [
@@ -323,6 +338,86 @@ INTENTS: Dict[str, IntentSpec] = {
         "goal.list", "跨场景联动", "查看资金目标与锁定金额",
         [], ["我的攒钱目标", "看看我锁了多少钱"],
     ),
+    # ---------------- 智能财务与高级分析 ----------------
+    "forecast.cashflow": IntentSpec(
+        "forecast.cashflow", "智能财务",
+        "构建未来现金流数字孪生并测算资金缺口",
+        [
+            L("months", "预测月数", False, "integer"),
+            L("purchase_amount", "情景一次性消费", False, "number"),
+            L("purchase_date", "计划消费日期"),
+            L("income_change_pct", "收入变化百分比", False, "number"),
+            L("extra_monthly_expense", "每月新增支出", False, "number"),
+            L("investment_amount", "计划投资金额", False, "number"),
+            L("investment_return_pct", "投资情景预期年化收益率", False, "number"),
+        ],
+        ["预测我未来90天的现金流", "如果下个月买8000元电脑会怎样"],
+    ),
+    "advisor.proactive": IntentSpec(
+        "advisor.proactive", "智能财务",
+        "主动检查现金流、订阅、负债和风险事件",
+        [], ["主动财务管家", "今天财务上有什么要注意", "帮我做一次财务体检"],
+    ),
+    "advisor.health_score": IntentSpec(
+        "advisor.health_score", "智能财务",
+        "计算可解释的个人财务健康分",
+        [], ["我的财务健康分", "帮我做财务健康评分", "我哪里需要改善"],
+    ),
+    "advisor.events": IntentSpec(
+        "advisor.events", "智能财务",
+        "查看和处理主动财务事件中心",
+        [
+            L("action", "list / handle / snooze / ignore", False),
+            L("event_id", "事件编号"),
+        ],
+        ["我的主动事件", "查看财务通知", "忽略事件 EVT-CASH-0"],
+    ),
+    "risk.playbook": IntentSpec(
+        "risk.playbook", "智能风控",
+        "把异常交易转换为分阶段风险处置链",
+        [L("case", "异常商户、类型或交易描述")],
+        ["给我深圳华强北数码城的风险处置方案", "盗刷后应该怎么处理"],
+    ),
+    "risk.dispute": IntentSpec(
+        "risk.dispute", "智能风控",
+        "为指定交易提交模拟争议申请",
+        [L("txn_id", "交易流水号", True)],
+        ["发起争议交易 TXN000001"],
+    ),
+    "account.reconcile": IntentSpec(
+        "account.reconcile", "账户服务",
+        "核对银行卡、关联账户和总资产口径",
+        [], ["帮我做账务对账", "账实一致吗", "核对银行卡余额"],
+    ),
+    "account.reconcile_adjust": IntentSpec(
+        "account.reconcile_adjust", "账户服务",
+        "按用户确认的真实口径手工修正账务差异",
+        [
+            L("card", "银行卡名称或尾号", True),
+            L("source_of_truth", "card / account", True),
+        ],
+        ["修复账务差异 卡尾号6222 以账户余额为准"],
+    ),
+    "wealth.analytics": IntentSpec(
+        "wealth.analytics", "理财操作",
+        "分析产品波动、回撤、费率、流动性和组合相关性",
+        [L("product", "理财产品名")],
+        ["分析这些理财产品的风险", "最大回撤是多少", "组合风险分析"],
+    ),
+    "wealth.compare": IntentSpec(
+        "wealth.compare", "理财操作",
+        "对候选产品做横向决策比较，不生成购买指令",
+        [
+            L("products", "产品名称列表"),
+            L("asset_class", "比较范围"),
+        ],
+        ["比较一下稳健型理财产品", "对比稳利债券A和微众活期+"],
+    ),
+    "transfer.aa_status": IntentSpec(
+        "transfer.aa_status", "智能转账",
+        "查看AA收款单、参与人和模拟分享文案",
+        [], ["AA收款进度", "谁还没付款", "查看AA状态"],
+    ),
     # ---------------- 账户服务 ----------------
     "account.balance": IntentSpec(
         "account.balance", "账户服务", "查询余额与总资产",
@@ -365,6 +460,11 @@ def slot_dictionary_text() -> str:
         "product=理财产品名, risk_level=1-5整数, horizon=short/mid/long, "
         "card=卡片描述, new_limit=新额度, scope=online/overseas/contactless, enable=布尔, "
         "merchant=订阅商户, person=对象称呼, budget=预算金额, name=目标名称, "
-        "target_amount=目标金额, deadline=日期, kind=卡类型, days=天数"
+        "target_amount=目标金额, deadline=日期, kind=卡类型, days=天数, "
+        "months=预测月数, purchase_amount=情景消费, purchase_date=消费日期, "
+        "income_change_pct=收入变化百分比, extra_monthly_expense=每月新增支出, "
+        "investment_amount=计划投资金额, investment_return_pct=投资预期年化, "
+        "case=风险事件描述, action=事件操作, event_id=事件编号, "
+        "reveal=是否展示虚拟卡安全信息"
     )
 

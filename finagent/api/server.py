@@ -85,6 +85,75 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
             except SessionNotFound as exc:
                 self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
             return
+        if path == "/v1/events":
+            if not self._authorized():
+                self._send_json(401, {"error": "unauthorized", "message": "访问口令无效"})
+                return
+            session_id = parse_qs(parsed.query).get("session_id", [""])[0]
+            if not session_id:
+                self._send_json(400, {"error": "bad_request", "message": "session_id 不能为空"})
+                return
+            try:
+                self._send_json(200, self.service.get_financial_events(session_id))
+            except SessionNotFound as exc:
+                self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
+            return
+        if path == "/v1/sandbox/status":
+            if not self._authorized():
+                self._send_json(401, {"error": "unauthorized", "message": "访问口令无效"})
+                return
+            session_id = parse_qs(parsed.query).get("session_id", [""])[0]
+            if not session_id:
+                self._send_json(400, {"error": "bad_request", "message": "session_id 不能为空"})
+                return
+            try:
+                self._send_json(200, self.service.get_sandbox_status(session_id))
+            except SessionNotFound as exc:
+                self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
+            return
+        if path == "/v1/market/status":
+            if not self._authorized():
+                self._send_json(401, {"error": "unauthorized", "message": "访问口令无效"})
+                return
+            session_id = parse_qs(parsed.query).get("session_id", [""])[0]
+            if not session_id:
+                self._send_json(400, {"error": "bad_request", "message": "session_id 不能为空"})
+                return
+            try:
+                self._send_json(200, self.service.get_market_status(session_id))
+            except SessionNotFound as exc:
+                self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
+            return
+        if path == "/v1/receipts/pending":
+            if not self._authorized():
+                self._send_json(401, {"error": "unauthorized", "message": "访问口令无效"})
+                return
+            session_id = parse_qs(parsed.query).get("session_id", [""])[0]
+            if not session_id:
+                self._send_json(400, {"error": "bad_request", "message": "session_id 不能为空"})
+                return
+            try:
+                self._send_json(200, self.service.get_pending_receipt(session_id))
+            except SessionNotFound as exc:
+                self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
+            return
+        transaction_prefix = "/v1/transactions/"
+        if path.startswith(transaction_prefix):
+            if not self._authorized():
+                self._send_json(401, {"error": "unauthorized", "message": "访问口令无效"})
+                return
+            txn_id = unquote(path[len(transaction_prefix):]).strip("/")
+            session_id = parse_qs(parsed.query).get("session_id", [""])[0]
+            if not txn_id or not session_id:
+                self._send_json(400, {"error": "bad_request", "message": "session_id 和 txn_id 不能为空"})
+                return
+            try:
+                self._send_json(200, self.service.get_transaction_detail(session_id, txn_id))
+            except SessionNotFound as exc:
+                self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
+            except ValueError as exc:
+                self._send_json(404, {"error": "resource_not_found", "message": str(exc)})
+            return
         self._send_json(404, {"error": "not_found", "message": f"未知资源：{path}"})
 
     def do_DELETE(self) -> None:  # noqa: N802
@@ -134,6 +203,15 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
             if parsed.path == "/v1/profile":
                 values = {key: value for key, value in payload.items() if key != "session_id"}
                 self._send_json(200, self.service.update_profile_settings(session_id, values))
+                return
+            if parsed.path == "/v1/receipts/pending":
+                self._send_json(
+                    200,
+                    self.service.update_pending_receipt(
+                        session_id,
+                        payload.get("records") or [],
+                    ),
+                )
                 return
             goal_prefix = "/v1/goals/"
             if parsed.path.startswith(goal_prefix):
@@ -192,6 +270,40 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                 return
             if path == "/v1/messages/stream":
                 self._stream_message(payload)
+                return
+            if path == "/v1/forecast/simulate":
+                self._send_json(
+                    200,
+                    self.service.simulate_forecast(
+                        str(payload.get("session_id") or ""),
+                        payload,
+                    ),
+                )
+                return
+            if path == "/v1/events/action":
+                self._send_json(
+                    200,
+                    self.service.update_financial_event(
+                        str(payload.get("session_id") or ""),
+                        str(payload.get("event_id") or ""),
+                        str(payload.get("action") or "list"),
+                    ),
+                )
+                return
+            if path == "/v1/sandbox/callbacks":
+                if not self._valid_webhook_signature():
+                    self._send_json(
+                        401,
+                        {"error": "invalid_signature", "message": "sandbox callback 签名校验失败"},
+                    )
+                    return
+                self._send_json(
+                    200,
+                    self.service.handle_sandbox_callback(
+                        str(payload.get("session_id") or ""),
+                        payload,
+                    ),
+                )
                 return
             if path == "/v1/channels/wecom/events":
                 if not self._valid_webhook_signature():

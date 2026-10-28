@@ -1,0 +1,98 @@
+[
+  {
+    "id": "transfer-natural",
+    "text": "给王强转500块，用微信",
+    "expected_intent": "transfer.send",
+    "expected_text": ["王强"]
+  },
+  {
+    "id": "internal-gei",
+    "text": "工资卡给借记卡尾号6688转20",
+    "expected_intent": "transfer.internal",
+    "expected_kind": "confirm",
+    "forbidden_text": ["微信收款", "支付宝收款"]
+  },
+  {
+    "id": "credit-repay-routing",
+    "text": "虚拟卡尾号3011给信用卡尾号8877转500",
+    "expected_intent": "card.repay",
+    "expected_kind": "confirm",
+    "expected_text": ["信用卡还款", "3011", "8877"]
+  },
+  {
+    "id": "bill-category",
+    "text": "分析我这个月的消费分类",
+    "expected_intent": "bill.analyze",
+    "expected_text": ["消费分类"]
+  },
+  {
+    "id": "bill-search",
+    "text": "查一下本月在餐饮上的消费",
+    "expected_intent": "bill.search",
+    "expected_text": ["餐饮"]
+  },
+  {
+    "id": "card-freeze-asks-card",
+    "text": "冻结卡片",
+    "expected_intent": "card.freeze",
+    "expected_kind": "question",
+    "expected_text": ["哪张卡"]
+  },
+  {
+    "id": "subscription-list",
+    "text": "我的订阅都有什么",
+    "expected_intent": "subscription.list"
+  },
+  {
+    "id": "daily-brief",
+    "text": "今天有什么要注意的",
+    "expected_intent": "crossscene.daily_brief"
+  },
+  {
+    "id": "cashflow-twin",
+    "text": "预测我未来90天的现金流",
+    "expected_intent": "forecast.cashflow",
+    "expected_text": ["财务数字孪生", "最低余额"]
+  },
+  {
+    "id": "cashflow-what-if",
+    "text": "如果下个月买8000元电脑会怎样",
+    "expected_intent": "forecast.cashflow"
+  },
+  {
+    "id": "proactive-cfo",
+    "text": "主动财务管家",
+    "expected_intent": "advisor.proactive",
+    "expected_text": ["个人 CFO"]
+  },
+  {
+    "id": "risk-playbook",
+    "text": "给我最近异常交易的风险处置方案",
+    "expected_intent": "risk.playbook",
+    "expected_text": ["处置链"]
+  },
+  {
+    "id": "account-reconcile",
+    "text": "帮我做账务对账",
+    "expected_intent": "account.reconcile",
+    "expected_text": ["账务对账"]
+  },
+  {
+    "id": "financial-health",
+    "text": "我的财务健康分",
+    "expected_intent": "advisor.health_score",
+    "expected_text": ["财务健康分"]
+  },
+  {
+    "id": "event-center",
+    "text": "我的主动事件",
+    "expected_intent": "advisor.events",
+    "expected_text": ["主动事件中心"]
+  },
+  {
+    "id": "credit-statement",
+    "text": "查看信用卡账单",
+    "expected_intent": "card.statement",
+    "expected_text": ["本期账单", "最低还款"]
+  }
+]

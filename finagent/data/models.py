@@ -124,6 +124,14 @@ class Transaction:
     subscription_id: str = ""
     tags: List[str] = field(default_factory=list)
     import_batch_id: str = ""
+    lifecycle_status: str = "completed"  # submitted / processing / completed / failed / returned / reversed
+    submitted_at: str = ""
+    completed_at: str = ""
+    expected_arrival_at: str = ""
+    bank_reference: str = ""
+    failure_reason: str = ""
+    risk_notes: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
     source: str = "agent:simulation"
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     is_live: bool = False
@@ -159,6 +167,23 @@ class Card:
     contactless_enabled: bool = True
     issued_at: str = ""
     note: str = ""
+    billing_day: int = 0
+    due_day: int = 0
+    statement_amount: float = 0.0
+    statement_date: str = ""
+    due_date: str = ""
+    minimum_payment: float = 0.0
+    interest_due: float = 0.0
+    fees_due: float = 0.0
+    temporary_limit: float = 0.0
+    temporary_limit_expires_at: str = ""
+    installment_balance: float = 0.0
+    overdue_days: int = 0
+    application_stage: str = ""
+    application_history: List[Dict[str, Any]] = field(default_factory=list)
+    virtual_pan_once: str = ""
+    virtual_cvv_once: str = ""
+    virtual_pan_revealed_at: str = ""
     source: str = "agent:simulation"
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     is_live: bool = False
@@ -417,6 +442,27 @@ class Alert:
     source: str = ""
     read: bool = False
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    is_live: bool = False
+    is_demo: bool = True
+
+
+@dataclass
+class SandboxExecution:
+    """Unified bank/payment/broker sandbox request and callback state."""
+
+    execution_id: str
+    user_id: str
+    provider: str
+    operation: str
+    reference_id: str
+    status: str = "submitted"
+    provider_reference: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    history: List[Dict[str, Any]] = field(default_factory=list)
+    failure_reason: str = ""
+    created_at: str = ""
+    updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    source: str = "sandbox:unified"
     is_live: bool = False
     is_demo: bool = True
 

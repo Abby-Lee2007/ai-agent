@@ -100,6 +100,9 @@ class ApiServerTestCase(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(body["reply"]["intent"], "card.list")
         self.assertIn("信用卡", body["reply"]["text"])
+        workflow = body["reply"]["data"]["workflow"]
+        self.assertTrue(workflow["workflow_id"].startswith("WF-"))
+        self.assertEqual(workflow["status"], "completed")
 
     def test_stream_endpoint_returns_sse_events(self):
         with self.post_json("/v1/sessions", {"user_id": "u_001", "channel": "h5"}) as response:
@@ -117,6 +120,109 @@ class ApiServerTestCase(unittest.TestCase):
         self.assertIn("event: message", stream_text)
         self.assertIn('"intent": "account.balance"', stream_text)
         self.assertIn("event: done", stream_text)
+
+    def test_forecast_simulation_and_event_center_endpoints(self):
+        with self.post_json("/v1/sessions", {"user_id": "u_001", "channel": "h5"}) as response:
+            session_id = json.loads(response.read().decode("utf-8"))["session_id"]
+        with self.post_json(
+            "/v1/forecast/simulate",
+            {
+                "session_id": session_id,
+                "months": 3,
+                "purchase_amount": 8000,
+                "income_change_pct": -10,
+                "extra_monthly_expense": 500,
+                "investment_amount": 10000,
+                "investment_return_pct": 3,
+            },
+        ) as response:
+            forecast = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(response.status, 200)
+        self.assertTrue(forecast["reply"]["data"]["forecast"]["baseline_series"])
+        self.assertLess(
+            forecast["reply"]["data"]["forecast"]["scenario_delta_end"],
+            0,
+        )
+        with self.get_json(f"/v1/events?session_id={session_id}") as response:
+            events = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(response.status, 200)
+        self.assertGreaterEqual(len(events["events"]), 1)
+
+    def test_transaction_detail_endpoint_returns_lifecycle(self):
+        session_id = self.service.create_session(user_id="u_001", channel="h5")["session_id"]
+        self.service.send_message(session_id, "给王强转1块，用微信", "txn-detail-1")
+        self.service.send_message(session_id, "确认", "txn-detail-2")
+        done = self.service.send_message(session_id, "246810", "txn-detail-3")
+        txn_id = done["reply"]["data"]["txn_id"]
+        with self.get_json(
+            f"/v1/transactions/{txn_id}?session_id={session_id}"
+        ) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(body["transaction"]["lifecycle_status"], "completed")
+        self.assertTrue(body["transaction"]["bank_reference"])
+
+    def test_signed_sandbox_callback_updates_transaction_lifecycle(self):
+        session_id = self.service.create_session(user_id="u_001", channel="h5")["session_id"]
+        self.service.send_message(session_id, "给王强转1块，用微信", "sandbox-callback-1")
+        self.service.send_message(session_id, "确认", "sandbox-callback-2")
+        done = self.service.send_message(session_id, "246810", "sandbox-callback-3")
+        execution_id = done["reply"]["data"]["sandbox_execution_id"]
+        txn_id = done["reply"]["data"]["txn_id"]
+
+        payload = {
+            "session_id": session_id,
+            "execution_id": execution_id,
+            "status": "returned",
+            "reason": "模拟支付渠道退回",
+        }
+        with self.post_json(
+            "/v1/sandbox/callbacks",
+            payload,
+            headers=self.webhook_headers(payload),
+        ) as response:
+            body = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(body["execution"]["status"], "returned")
+        self.assertEqual(body["transaction"]["txn_id"], txn_id)
+        self.assertEqual(body["transaction"]["lifecycle_status"], "returned")
+
+        with self.get_json(f"/v1/sandbox/status?session_id={session_id}") as response:
+            status = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(status["mode"], "sandbox")
+        self.assertTrue(status["executions"])
+
+        with self.get_json(f"/v1/market/status?session_id={session_id}") as response:
+            market = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(response.status, 200)
+        self.assertIn("licensed", market)
+        self.assertIn("public", market)
+
+    def test_pending_receipt_can_be_loaded_and_corrected(self):
+        session_id = self.service.create_session(user_id="u_001", channel="h5")["session_id"]
+        sample = Path("samples/bill_sample.txt").read_bytes()
+        with self.post_json(
+            "/v1/uploads",
+            {
+                "session_id": session_id,
+                "filename": "bill_sample.txt",
+                "data": base64.b64encode(sample).decode("ascii"),
+            },
+        ) as response:
+            uploaded = json.loads(response.read().decode("utf-8"))
+        records = uploaded["reply"]["data"]["records"]
+        self.assertTrue(records)
+        records[0]["merchant"] = "人工核对商户"
+        with self.patch_json(
+            "/v1/receipts/pending",
+            {"session_id": session_id, "records": records},
+        ) as response:
+            updated = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(updated["records"][0]["merchant"], "人工核对商户")
+        self.assertIn("quality", updated)
 
     def test_root_serves_h5_chat_page(self):
         with urllib.request.urlopen(self.base_url + "/", timeout=5) as response:

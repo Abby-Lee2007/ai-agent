@@ -30,6 +30,7 @@ from finagent.data.models import (
     MembershipOrderItem,
     MerchantOffer,
     Payee,
+    SandboxExecution,
     ScheduledTask,
     Subscription,
     Transaction,
@@ -94,6 +95,7 @@ class DataStore:
         "goals",
         "aa_sheets",
         "alerts",
+        "sandbox_executions",
     )
 
     MODEL_MAP = {
@@ -113,6 +115,7 @@ class DataStore:
         "goals": Goal,
         "aa_sheets": AaSheet,
         "alerts": Alert,
+        "sandbox_executions": SandboxExecution,
     }
 
     ID_PREFIX = {
@@ -130,6 +133,7 @@ class DataStore:
         "goals": "GOAL",
         "aa_sheets": "AA",
         "alerts": "ALERT",
+        "sandbox_executions": "SBX",
     }
 
     def __init__(self, clock: Optional[Clock] = None, path: Optional[Path] = None) -> None:
@@ -232,6 +236,14 @@ class DataStore:
         subscription_id: str = "",
         tags: Optional[List[str]] = None,
         status: str = "success",
+        lifecycle_status: str = "completed",
+        submitted_at: str = "",
+        completed_at: str = "",
+        expected_arrival_at: str = "",
+        bank_reference: str = "",
+        failure_reason: str = "",
+        risk_notes: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         source: str = "agent:simulation",
         updated_at: str = "",
         is_live: bool = False,
@@ -249,6 +261,17 @@ class DataStore:
             counterparty=counterparty,
             note=note,
             status=status,
+            lifecycle_status=lifecycle_status,
+            submitted_at=submitted_at or (timestamp or self.clock.iso()),
+            completed_at=completed_at or (
+                timestamp or self.clock.iso()
+                if lifecycle_status == "completed" else ""
+            ),
+            expected_arrival_at=expected_arrival_at,
+            bank_reference=bank_reference,
+            failure_reason=failure_reason,
+            risk_notes=list(risk_notes or []),
+            metadata=dict(metadata or {}),
             is_subscription=is_subscription,
             subscription_id=subscription_id,
             tags=list(tags or []),

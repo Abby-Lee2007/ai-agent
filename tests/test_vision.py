@@ -4,18 +4,20 @@ from __future__ import annotations
 import unittest
 import tempfile
 import zipfile
+from datetime import date
 from html import escape
 from pathlib import Path
 
 from tests.support import make_agent
 from finagent.vision.receipt_parser import (
+    ParsedTransaction,
     guess_category,
     looks_like_summary_page,
     normalize_line,
     parse_bill_summary,
     parse_receipt_text,
 )
-from finagent.vision.receipt_reader import ReceiptReader
+from finagent.vision.receipt_reader import ReceiptReader, ReceiptResult
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SAMPLE_IMAGE = PROJECT_ROOT / "samples" / "bill_sample.png"
@@ -296,6 +298,48 @@ class TestReceiptReader(unittest.TestCase):
         backends = self.reader.backends()
         self.assertTrue(backends["text_file"])
         self.assertIn("windows_ocr", backends)
+
+    def test_low_confidence_fields_are_marked_individually(self):
+        result = ReceiptResult(
+            ok=True,
+            records=[ParsedTransaction(
+                date="日期不清",
+                merchant="未知商户",
+                amount=-8.0,
+                category="其他",
+            )],
+        )
+
+        record = result.records[0]
+        self.assertIn("date", record.needs_review)
+        self.assertIn("merchant", record.needs_review)
+        self.assertGreater(record.field_confidence["amount"], 0.8)
+        self.assertLess(record.confidence, 0.8)
+
+    def test_multimodal_payload_preserves_field_confidence(self):
+        records = self.reader._records_from_payload(
+            {
+                "records": [{
+                    "date": "2026-10-20",
+                    "merchant": "清晰商户",
+                    "amount": -12.0,
+                    "category": "餐饮",
+                    "raw_line": "2026-10-20 清晰商户 -12.00",
+                    "field_confidence": {
+                        "date": 0.99,
+                        "merchant": 0.62,
+                        "amount": 0.98,
+                        "category": 0.9,
+                    },
+                }]
+            },
+            date(2026, 10, 28),
+        )
+
+        record = records[0]
+        self.assertEqual(record.field_confidence["merchant"], 0.62)
+        self.assertIn("merchant", record.needs_review)
+        self.assertEqual(record.raw_line, "2026-10-20 清晰商户 -12.00")
 
     def test_read_text_file(self):
         result = self.reader.read(str(SAMPLE_TEXT))

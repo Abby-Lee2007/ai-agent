@@ -52,8 +52,11 @@ RE_RECEIPT_PATH = re.compile(
     re.IGNORECASE,
 )
 
-RELATION_WORDS = ["老婆", "老公", "爱人", "妻子", "丈夫", "妈妈", "爸爸", "母亲", "父亲",
-                  "房东", "老师", "老板", "女朋友", "男朋友", "未婚妻", "未婚夫"]
+RELATION_WORDS = [
+    "老婆", "老公", "爱人", "妻子", "丈夫", "配偶", "太太", "伴侣", "媳妇",
+    "妈妈", "爸爸", "母亲", "父亲", "房东", "老师", "老板",
+    "女朋友", "男朋友", "未婚妻", "未婚夫",
+]
 GENERIC_PERSON_VALUES = {"他人", "别人", "对方", "某人", "有人", "某个人", "谁"}
 
 # 同义说法归一：用户不会总用我们预设的动词
@@ -77,6 +80,7 @@ INTENT_KEYWORDS = {
     "transfer.internal": ["本人转账", "内部转账", "卡片互转", "银行卡互转"],
     "transfer.schedule": ["定时转", "自动转", "每月转", "每周转", "预约转"],
     "transfer.split_aa": ["aa", "分摊", "平摊", "均摊", "各付"],
+    "transfer.aa_status": ["aa收款进度", "aa状态", "谁还没付款"],
     "transfer.list_scheduled": ["定时转账", "待执行", "预约任务"],
     "bill.analyze": ["账单", "消费", "支出", "开销", "花销"],
     "bill.anomaly": ["异常", "可疑", "盗刷", "重复扣", "乱扣"],
@@ -84,12 +88,24 @@ INTENT_KEYWORDS = {
     "bill.search": ["花了多少", "消费了多少", "花在"],
     "bill.scan_receipt": ["截图", "小票", "收据", "识别账"],
     "bill.supported_formats": ["上传哪些格式", "支持哪些格式", "账单格式", "文件格式", "能识别哪些文件"],
+    "forecast.cashflow": ["现金流", "数字孪生", "未来90天", "资金缺口", "财务预测"],
+    "advisor.proactive": ["主动财务", "财务体检", "个人cfo", "主动提醒"],
+    "advisor.health_score": ["财务健康分", "财务健康评分", "财务评分"],
+    "advisor.events": ["主动事件", "财务通知", "事件中心", "稍后提醒"],
+    "risk.dispute": ["发起争议交易", "提交争议交易", "申请交易争议"],
+    "risk.playbook": ["风险处置", "交易处置", "盗刷怎么办", "争议交易"],
+    "account.reconcile_adjust": ["修复账务差异", "调整对账差异", "手工对账修正"],
+    "account.reconcile": ["账务对账", "账实一致", "核对余额"],
     "wealth.risk_assess": ["风险测评", "风险承受", "测评"],
+    "wealth.analytics": ["最大回撤", "组合风险", "产品风险分析", "波动率"],
+    "wealth.compare": ["产品对比", "比较产品", "对比理财", "有什么区别", "怎么选"],
     "wealth.recommend": ["推荐", "理财产品", "配置", "买什么"],
     "wealth.subscribe": ["申购", "买入", "认购", "购买"],
     "wealth.redeem": ["赎回", "卖出"],
     "wealth.portfolio": ["持仓", "赚了多少", "收益"],
     "card.list": ["有哪些卡", "卡列表", "我的卡"],
+    "card.statement": ["信用卡账单", "本期应还", "最低还款", "还款日", "账单日"],
+    "card.timeline": ["申请进度", "卡片进度", "审批时间线", "虚拟卡卡号", "虚拟卡安全码"],
     "card.repay": ["信用卡还款", "还信用卡", "偿还信用卡"],
     "card.apply": ["申领", "办卡", "开卡", "申请卡", "领卡"],
     "card.bind": ["绑定", "绑卡", "添加卡"],
@@ -130,7 +146,20 @@ class RuleIntentParser:
         "crossscene.daily_brief",
         "crossscene.gift_plan",
         "bill.scan_receipt",
+        "advisor.proactive",
+        "advisor.health_score",
+        "advisor.events",
+        "forecast.cashflow",
+        "risk.dispute",
+        "risk.playbook",
+        "account.reconcile_adjust",
+        "account.reconcile",
+        "transfer.aa_status",
+        "wealth.compare",
+        "wealth.analytics",
         "card.repay",
+        "card.timeline",
+        "card.statement",
         "transfer.split_aa",
         "transfer.list_scheduled",
         "transfer.internal",
@@ -236,6 +265,77 @@ class RuleIntentParser:
 
     def _match_crossscene_daily_brief(self, t: str) -> bool:
         return self._has(t, "简报", "今天有什么要注意", "最近要注意什么", "有什么要提醒我", "今天有什么要")
+
+    def _match_forecast_cashflow(self, t: str) -> bool:
+        return self._has(
+            t,
+            "现金流", "财务数字孪生", "数字孪生", "未来90天", "未来三个月",
+            "未来6个月", "资金缺口", "现金够不够", "收入下降", "如果买",
+            "如果购买", "财务预测",
+        ) or bool(re.search(r"如果.{0,16}(?:买|购买|花|支出)", t))
+
+    def _match_advisor_proactive(self, t: str) -> bool:
+        return self._has(
+            t,
+            "主动财务管家", "个人cfo", "个人 CFO", "财务体检",
+            "主动提醒", "帮我盯着账户", "今天财务上有什么",
+        )
+
+    def _match_advisor_health_score(self, t: str) -> bool:
+        return self._has(t, "财务健康分", "财务健康评分", "财务评分", "健康评分")
+
+    def _match_advisor_events(self, t: str) -> bool:
+        return self._has(
+            t,
+            "主动事件", "财务通知", "事件中心", "查看财务提醒",
+            "稍后提醒", "忽略事件",
+        )
+
+    def _match_risk_playbook(self, t: str) -> bool:
+        return self._has(
+            t,
+            "风险处置", "交易处置", "处置方案", "盗刷怎么办",
+            "争议交易", "盗刷后", "风险事件处置",
+        )
+
+    def _match_risk_dispute(self, t: str) -> bool:
+        return self._has(
+            t,
+            "发起争议交易", "提交争议交易", "申请交易争议",
+            "发起交易争议", "提交交易争议",
+        )
+
+    def _match_account_reconcile(self, t: str) -> bool:
+        return self._has(t, "账务对账", "账实一致", "账实核对", "核对余额", "核对银行卡")
+
+    def _match_account_reconcile_adjust(self, t: str) -> bool:
+        return self._has(
+            t,
+            "修复账务差异", "调整对账差异", "手工对账修正",
+            "修正账实差异", "修复对账差异",
+        )
+
+    def _match_wealth_analytics(self, t: str) -> bool:
+        if self._has(
+            t,
+            "最大回撤", "波动率", "组合风险", "组合相关性",
+            "产品风险分析", "理财风险分析", "费率拖累",
+        ):
+            return True
+        return bool(re.search(r"(?:产品|理财|组合).{0,8}(?:风险|回撤|波动)", t))
+
+    def _match_wealth_compare(self, t: str) -> bool:
+        wants_compare = self._has(
+            t,
+            "对比", "比较", "有什么区别", "怎么选", "哪个好", "哪个更",
+        )
+        return wants_compare and self._has(
+            t,
+            "产品", "理财", "基金", "债券", "存款", "股票", "ETF",
+        )
+
+    def _match_transfer_aa_status(self, t: str) -> bool:
+        return self._has(t, "aa收款进度", "AA收款进度", "aa状态", "AA状态", "谁还没付款")
 
     def _match_transfer_split_aa(self, t: str) -> bool:
         # Keep "aa" as a standalone token so random UUID/path fragments do not
@@ -417,6 +517,22 @@ class RuleIntentParser:
     def _match_card_list(self, t: str) -> bool:
         return self._has(t, "我的卡", "有哪些卡", "卡片列表", "卡列表", "我有什么卡", "卡种", "卡的情况")
 
+    def _match_card_statement(self, t: str) -> bool:
+        return self._has(
+            t,
+            "信用卡账单", "本期账单", "本期应还", "最低还款",
+            "信用卡还款日", "账单日",
+        )
+
+    def _match_card_timeline(self, t: str) -> bool:
+        if self._has(
+            t,
+            "申请进度", "卡片进度", "审批时间线", "卡片生命周期",
+            "虚拟卡卡号", "虚拟卡安全码", "显示虚拟卡",
+        ):
+            return True
+        return bool(re.search(r"虚拟卡.{0,12}(?:卡号|安全码|CVV)", t))
+
     def _match_subscription_cancel(self, t: str) -> bool:
         return self._has(
             t, "取消", "停止", "关掉", "关闭", "不想再", "不用再",
@@ -523,6 +639,97 @@ class RuleIntentParser:
             if note:
                 slots["note"] = note
 
+        elif intent == "forecast.cashflow":
+            month_match = re.search(
+                r"(?:未来|接下来)?\s*(\d{1,2})\s*个?月|未来\s*(\d{2,3})\s*天",
+                text,
+            )
+            if month_match:
+                if month_match.group(1):
+                    slots["months"] = int(month_match.group(1))
+                elif month_match.group(2):
+                    slots["months"] = max(1, round(int(month_match.group(2)) / 30))
+            elif self._has(text, "半年", "6个月"):
+                slots["months"] = 6
+            elif self._has(text, "一年", "12个月"):
+                slots["months"] = 12
+            else:
+                slots["months"] = 3
+            amount = parse_amount(text)
+            if amount is not None:
+                if self._has(text, "投资", "申购", "定投"):
+                    slots["investment_amount"] = amount
+                elif self._has(text, "买", "消费", "支出", "花"):
+                    slots["purchase_amount"] = amount
+            income_match = re.search(
+                r"收入(?:下降|减少|上升|增加)\s*(\d+(?:\.\d+)?)\s*%",
+                text,
+            )
+            if income_match:
+                value = float(income_match.group(1))
+                slots["income_change_pct"] = (
+                    -value if self._has(text, "下降", "减少") else value
+                )
+            extra = re.search(r"每月(?:多花|新增支出|增加支出)\s*(\d+(?:\.\d+)?)", text)
+            if extra:
+                slots["extra_monthly_expense"] = float(extra.group(1))
+            installment = re.search(r"分期(?:每月|月供)\s*(\d+(?:\.\d+)?)", text)
+            if installment:
+                slots["extra_monthly_expense"] = float(installment.group(1))
+            expected_return = re.search(
+                r"(?:预期年化|年化收益|收益率)\s*(\d+(?:\.\d+)?)\s*%",
+                text,
+            )
+            if expected_return:
+                slots["investment_return_pct"] = float(expected_return.group(1))
+            date_match = re.search(
+                r"(下个月\d{1,2}[日号]|本月\d{1,2}[日号]|\d{4}-\d{1,2}-\d{1,2})",
+                text,
+            )
+            if date_match:
+                parsed = parse_date(date_match.group(1), today)
+                if parsed:
+                    slots["purchase_date"] = parsed.isoformat()
+
+        elif intent == "risk.playbook":
+            match = re.search(r"(?:给我|为|关于)?(.{1,30}?)(?:的)?风险处置", text)
+            if match:
+                slots["case"] = match.group(1).strip("给我为 ，,。")
+            else:
+                merchant = self._merchant(text)
+                if merchant:
+                    slots["case"] = merchant
+        elif intent == "risk.dispute":
+            match = re.search(r"(TXN\d{6,})", text, re.I)
+            if match:
+                slots["txn_id"] = match.group(1).upper()
+        elif intent == "account.reconcile_adjust":
+            card = self._card_reference(text)
+            if card:
+                slots["card"] = card
+            if self._has(text, "以银行卡余额为准", "按银行卡余额", "以卡片余额为准"):
+                slots["source_of_truth"] = "card"
+            elif self._has(text, "以关联账户余额为准", "按账户余额", "以账户余额为准"):
+                slots["source_of_truth"] = "account"
+
+        elif intent == "advisor.events":
+            event_match = re.search(r"(EVT-[A-Z]+-\d+)", text, re.I)
+            if event_match:
+                slots["event_id"] = event_match.group(1).upper()
+            if self._has(text, "忽略"):
+                slots["action"] = "ignore"
+            elif self._has(text, "稍后", "延后"):
+                slots["action"] = "snooze"
+            elif self._has(text, "处理"):
+                slots["action"] = "handle"
+            else:
+                slots["action"] = "list"
+
+        elif intent == "wealth.analytics":
+            product = self._product(text)
+            if product:
+                slots["product"] = product
+
         elif intent in {"transfer.send", "transfer.schedule"}:
             payee = self._person(text)
             if payee:
@@ -581,6 +788,26 @@ class RuleIntentParser:
             if match:
                 slots["image"] = match.group(1).strip()
 
+        elif intent == "wealth.compare":
+            if self.store is not None:
+                matched_names = [
+                    product.name
+                    for product in self.store.products.values()
+                    if product.name in text
+                ]
+                if matched_names:
+                    slots["products"] = "、".join(matched_names[:3])
+            if self._has(text, "基金", "ETF"):
+                slots["asset_class"] = "fund"
+            elif self._has(text, "债券", "国债", "可转债", "纯债"):
+                slots["asset_class"] = "bond"
+            elif self._has(text, "股票", "A股"):
+                slots["asset_class"] = "stock"
+            elif self._has(text, "存款", "存单"):
+                slots["asset_class"] = "deposit"
+            else:
+                slots["asset_class"] = "mixed"
+
         elif intent == "wealth.recommend":
             amount = parse_amount(text)
             if amount is not None:
@@ -589,6 +816,8 @@ class RuleIntentParser:
             # 按资产类别分池：股票 / 债券 / 基金 / 衍生品 / 存款
             if self._has(text, "衍生品", "期权", "期货", "雪球", "结构性", "杠杆"):
                 slots["asset_class"] = "derivative"
+            elif self._has(text, "债券基金", "纯债基金", "固收基金"):
+                slots["asset_class"] = "bond_fund"
             elif self._has(text, "基金") and not self._has(text, "ETF"):
                 slots["asset_class"] = "fund"
             elif self._has(text, "债券", "国债", "可转债", "信用债", "企业债"):
@@ -704,6 +933,22 @@ class RuleIntentParser:
             card = self._card(text)
             if card:
                 slots["card"] = card
+
+        elif intent == "card.statement":
+            card = self._card(text)
+            slots["card"] = card or "信用卡"
+
+        elif intent == "card.timeline":
+            card = self._card(text)
+            if card:
+                slots["card"] = card
+            slots["reveal"] = self._has(
+                text,
+                "显示", "查卡号", "查安全码", "查看卡号", "查看安全码", "展示",
+            ) or (
+                self._has(text, "查", "查看", "显示", "展示")
+                and self._has(text, "卡号", "安全码", "CVV", "cvv")
+            )
 
         elif intent in {"card.freeze", "card.unlock", "card.report_lost", "card.list"}:
             card = self._card(text)
@@ -1041,12 +1286,12 @@ class RuleIntentParser:
         return ""
 
     def _card(self, text: str) -> str:
-        for word in ["信用卡", "借记卡", "储蓄卡", "虚拟卡", "附属卡"]:
-            if word in text:
-                return word
         tail = re.search(r"(?:尾号|后四位|末四位)\s*(\d{4})", text)
         if tail:
             return tail.group(1)
+        for word in ["信用卡", "借记卡", "储蓄卡", "虚拟卡", "附属卡"]:
+            if word in text:
+                return word
         digits = re.findall(r"(?<![\d])\d{4}(?![\d])", text)
         return digits[0] if digits else ""
 

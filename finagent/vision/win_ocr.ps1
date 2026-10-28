@@ -45,6 +45,37 @@ if (-not (Test-Path -LiteralPath $ImagePath)) {
 }
 
 $fullImage = (Resolve-Path -LiteralPath $ImagePath).Path
+$workingImage = $fullImage
+$tempImage = $null
+
+# Windows.Media.Ocr rejects very large bitmaps. Downscale while preserving aspect ratio.
+Add-Type -AssemblyName System.Drawing
+$sourceImage = [System.Drawing.Image]::FromFile($fullImage)
+try {
+    $maxDimension = 4096
+    if ($sourceImage.Width -gt $maxDimension -or $sourceImage.Height -gt $maxDimension) {
+        $ratio = [Math]::Min(
+            $maxDimension / [double]$sourceImage.Width,
+            $maxDimension / [double]$sourceImage.Height
+        )
+        $newWidth = [Math]::Max(1, [int][Math]::Floor($sourceImage.Width * $ratio))
+        $newHeight = [Math]::Max(1, [int][Math]::Floor($sourceImage.Height * $ratio))
+        $scaled = New-Object System.Drawing.Bitmap($newWidth, $newHeight)
+        $graphics = [System.Drawing.Graphics]::FromImage($scaled)
+        try {
+            $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $graphics.DrawImage($sourceImage, 0, 0, $newWidth, $newHeight)
+        } finally {
+            $graphics.Dispose()
+        }
+        $tempImage = Join-Path ([System.IO.Path]::GetTempPath()) ("finagent_ocr_" + [guid]::NewGuid().ToString("N") + ".png")
+        $scaled.Save($tempImage, [System.Drawing.Imaging.ImageFormat]::Png)
+        $scaled.Dispose()
+        $workingImage = $tempImage
+    }
+} finally {
+    $sourceImage.Dispose()
+}
 
 $engine = $null
 if ($Language -ne "") {
@@ -69,12 +100,15 @@ if (-not $engine) {
     exit 4
 }
 
-$file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($fullImage)) ([Windows.Storage.StorageFile])
+$file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($workingImage)) ([Windows.Storage.StorageFile])
 $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
 $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
 $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
 $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
 $stream.Dispose()
+if ($tempImage -and (Test-Path -LiteralPath $tempImage)) {
+    Remove-Item -LiteralPath $tempImage -Force -ErrorAction SilentlyContinue
+}
 
 $lines = @()
 foreach ($line in $result.Lines) { $lines += $line.Text }

@@ -110,6 +110,66 @@ class LLMClient:
             return None
         return self.parse_json(raw)
 
+    def chat_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        tool_choice: str = "auto",
+    ) -> Optional[Dict[str, Any]]:
+        """Ask an OpenAI-compatible model for one validated tool call."""
+        if not self.available:
+            self.last_error = "未配置 API Key"
+            return None
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.0,
+            "max_tokens": min(LLMConfig.MAX_TOKENS, 1024),
+            "stream": False,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+        request = urllib.request.Request(
+            url=f"{self.base_url}/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                body = response.read().decode("utf-8")
+            self.calls += 1
+            data = json.loads(body)
+            message = data["choices"][0]["message"]
+            calls = message.get("tool_calls") or []
+            if not calls:
+                self.last_error = "模型未返回工具调用"
+                return None
+            function = calls[0].get("function") or {}
+            arguments = function.get("arguments") or "{}"
+            if isinstance(arguments, str):
+                arguments = json.loads(arguments)
+            if not isinstance(arguments, dict):
+                self.last_error = "工具参数不是 JSON 对象"
+                return None
+            return {
+                "name": str(function.get("name") or ""),
+                "arguments": arguments,
+            }
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")[:200]
+            self.last_error = f"HTTP {exc.code}: {detail}"
+            return None
+        except urllib.error.URLError as exc:
+            self.last_error = f"网络错误: {exc.reason}"
+            return None
+        except (KeyError, IndexError, json.JSONDecodeError, TimeoutError) as exc:
+            self.last_error = f"工具调用响应解析失败: {exc}"
+            return None
+
     def chat_vision(
         self,
         image_path: str,

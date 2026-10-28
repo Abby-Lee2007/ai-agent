@@ -29,6 +29,8 @@ from finagent.tools.card_tools import (
     CardListTool,
     CreditCardRepayTool,
     CardReportLostTool,
+    CardStatementTool,
+    CardTimelineTool,
     CardUnlockTool,
 )
 from finagent.tools.crossscene_tools import (
@@ -37,6 +39,18 @@ from finagent.tools.crossscene_tools import (
     GoalCreateTool,
     GoalListTool,
     ScheduleGiftTool,
+)
+from finagent.tools.insight_tools import (
+    AAPaymentStatusTool,
+    AccountReconcileTool,
+    CashflowForecastTool,
+    EventCenterTool,
+    FinancialHealthTool,
+    ProactiveBriefTool,
+    ReconcileAdjustTool,
+    RiskDisputeTool,
+    RiskPlaybookTool,
+    WealthAnalyticsTool,
 )
 from finagent.tools.membership_tools import (
     MembershipPurchaseTool,
@@ -58,6 +72,7 @@ from finagent.tools.transfer_tools import (
 )
 from finagent.tools.wealth_tools import (
     PortfolioTool,
+    ProductCompareTool,
     ProductRecommendTool,
     RiskAssessTool,
     SubscribeTool,
@@ -85,6 +100,7 @@ __all__ = [
     "ReceiptImportTool",
     "RiskAssessTool",
     "ProductRecommendTool",
+    "ProductCompareTool",
     "SubscribeTool",
     "WealthRedeemTool",
     "PortfolioTool",
@@ -97,6 +113,8 @@ __all__ = [
     "CardFreezeTool",
     "CardUnlockTool",
     "CardReportLostTool",
+    "CardStatementTool",
+    "CardTimelineTool",
     "SubscriptionDetectTool",
     "SubscriptionListTool",
     "SubscriptionCancelTool",
@@ -109,6 +127,16 @@ __all__ = [
     "ScheduleGiftTool",
     "DailyBriefTool",
     "GiftRecommendTool",
+    "CashflowForecastTool",
+    "FinancialHealthTool",
+    "EventCenterTool",
+    "ProactiveBriefTool",
+    "RiskPlaybookTool",
+    "RiskDisputeTool",
+    "ReconcileAdjustTool",
+    "AccountReconcileTool",
+    "WealthAnalyticsTool",
+    "AAPaymentStatusTool",
     "BalanceTool",
     "ProfileTool",
     "HelpTool",

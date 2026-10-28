@@ -72,6 +72,35 @@
     .brand-copy strong { font-size: 16px; }
     .brand-copy span { margin-top: 4px; color: var(--muted); font-size: 12px; }
     .status { gap: 8px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+    .topbar-actions { display: flex; align-items: center; gap: 10px; }
+    .event-center-button {
+      position: relative;
+      min-height: 32px;
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: var(--surface);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .event-center-button:hover { border-color: #9ec7bd; background: var(--accent-soft); }
+    .event-badge {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      display: none;
+      place-items: center;
+      border-radius: 9px;
+      color: #fff;
+      background: var(--danger);
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .event-badge.visible { display: grid; }
     .status-dot {
       width: 8px;
       height: 8px;
@@ -549,6 +578,7 @@
       color: #394b47;
       font-size: 12px;
       line-height: 1.65;
+      white-space: pre-line;
     }
     .wealth-card-foot {
       display: flex;
@@ -599,10 +629,11 @@
     .wealth-filter:hover { background: var(--accent-soft); border-color: #9ec7bd; }
     .gift-recommendation { display: grid; gap: 14px; }
     .gift-summary {
-      padding: 14px 16px;
-      border-left: 3px solid var(--accent);
-      border-radius: 6px;
-      background: var(--surface-soft);
+      padding: 15px 17px;
+      border: 1px solid var(--line);
+      border-top: 3px solid var(--accent);
+      border-radius: 7px;
+      background: #f8faf9;
     }
     .gift-summary-title {
       margin: 0;
@@ -613,123 +644,164 @@
     .gift-summary-meta {
       display: flex;
       flex-wrap: wrap;
-      gap: 7px;
-      margin-top: 10px;
+      gap: 6px;
+      margin-top: 9px;
     }
     .gift-summary-meta span {
-      padding: 4px 8px;
-      border: 1px solid var(--line);
-      border-radius: 5px;
+      padding: 3px 7px;
+      border-radius: 4px;
       color: var(--accent-strong);
-      background: var(--surface);
-      font-size: 11.5px;
-      font-weight: 650;
+      background: var(--accent-soft);
+      font-size: 11px;
+      font-weight: 700;
     }
     .gift-constraints {
       display: grid;
-      gap: 4px;
-      margin-top: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px 18px;
+      margin-top: 12px;
+      padding-top: 11px;
+      border-top: 1px solid var(--line);
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11.5px;
     }
-    .gift-constraints strong { color: var(--ink); }
+    .gift-constraints > div {
+      min-width: 0;
+      display: flex;
+      gap: 5px;
+      line-height: 1.45;
+    }
+    .gift-constraints strong { flex: 0 0 auto; color: var(--ink); }
     .gift-option-grid {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
+      gap: 11px;
     }
     .gift-option-card {
       min-width: 0;
       display: flex;
       flex-direction: column;
-      padding: 14px;
+      overflow: hidden;
       border: 1px solid var(--line);
       border-radius: 7px;
       background: var(--surface);
     }
     .gift-option-top {
       display: flex;
-      align-items: center;
+      align-items: flex-end;
       justify-content: space-between;
-      gap: 8px;
+      gap: 10px;
+      padding: 11px 13px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-soft);
     }
     .gift-option-rank {
       color: var(--muted);
-      font-size: 11px;
+      font-size: 10.5px;
       font-weight: 750;
-      letter-spacing: .08em;
+      letter-spacing: .06em;
+    }
+    .gift-price-block {
+      min-width: 0;
+      display: grid;
+      justify-items: end;
+      gap: 1px;
+      text-align: right;
+    }
+    .gift-price-caption {
+      color: var(--muted);
+      font-size: 9.5px;
+      font-weight: 700;
     }
     .gift-option-price {
       color: var(--accent-strong);
       font-size: 14px;
       font-weight: 800;
+      line-height: 1.25;
       white-space: nowrap;
     }
     .gift-option-name {
-      margin: 8px 0 0;
+      margin: 0;
+      padding: 13px 13px 0;
       color: var(--ink);
       font-size: 14px;
       line-height: 1.45;
     }
     .gift-option-items {
       display: grid;
-      gap: 6px;
-      margin-top: 10px;
+      gap: 0;
+      margin: 10px 13px 0;
+      border-top: 1px solid var(--line);
     }
     .gift-option-item {
       min-width: 0;
-      padding: 7px 8px;
-      border-radius: 5px;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--line);
       color: var(--ink);
-      background: var(--surface-soft);
-      font-size: 11.5px;
+      font-size: 11px;
       line-height: 1.4;
     }
-    .gift-option-item strong { display: block; }
-    .gift-option-item span { color: var(--muted); }
-    .gift-option-reason {
-      margin: 10px 0 0;
+    .gift-option-item strong { min-width: 0; font-weight: 650; }
+    .gift-option-item span {
+      flex: 0 0 auto;
       color: var(--muted);
-      font-size: 11.5px;
-      line-height: 1.5;
+      font-size: 10.5px;
     }
-    .gift-option-select {
-      width: 100%;
-      padding: 8px 10px;
-      border: 1px solid #b9d6cf;
-      border-radius: 6px;
-      color: var(--accent-strong);
-      background: var(--accent-soft);
-      font-size: 12px;
-      font-weight: 750;
+    .gift-option-reason {
+      margin: 9px 13px 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+    .gift-option-reason-label {
+      color: var(--ink);
+      font-weight: 700;
+    }
+    .gift-option-source {
+      margin: 7px 13px 0;
+      color: var(--muted);
+      font-size: 9.5px;
+      line-height: 1.45;
     }
     .gift-option-actions {
       display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
       gap: 7px;
       margin-top: auto;
-      padding-top: 14px;
+      padding: 13px;
     }
-    .gift-option-select:hover,
-    .gift-option-select:focus-visible {
-      border-color: var(--accent);
-      outline: none;
-    }
+    .gift-option-select,
     .gift-taobao-link {
-      display: block;
-      padding: 7px 10px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      color: var(--ink);
-      background: var(--surface-soft);
-      font-size: 11.5px;
-      font-weight: 700;
+      min-width: 0;
+      min-height: 34px;
+      display: grid;
+      place-items: center;
+      padding: 7px 9px;
+      border: 1px solid #b9d6cf;
+      border-radius: 5px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 11px;
+      font-weight: 750;
+      line-height: 1.25;
       text-align: center;
       text-decoration: none;
     }
+    .gift-taobao-link.is-primary {
+      border-color: var(--accent);
+      color: #fff;
+      background: var(--accent);
+    }
+    .gift-option-select:hover,
+    .gift-option-select:focus-visible,
     .gift-taobao-link:hover,
     .gift-taobao-link:focus-visible {
-      border-color: #b9d6cf;
-      color: var(--accent-strong);
+      border-color: var(--accent);
       outline: none;
     }
     .gift-footer {
@@ -737,16 +809,19 @@
       align-items: center;
       justify-content: space-between;
       gap: 10px;
+      padding-top: 2px;
       color: var(--muted);
-      font-size: 11.5px;
+      font-size: 11px;
+      line-height: 1.5;
     }
     .gift-refresh {
       flex: 0 0 auto;
-      padding: 7px 10px;
+      min-height: 32px;
+      padding: 6px 12px;
       border: 1px solid var(--line);
-      border-radius: 6px;
+      border-radius: 5px;
       color: var(--ink);
-      background: var(--surface-soft);
+      background: var(--surface);
       font-weight: 700;
     }
     .anomaly-intro {
@@ -1278,6 +1353,577 @@
       font-size: 12px;
     }
     .card-switches label { display: flex; align-items: center; gap: 5px; }
+    .card-statement-summary {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 12px;
+      padding: 8px 9px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      color: var(--muted);
+      background: var(--surface);
+      font-size: 11px;
+    }
+    .card-lifecycle {
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 4px;
+      padding: 8px 9px;
+      border-left: 3px solid var(--accent);
+      color: var(--muted);
+      background: var(--surface);
+      font-size: 11px;
+    }
+
+    .workflow-strip {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px 10px;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .workflow-strip strong { color: var(--accent-strong); font-weight: 700; }
+    .workflow-agent {
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--surface-soft);
+      color: var(--ink);
+    }
+    .workflow-open {
+      min-height: 24px;
+      padding: 2px 6px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      color: var(--accent-strong);
+      background: var(--surface);
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .message-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 9px;
+      padding-top: 9px;
+      border-top: 1px solid var(--line);
+    }
+    .message-action {
+      min-height: 30px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      color: var(--ink);
+      background: var(--surface);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .message-action:hover { border-color: #9ec7bd; background: var(--accent-soft); }
+    .forecast-panel,
+    .proactive-panel,
+    .playbook-panel,
+    .analytics-panel,
+    .aa-status-panel,
+    .reconcile-panel { display: grid; gap: 12px; }
+    .forecast-head,
+    .insight-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .forecast-title,
+    .insight-title { margin: 0; font-size: 15px; }
+    .forecast-subtitle,
+    .insight-subtitle { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+    .forecast-confidence,
+    .insight-badge {
+      flex: 0 0 auto;
+      padding: 3px 7px;
+      border-radius: 4px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .forecast-metrics,
+    .reconcile-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      overflow: hidden;
+    }
+    .forecast-metric,
+    .reconcile-metric {
+      min-width: 0;
+      padding: 9px 11px;
+      background: var(--surface-soft);
+    }
+    .forecast-metric + .forecast-metric,
+    .reconcile-metric + .reconcile-metric { border-left: 1px solid var(--line); }
+    .forecast-metric span,
+    .reconcile-metric span { display: block; color: var(--muted); font-size: 11px; }
+    .forecast-metric strong,
+    .reconcile-metric strong {
+      display: block;
+      margin-top: 3px;
+      font-size: 15px;
+      overflow-wrap: anywhere;
+    }
+    .forecast-chart {
+      position: relative;
+      min-height: 225px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .forecast-chart svg { display: block; width: 100%; height: auto; }
+    .forecast-chart .axis-label { fill: var(--muted); font-size: 11px; }
+    .forecast-chart .line-balance { fill: none; stroke: var(--accent); stroke-width: 2; }
+    .forecast-chart .line-baseline {
+      fill: none;
+      stroke: var(--muted);
+      stroke-width: 1.5;
+      stroke-dasharray: 5 4;
+    }
+    .forecast-chart .area-balance { fill: var(--accent-soft); opacity: .7; }
+    .forecast-chart .zero-line { stroke: var(--danger); stroke-width: 1; stroke-dasharray: 4 4; }
+    .forecast-chart .min-marker { fill: var(--warning); stroke: var(--surface); stroke-width: 2; }
+    .forecast-warnings,
+    .insight-list,
+    .playbook-list,
+    .reconcile-issues { display: grid; gap: 7px; }
+    .forecast-warning,
+    .insight-item,
+    .playbook-step,
+    .reconcile-issue {
+      padding: 9px 10px;
+      border-left: 3px solid var(--accent);
+      border-radius: 0 5px 5px 0;
+      background: var(--surface-soft);
+    }
+    .forecast-warning.warning,
+    .insight-item.warning { border-left-color: var(--warning); }
+    .forecast-warning.danger,
+    .insight-item.danger,
+    .reconcile-issue { border-left-color: var(--danger); }
+    .forecast-warning strong,
+    .insight-item strong,
+    .playbook-step strong { display: block; font-size: 12px; }
+    .forecast-warning p,
+    .insight-item p,
+    .playbook-step p,
+    .reconcile-issue p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .forecast-actions,
+    .insight-actions,
+    .playbook-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .forecast-action,
+    .insight-action,
+    .playbook-action,
+    .aa-copy {
+      min-height: 32px;
+      padding: 6px 9px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      color: var(--ink);
+      background: var(--surface);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .forecast-action:hover,
+    .insight-action:hover,
+    .playbook-action:hover,
+    .aa-copy:hover { border-color: #9ec7bd; background: var(--accent-soft); }
+    .insight-table,
+    .analytics-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .insight-table th,
+    .insight-table td,
+    .analytics-table th,
+    .analytics-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    .insight-table th,
+    .analytics-table th { color: var(--muted); font-weight: 600; }
+    .playbook-step { position: relative; padding-left: 38px; }
+    .playbook-index {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: #fff;
+      background: var(--accent);
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .playbook-step.danger { border-left-color: var(--danger); }
+    .playbook-step.danger .playbook-index { background: var(--danger); }
+    .insight-note { color: var(--muted); font-size: 11px; }
+    .receipt-preview {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-soft);
+    }
+    .receipt-preview-canvas {
+      min-height: 180px;
+      max-height: 360px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border-radius: 5px;
+      background: #e9efed;
+    }
+    .receipt-preview-canvas img {
+      max-width: 100%;
+      max-height: 340px;
+      transform-origin: center;
+      transition: transform .18s ease;
+    }
+    .receipt-preview-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .receipt-preview-controls input { flex: 1 1 140px; accent-color: var(--accent); }
+    .receipt-editor-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 7px; }
+    .receipt-editor {
+      width: 100%;
+      min-width: 690px;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .receipt-editor th,
+    .receipt-editor td {
+      padding: 5px 6px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+    }
+    .receipt-editor th { color: var(--muted); font-weight: 600; background: var(--surface-soft); }
+    .receipt-editor input {
+      width: 100%;
+      min-width: 72px;
+      padding: 4px 6px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      color: var(--ink);
+      background: var(--surface);
+      font: inherit;
+    }
+    .receipt-editor tr.low-confidence input { border-color: var(--warning); background: var(--warning-soft); }
+    .receipt-editor input.low-field-confidence {
+      border-color: var(--danger);
+      background: #fff1ef;
+    }
+    .receipt-editor-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .health-overview {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr);
+      gap: 14px;
+      align-items: center;
+    }
+    .health-score {
+      display: grid;
+      place-items: center;
+      min-height: 126px;
+      border-radius: 50%;
+      background: conic-gradient(
+        var(--accent) calc(var(--score) * 1%),
+        var(--line) 0
+      );
+      position: relative;
+    }
+    .health-score::after {
+      content: "";
+      position: absolute;
+      inset: 12px;
+      border-radius: 50%;
+      background: var(--surface);
+    }
+    .health-score-copy {
+      position: relative;
+      z-index: 1;
+      text-align: center;
+    }
+    .health-score-copy strong { display: block; font-size: 28px; line-height: 1; }
+    .health-score-copy span { color: var(--muted); font-size: 11px; }
+    .health-dimensions { display: grid; gap: 7px; }
+    .health-dimension {
+      display: grid;
+      grid-template-columns: 82px minmax(0, 1fr) 34px;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+    }
+    .health-bar {
+      height: 7px;
+      overflow: hidden;
+      border-radius: 4px;
+      background: var(--line);
+    }
+    .health-bar i { display: block; height: 100%; background: var(--accent); }
+    .health-dimension.poor .health-bar i { background: var(--danger); }
+    .health-dimension.watch .health-bar i { background: var(--warning); }
+    .health-advice-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .health-advice-meta span {
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .health-advice-steps {
+      margin: 5px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .daily-material-list,
+    .daily-channel-list {
+      display: grid;
+      gap: 7px;
+    }
+    .daily-material,
+    .daily-channel {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--surface-soft);
+    }
+    .daily-material-tag {
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 10px;
+      font-weight: 750;
+    }
+    .daily-material strong,
+    .daily-channel strong { display: block; font-size: 11.5px; }
+    .daily-material span,
+    .daily-channel span { color: var(--muted); font-size: 10.5px; }
+    .daily-channel { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+    .comparison-table-wrap { overflow-x: auto; }
+    .comparison-conclusion {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .comparison-conclusion span {
+      padding: 4px 7px;
+      border-radius: 4px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+    .detail-dialog {
+      width: min(720px, calc(100% - 28px));
+      max-height: min(760px, calc(100dvh - 40px));
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ink);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .detail-dialog::backdrop { background: rgba(19, 38, 34, .35); }
+    .detail-dialog-body { padding: 18px; }
+    .detail-dialog-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .detail-dialog-head h3 { margin: 0; font-size: 16px; }
+    .detail-dialog-close {
+      min-height: 30px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      color: var(--ink);
+      background: var(--surface);
+    }
+    .detail-dialog-content {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+      max-height: calc(100dvh - 170px);
+      overflow-y: auto;
+    }
+    .event-center-dialog { width: min(620px, calc(100% - 28px)); }
+    .event-center-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 7px;
+      margin-bottom: 12px;
+    }
+    .event-center-summary-item {
+      padding: 8px 9px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--surface-soft);
+    }
+    .event-center-summary-item span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .event-center-summary-item strong {
+      display: block;
+      margin-top: 2px;
+      font-size: 18px;
+    }
+    .event-center-summary-item.danger strong { color: var(--danger); }
+    .event-center-summary-item.warning strong { color: var(--warning); }
+    .event-center-item {
+      display: grid;
+      gap: 7px;
+      padding: 10px;
+      border-left: 3px solid var(--accent);
+      border-radius: 0 5px 5px 0;
+      background: var(--surface-soft);
+    }
+    .event-center-item.warning { border-left-color: var(--warning); }
+    .event-center-item.danger { border-left-color: var(--danger); }
+    .event-center-item-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .event-center-item strong { font-size: 13px; }
+    .event-center-item p { margin: 0; color: var(--muted); font-size: 12px; }
+    .event-center-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 10.5px;
+    }
+    .event-center-meta span {
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--surface);
+    }
+    .event-level {
+      flex: 0 0 auto;
+      padding: 2px 7px;
+      border-radius: 4px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 10px;
+      font-weight: 750;
+    }
+    .event-center-item.warning .event-level {
+      color: var(--warning);
+      background: var(--warning-soft);
+    }
+    .event-center-item.danger .event-level {
+      color: var(--danger);
+      background: #fff1ef;
+    }
+    .event-center-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .event-center-actions button {
+      min-height: 30px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      color: var(--ink);
+      background: var(--surface);
+      font-size: 11px;
+    }
+    .workflow-detail-step,
+    .transaction-detail-row {
+      padding: 9px 10px;
+      border-left: 3px solid var(--accent);
+      border-radius: 0 5px 5px 0;
+      background: var(--surface-soft);
+    }
+    .workflow-detail-step strong,
+    .transaction-detail-row strong { display: block; font-size: 12px; }
+    .workflow-detail-step p,
+    .transaction-detail-row p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+    .forecast-controls {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px 12px;
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-soft);
+    }
+    .forecast-control {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 72px;
+      align-items: center;
+      gap: 4px 10px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .forecast-control strong {
+      grid-column: 1;
+      color: var(--ink);
+      font-size: 12px;
+    }
+    .forecast-control input[type="range"] {
+      grid-column: 1 / -1;
+      width: 100%;
+      accent-color: var(--accent);
+    }
+    .forecast-control output {
+      grid-column: 2;
+      grid-row: 1;
+      text-align: right;
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+    }
+    .forecast-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .forecast-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .forecast-legend i { width: 18px; height: 2px; background: var(--accent); }
+    .forecast-legend .baseline i {
+      height: 1px;
+      background: repeating-linear-gradient(
+        90deg,
+        var(--muted) 0 5px,
+        transparent 5px 9px
+      );
+    }
 
     @media (max-width: 760px) {
       .app {
@@ -1366,12 +2012,30 @@
       .settings-grid { grid-template-columns: 1fr; }
       .settings-field.wide { grid-column: auto; }
       .gift-option-grid { grid-template-columns: 1fr; }
+      .gift-constraints { grid-template-columns: 1fr; }
+      .gift-option-actions { grid-auto-flow: row; }
       .gift-footer { align-items: flex-start; flex-direction: column; }
       .anomaly-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .anomaly-summary-item:nth-child(odd) { border-left: 0; }
       .anomaly-summary-item:nth-child(n + 3) { border-top: 1px solid var(--line); }
       .anomaly-head strong { flex-basis: 100px; }
       .anomaly-amount { font-size: 11.5px; }
+      .forecast-metrics,
+      .reconcile-metrics { grid-template-columns: 1fr; }
+      .forecast-metric + .forecast-metric,
+      .reconcile-metric + .reconcile-metric {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+      .forecast-head,
+      .insight-head { align-items: stretch; flex-direction: column; }
+      .forecast-confidence,
+      .insight-badge { align-self: flex-start; }
+      .insight-table,
+      .analytics-table { display: block; overflow-x: auto; }
+      .health-overview { grid-template-columns: 1fr; }
+      .health-score { width: 132px; justify-self: center; }
+      .forecast-controls { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -1385,7 +2049,13 @@
           <span>智能银行代理系统</span>
         </div>
       </div>
-      <div class="status"><span class="status-dot"></span><span id="service-status">接口就绪</span></div>
+      <div class="topbar-actions">
+        <button class="event-center-button" id="event-center-button" type="button">
+          财务通知
+          <span class="event-badge" id="event-badge">0</span>
+        </button>
+        <div class="status"><span class="status-dot"></span><span id="service-status">接口就绪</span></div>
+      </div>
     </header>
 
     <div class="workspace">
@@ -1612,6 +2282,37 @@
     </div>
   </dialog>
 
+  <dialog class="confirm-dialog" id="playbook-action-dialog" aria-labelledby="playbook-action-title">
+    <div class="confirm-dialog-body">
+      <h3 id="playbook-action-title">确认执行风险处置</h3>
+      <p id="playbook-action-message"></p>
+      <div class="confirm-dialog-actions">
+        <button class="confirm-dialog-cancel" id="playbook-action-cancel" type="button">取消</button>
+        <button class="confirm-dialog-danger" id="playbook-action-confirm" type="button">确认执行</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="detail-dialog" id="detail-dialog" aria-labelledby="detail-dialog-title">
+    <div class="detail-dialog-body">
+      <div class="detail-dialog-head">
+        <h3 id="detail-dialog-title">详细信息</h3>
+        <button class="detail-dialog-close" id="detail-dialog-close" type="button">关闭</button>
+      </div>
+      <div class="detail-dialog-content" id="detail-dialog-content"></div>
+    </div>
+  </dialog>
+
+  <dialog class="detail-dialog event-center-dialog" id="event-center-dialog" aria-labelledby="event-center-title">
+    <div class="detail-dialog-body">
+      <div class="detail-dialog-head">
+        <h3 id="event-center-title">主动财务事件中心</h3>
+        <button class="detail-dialog-close" id="event-center-close" type="button">关闭</button>
+      </div>
+      <div class="detail-dialog-content" id="event-center-list"></div>
+    </div>
+  </dialog>
+
   <script>
     const messages = document.getElementById("messages");
     const form = document.getElementById("composer");
@@ -1640,6 +2341,11 @@
     const goalDeleteMessage = document.getElementById("goal-delete-message");
     const goalDeleteCancel = document.getElementById("goal-delete-cancel");
     const goalDeleteConfirm = document.getElementById("goal-delete-confirm");
+    const playbookActionDialog = document.getElementById("playbook-action-dialog");
+    const playbookActionTitle = document.getElementById("playbook-action-title");
+    const playbookActionMessage = document.getElementById("playbook-action-message");
+    const playbookActionCancel = document.getElementById("playbook-action-cancel");
+    const playbookActionConfirm = document.getElementById("playbook-action-confirm");
     const carePeopleList = document.getElementById("care-people-list");
     const addCarePersonButton = document.getElementById("add-care-person");
     const newCardForm = document.getElementById("new-card-form");
@@ -1649,14 +2355,28 @@
     const customerSubtitle = document.getElementById("customer-subtitle");
     const capabilityGlobalActions = document.getElementById("capability-global-actions");
     const capabilityCategories = document.getElementById("capability-categories");
+    const eventCenterButton = document.getElementById("event-center-button");
+    const eventBadge = document.getElementById("event-badge");
+    const eventCenterDialog = document.getElementById("event-center-dialog");
+    const eventCenterClose = document.getElementById("event-center-close");
+    const eventCenterList = document.getElementById("event-center-list");
+    const detailDialog = document.getElementById("detail-dialog");
+    const detailDialogTitle = document.getElementById("detail-dialog-title");
+    const detailDialogContent = document.getElementById("detail-dialog-content");
+    const detailDialogClose = document.getElementById("detail-dialog-close");
     let carePeople = [];
     let sessionId = localStorage.getItem("finagent_session_id") || "";
     let accessToken = sessionStorage.getItem("finagent_access_token") || "";
     let pendingGoalDelete = null;
+    let pendingPlaybookAction = null;
     let busy = false;
     let awaitingSecret = false;
     let capabilityCatalog = null;
     let activeCapabilityId = "";
+    let cachedEvents = [];
+    let cachedEventCounts = {};
+    let pendingUploadPreview = "";
+    let pendingUploadRotation = 0;
 
     function localTodayISO() {
       const now = new Date();
@@ -1689,6 +2409,237 @@
       request.headers = authHeaders(options.headers || {});
       response = await fetch(url, request);
       return response;
+    }
+
+    function openDetailDialog(title, children) {
+      detailDialogTitle.textContent = title;
+      detailDialogContent.replaceChildren(...children);
+      if (!detailDialog.open) detailDialog.showModal();
+    }
+
+    function detailRow(title, detail) {
+      const row = document.createElement("div");
+      row.className = "transaction-detail-row";
+      const strong = document.createElement("strong");
+      strong.textContent = title;
+      const paragraph = document.createElement("p");
+      paragraph.textContent = detail;
+      row.append(strong, paragraph);
+      return row;
+    }
+
+    function showWorkflowDetails(workflow) {
+      if (!workflow) return;
+      const nodes = [];
+      nodes.push(detailRow(
+        workflow.workflow_id || "工作流",
+        `状态：${workflow.status || "-"} · 下一步：${workflow.next_action || "-"}`
+      ));
+      (workflow.agents || []).forEach((agent) => {
+        nodes.push(detailRow(
+          "参与 Agent",
+          ({
+            understanding: "理解 Agent：意图与槽位",
+            risk: "风控 Agent：限额、确认与身份校验",
+            advisory: "顾问 Agent：账单、现金流和理财分析",
+            execution: "执行 Agent：确定性工具调用"
+          })[agent] || agent
+        ));
+      });
+      (workflow.steps || []).forEach((step, index) => {
+        nodes.push(detailRow(
+          `${index + 1}. ${step.tool || "步骤"}`,
+          `${step.ok ? "成功" : "失败"} · ${step.summary || "无摘要"}`
+        ));
+      });
+      if (!nodes.length) nodes.push(detailRow("暂无步骤", "当前仍在等待用户补充或确认。"));
+      openDetailDialog("Agent 操作流程", nodes);
+    }
+
+    async function showTransactionDetails(txnId) {
+      await ensureSession();
+      const response = await fetchWithAuth(
+        `/v1/transactions/${encodeURIComponent(txnId)}?session_id=${encodeURIComponent(sessionId)}`
+      );
+      const payload = await response.json();
+      if (!response.ok) {
+        openDetailDialog("交易详情", [detailRow("读取失败", payload.message || "未知错误")]);
+        return;
+      }
+      const txn = payload.transaction || {};
+      const account = payload.account || {};
+      const card = payload.card || {};
+      const nodes = [
+        detailRow(
+          "生命周期",
+          ({
+            submitted: "已提交",
+            processing: "处理中",
+            completed: "成功",
+            failed: "失败",
+            returned: "已退回",
+            reversed: "已冲正"
+          })[txn.lifecycle_status] || txn.lifecycle_status || txn.status
+        ),
+        detailRow("交易金额", `¥${money(txn.amount)}`),
+        detailRow("商户/对方", `${txn.merchant || "-"} · ${txn.counterparty || "-"}`),
+        detailRow("银行处理流水号", txn.bank_reference || "-"),
+        detailRow("提交时间", txn.submitted_at || txn.timestamp || "-"),
+        detailRow("完成时间", txn.completed_at || "-"),
+        detailRow("预计到账", txn.expected_arrival_at || "-"),
+        detailRow("付款账户", account.name ? `${account.name}（尾号${account.tail}）` : "-"),
+        detailRow("付款卡", card.tail ? `${card.brand} ${card.kind}（尾号${card.tail}）` : "-")
+      ];
+      if (Array.isArray(txn.risk_notes) && txn.risk_notes.length) {
+        txn.risk_notes.forEach((note) => nodes.push(detailRow("风控依据", note)));
+      }
+      const sandbox = txn.metadata?.sandbox;
+      if (sandbox) {
+        nodes.push(detailRow(
+          "沙箱通道",
+          `${sandbox.provider || "-"} · ${sandbox.operation || "-"}`
+        ));
+        nodes.push(detailRow(
+          "通道参考号",
+          sandbox.provider_reference || "-"
+        ));
+        nodes.push(detailRow(
+          "回调轨迹",
+          (sandbox.history || [])
+            .map((item) => `${item.status}${item.at ? ` ${item.at}` : ""}`)
+            .join(" → ") || "-"
+        ));
+      }
+      if (txn.failure_reason) nodes.push(detailRow("失败原因", txn.failure_reason));
+      openDetailDialog("交易凭证", nodes);
+    }
+
+    async function loadEventCenter() {
+      await ensureSession();
+      try {
+        const response = await fetchWithAuth(
+          `/v1/events?session_id=${encodeURIComponent(sessionId)}`
+        );
+        if (!response.ok) return;
+        const payload = await response.json();
+        cachedEvents = Array.isArray(payload.events) ? payload.events : [];
+        cachedEventCounts = payload.counts || {};
+        eventBadge.textContent = String(cachedEvents.length);
+        eventBadge.classList.toggle("visible", cachedEvents.length > 0);
+      } catch {
+        cachedEvents = [];
+        cachedEventCounts = {};
+      }
+    }
+
+    async function updateEventAction(eventId, action) {
+      const response = await fetchWithAuth("/v1/events/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, event_id: eventId, action })
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || "事件更新失败");
+      cachedEventCounts = payload.counts || cachedEventCounts;
+      await loadEventCenter();
+      renderEventCenter();
+    }
+
+    function renderEventCenter() {
+      eventCenterList.replaceChildren();
+      if (!cachedEvents.length) {
+        const empty = detailRow("暂无事件", "当前没有需要处理的主动财务提醒。");
+        eventCenterList.appendChild(empty);
+        return;
+      }
+      const summary = document.createElement("div");
+      summary.className = "event-center-summary";
+      [
+        ["全部", cachedEventCounts.total ?? cachedEvents.length, ""],
+        ["高优先", cachedEventCounts.danger || 0, "danger"],
+        ["需关注", cachedEventCounts.warning || 0, "warning"],
+        ["已延后", cachedEventCounts.snoozed || 0, ""],
+      ].forEach(([label, value, tone]) => {
+        const item = document.createElement("div");
+        item.className = `event-center-summary-item ${tone}`.trim();
+        const labelNode = document.createElement("span");
+        labelNode.textContent = label;
+        const valueNode = document.createElement("strong");
+        valueNode.textContent = String(value);
+        item.append(labelNode, valueNode);
+        summary.appendChild(item);
+      });
+      eventCenterList.appendChild(summary);
+      const categoryLabels = {
+        cashflow: "现金流",
+        subscription: "订阅续费",
+        credit_card: "信用卡",
+        task: "计划任务",
+        risk: "风险交易",
+      };
+      const levelLabels = {
+        danger: "高优先",
+        warning: "需关注",
+        info: "提示",
+      };
+      cachedEvents.forEach((event) => {
+        const item = document.createElement("div");
+        item.className = `event-center-item ${event.level || ""}`.trim();
+        const head = document.createElement("div");
+        head.className = "event-center-item-head";
+        const title = document.createElement("strong");
+        title.textContent = event.title || "财务提醒";
+        const level = document.createElement("span");
+        level.className = "event-level";
+        level.textContent = levelLabels[event.level] || "提示";
+        head.append(title, level);
+        const meta = document.createElement("div");
+        meta.className = "event-center-meta";
+        [
+          categoryLabels[event.category] || event.category || "财务",
+          event.date || "日期未知",
+          event.status === "handled" ? "已打开业务" : "待处理",
+        ].forEach((value) => {
+          const chip = document.createElement("span");
+          chip.textContent = value;
+          meta.appendChild(chip);
+        });
+        const detail = document.createElement("p");
+        detail.textContent = `${event.date || ""} · ${event.detail || ""}`;
+        const actions = document.createElement("div");
+        actions.className = "event-center-actions";
+        const handle = document.createElement("button");
+        handle.type = "button";
+        handle.textContent = "处理";
+        handle.addEventListener("click", async () => {
+          try {
+            await updateEventAction(event.event_id, "handle");
+          } catch (error) {
+            serviceStatus.textContent = error.message;
+          }
+          eventCenterDialog.close();
+          sendMessage(event.action_prompt || "主动财务管家");
+        });
+        const snooze = document.createElement("button");
+        snooze.type = "button";
+        snooze.textContent = "稍后提醒";
+        snooze.addEventListener("click", () => {
+          updateEventAction(event.event_id, "snooze").catch((error) => {
+            serviceStatus.textContent = error.message;
+          });
+        });
+        const ignore = document.createElement("button");
+        ignore.type = "button";
+        ignore.textContent = "忽略";
+        ignore.addEventListener("click", () => {
+          updateEventAction(event.event_id, "ignore").catch((error) => {
+            serviceStatus.textContent = error.message;
+          });
+        });
+        actions.append(handle, snooze, ignore);
+        item.append(head, meta, detail, actions);
+        eventCenterList.appendChild(item);
+      });
     }
 
     async function createSession() {
@@ -2173,7 +3124,13 @@
 
         const description = document.createElement("div");
         description.className = "wealth-description";
-        description.textContent = product.description || "";
+        const analytics = product.analytics || {};
+        description.textContent = [
+          product.description || "",
+          analytics.estimated_annual_volatility_pct !== undefined
+            ? `情景估算：年化波动 ${analytics.estimated_annual_volatility_pct}% · 最大回撤 ${analytics.estimated_max_drawdown_pct}%`
+            : ""
+        ].filter(Boolean).join("\n");
 
         const foot = document.createElement("div");
         foot.className = "wealth-card-foot";
@@ -2234,6 +3191,43 @@
         ? choice.known_preferences
         : [];
       const knownAvoid = Array.isArray(choice.known_avoid) ? choice.known_avoid : [];
+      const giftMarketFallbacks = {
+        "真丝遮光睡眠眼罩": [60, 180],
+        "白噪音助眠音箱": [99, 299],
+        "慢回弹记忆棉颈枕": [89, 259],
+        "睡眠友好床头阅读灯": [80, 260],
+        "棉麻亲肤家居服套装": [120, 399],
+        "可调节暖光夜灯": [39, 129],
+        "初学者毛线编织材料包": [50, 159],
+        "可水洗羊毛线套装": [80, 260],
+        "木质编织工具收纳套装": [60, 199],
+        "编织花样图解手账": [29, 99],
+        "轻量跑步腰包": [49, 169],
+        "专业跑步压缩袜": [59, 199],
+        "跑步奖牌展示架": [69, 239],
+        "运动补水套装": [79, 229],
+        "第五人格角色立牌": [35, 129],
+        "第五人格徽章盲盒": [29, 99],
+        "第五人格主题鼠标垫": [39, 139],
+        "第五人格收藏卡册": [49, 159],
+      };
+      function marketPriceRange(option) {
+        const optionName = String(option.name || "").trim();
+        const knownRange = giftMarketFallbacks[optionName];
+        const min = Number(option.price_estimate_min || 0);
+        const max = Number(option.price_estimate_max || 0);
+        const hasApiRange = min > 0 && max >= min;
+        const isGenericApiRange = hasApiRange && min === 59 && max === 259;
+        if (hasApiRange && !isGenericApiRange) return [min, max];
+        if (knownRange) return knownRange;
+        if (hasApiRange) return [min, max];
+        return [59, 259];
+      }
+      function cleanGiftReason(reason) {
+        return String(reason || "")
+          .replace(/[；;，,\s]*价格与库存请在淘宝页面核实[。.]?$/u, "")
+          .trim();
+      }
 
       const root = document.createElement("div");
       root.className = "gift-recommendation";
@@ -2280,33 +3274,63 @@
         const rank = document.createElement("span");
         rank.className = "gift-option-rank";
         rank.textContent = `方案 ${option.index}`;
+        const priceBlock = document.createElement("div");
+        priceBlock.className = "gift-price-block";
+        const priceCaption = document.createElement("span");
+        priceCaption.className = "gift-price-caption";
+        priceCaption.textContent = "方案价";
         const price = document.createElement("strong");
         price.className = "gift-option-price";
         const externalOnly = Boolean(
           option.external_only
           || (option.items || []).some((item) => item.price_pending)
         );
-        price.textContent = externalOnly ? "价格待核实" : `¥${money(option.total)}`;
-        top.append(rank, price);
+        const [marketMin, marketMax] = marketPriceRange(option);
+        if (externalOnly) {
+          priceCaption.textContent = "市场参考价";
+          price.textContent = `¥${marketMin.toLocaleString("zh-CN")}-¥${marketMax.toLocaleString("zh-CN")}`;
+        } else {
+          price.textContent = `¥${money(option.total)}`;
+        }
+        priceBlock.append(priceCaption, price);
+        top.append(rank, priceBlock);
 
         const name = document.createElement("h4");
         name.className = "gift-option-name";
         name.textContent = option.name;
         const items = document.createElement("div");
         items.className = "gift-option-items";
-        (option.items || []).forEach((item) => {
+        const itemRows = (option.items || []).filter((item) => {
+          const label = String(item.label || item.item || "").trim();
+          return label && label !== String(option.name || "").trim();
+        });
+        if (!itemRows.length && (option.items || []).length) {
+          itemRows.push({
+            label: "购买渠道",
+            merchant: option.items[0].merchant || "淘宝搜索",
+          });
+        }
+        itemRows.forEach((item) => {
           const row = document.createElement("div");
           row.className = "gift-option-item";
           const label = document.createElement("strong");
           label.textContent = item.label || item.item || "礼物";
           const merchant = document.createElement("span");
-          merchant.textContent = item.merchant || "";
+          merchant.textContent = item.merchant || "购买渠道";
           row.append(label, merchant);
           items.appendChild(row);
         });
         const reason = document.createElement("p");
         reason.className = "gift-option-reason";
-        reason.textContent = option.reason || "";
+        const reasonLabel = document.createElement("span");
+        reasonLabel.className = "gift-option-reason-label";
+        reasonLabel.textContent = "推荐理由：";
+        reason.append(reasonLabel, document.createTextNode(cleanGiftReason(option.reason)));
+        const source = document.createElement("p");
+        source.className = "gift-option-source";
+        if (externalOnly) {
+          source.textContent = "市场参考区间，非实时淘宝售价；最终价格与库存以淘宝页面为准。";
+        }
         const select = externalOnly ? null : document.createElement("button");
         if (select) {
           select.type = "button";
@@ -2331,20 +3355,23 @@
         taobao.href = `https://s.taobao.com/search?q=${encodeURIComponent(taobaoQuery)}`;
         taobao.target = "_blank";
         taobao.rel = "noopener noreferrer";
-        taobao.textContent = "去淘宝看看";
+        taobao.textContent = externalOnly ? "淘宝查看价格" : "淘宝参考";
+        taobao.classList.toggle("is-primary", externalOnly);
         taobao.title = "在淘宝搜索同类礼物，价格和库存以淘宝页面为准";
         const actions = document.createElement("div");
         actions.className = "gift-option-actions";
         if (select) actions.appendChild(select);
         actions.appendChild(taobao);
-        card.append(top, name, items, reason, actions);
+        card.append(top, name, items, reason);
+        if (externalOnly) card.appendChild(source);
+        card.appendChild(actions);
         grid.appendChild(card);
       });
 
       const footer = document.createElement("div");
       footer.className = "gift-footer";
       const note = document.createElement("span");
-      note.textContent = "选择前不会锁定资金，也不会创建礼物预约；淘宝价格与库存以页面为准。";
+      note.textContent = "挑选礼物不会锁定资金；只有明确选择并再次确认后，才会创建预约。";
       const refresh = document.createElement("button");
       refresh.type = "button";
       refresh.className = "gift-refresh";
@@ -2355,6 +3382,1119 @@
       footer.append(note, refresh);
       root.append(summary, grid, footer);
       container.appendChild(root);
+    }
+
+    function money(value, digits = 2) {
+      return Number(value || 0).toLocaleString("zh-CN", {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits
+      });
+    }
+
+    function renderWorkflowStrip(meta, workflow) {
+      if (!workflow) return;
+      const strip = document.createElement("div");
+      strip.className = "workflow-strip";
+      const id = document.createElement("strong");
+      id.textContent = workflow.workflow_id || "WORKFLOW";
+      const status = document.createElement("span");
+      status.textContent = ({
+        completed: "已完成",
+        blocked: "已拦截",
+        waiting_confirmation: "等待确认",
+        waiting_verification: "等待验证",
+        collecting_information: "补充信息",
+        in_progress: "处理中"
+      })[workflow.status] || workflow.status || "处理中";
+      strip.append(id, status);
+      (workflow.agents || []).forEach((agent) => {
+        const badge = document.createElement("span");
+        badge.className = "workflow-agent";
+        badge.textContent = ({
+          understanding: "理解 Agent",
+          risk: "风控 Agent",
+          advisory: "顾问 Agent",
+          execution: "执行 Agent"
+        })[agent] || agent;
+        strip.appendChild(badge);
+      });
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "workflow-open";
+      open.textContent = "查看流程";
+      open.addEventListener("click", () => showWorkflowDetails(workflow));
+      strip.appendChild(open);
+      meta.appendChild(strip);
+    }
+
+    function renderReceiptQuality(container, text, reply) {
+      const quality = reply?.data?.quality;
+      if (!quality) return false;
+      const validation = reply?.data?.validation || {};
+      const root = document.createElement("div");
+      root.className = "forecast-panel";
+      const head = document.createElement("div");
+      head.className = "insight-head";
+      const copy = document.createElement("div");
+      const title = document.createElement("h3");
+      title.className = "insight-title";
+      title.textContent = "账单识别质量";
+      const subtitle = document.createElement("p");
+      subtitle.className = "insight-subtitle";
+      subtitle.textContent = "红色字段表示单项置信度低于 80%，请对照原图修正后再导入";
+      copy.append(title, subtitle);
+      const badge = document.createElement("span");
+      badge.className = "insight-badge";
+      badge.textContent = quality.grade || "需核对";
+      head.append(copy, badge);
+      root.appendChild(head);
+      const metrics = document.createElement("div");
+      metrics.className = "forecast-metrics";
+      [
+        ["质量分", `${Math.round(Number(quality.score || 0))}/100`],
+        ["平均置信度", `${Math.round(Number(quality.average_confidence || 0) * 100)}%`],
+        ["识别笔数", String(quality.record_count || reply?.data?.count || 0)]
+      ].forEach(([label, value]) => {
+        const item = document.createElement("div");
+        item.className = "forecast-metric";
+        const labelNode = document.createElement("span");
+        labelNode.textContent = label;
+        const valueNode = document.createElement("strong");
+        valueNode.textContent = value;
+        item.append(labelNode, valueNode);
+        metrics.appendChild(item);
+      });
+      root.appendChild(metrics);
+      if (pendingUploadPreview) {
+        const preview = document.createElement("div");
+        preview.className = "receipt-preview";
+        const canvas = document.createElement("div");
+        canvas.className = "receipt-preview-canvas";
+        const image = document.createElement("img");
+        image.src = pendingUploadPreview;
+        image.alt = "待核对账单预览";
+        image.style.transform = `rotate(${pendingUploadRotation}deg) scale(1)`;
+        canvas.appendChild(image);
+        const previewControls = document.createElement("div");
+        previewControls.className = "receipt-preview-controls";
+        const zoom = document.createElement("input");
+        zoom.type = "range";
+        zoom.min = "0.6";
+        zoom.max = "2.5";
+        zoom.step = "0.1";
+        zoom.value = "1";
+        zoom.setAttribute("aria-label", "账单预览缩放");
+        const applyTransform = () => {
+          image.style.transform = `rotate(${pendingUploadRotation}deg) scale(${zoom.value})`;
+        };
+        zoom.addEventListener("input", applyTransform);
+        const rotate = document.createElement("button");
+        rotate.type = "button";
+        rotate.className = "message-action";
+        rotate.textContent = "旋转 90°";
+        rotate.addEventListener("click", () => {
+          pendingUploadRotation = (pendingUploadRotation + 90) % 360;
+          applyTransform();
+        });
+        previewControls.append(zoom, rotate);
+        preview.append(canvas, previewControls);
+        root.appendChild(preview);
+      }
+      const records = Array.isArray(reply?.data?.records) ? reply.data.records : [];
+      if (records.length) {
+        const wrap = document.createElement("div");
+        wrap.className = "receipt-editor-wrap";
+        const table = document.createElement("table");
+        table.className = "receipt-editor";
+        const thead = document.createElement("thead");
+        const headRow = document.createElement("tr");
+        ["日期", "商户", "金额", "类别"].forEach((label) => {
+          const th = document.createElement("th");
+          th.textContent = label;
+          headRow.appendChild(th);
+        });
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+        const tbody = document.createElement("tbody");
+        const workingRecords = records.map((record) => ({ ...record }));
+        workingRecords.forEach((record, index) => {
+          const row = document.createElement("tr");
+          if (Number(record.confidence || 1) < 0.8) row.classList.add("low-confidence");
+          [
+            ["date", "text"],
+            ["merchant", "text"],
+            ["amount", "number"],
+            ["category", "text"],
+          ].forEach(([field, type]) => {
+            const td = document.createElement("td");
+            const fieldConfidence = Number(
+              (record.field_confidence || {})[field] ?? record.confidence ?? 1
+            );
+            const fieldInput = document.createElement("input");
+            fieldInput.type = type;
+            fieldInput.step = type === "number" ? "0.01" : "";
+            fieldInput.value = String(record[field] ?? "");
+            fieldInput.setAttribute("aria-label", `${index + 1} 行 ${field}`);
+            fieldInput.title = `字段置信度 ${Math.round(fieldConfidence * 100)}%`;
+            if (fieldConfidence < 0.8) {
+              fieldInput.classList.add("low-field-confidence");
+            }
+            fieldInput.addEventListener("input", () => {
+              workingRecords[index][field] = type === "number"
+                ? Number(fieldInput.value)
+                : fieldInput.value;
+            });
+            td.appendChild(fieldInput);
+            row.appendChild(td);
+          });
+          tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        root.appendChild(wrap);
+        const editorActions = document.createElement("div");
+        editorActions.className = "receipt-editor-actions";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "message-action";
+        save.textContent = "重新校验";
+        const importButton = document.createElement("button");
+        importButton.type = "button";
+        importButton.className = "message-action";
+        importButton.textContent = "确认导入";
+        importButton.addEventListener("click", () => {
+          if (!busy) sendMessage("确认");
+        });
+        save.addEventListener("click", async () => {
+          save.disabled = true;
+          save.textContent = "校验中...";
+          try {
+            const response = await fetchWithAuth("/v1/receipts/pending", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ session_id: sessionId, records: workingRecords })
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.message || "校验失败");
+            reply.data.records = payload.records;
+            reply.data.quality = payload.quality;
+            reply.data.validation = payload.validation;
+            renderReceiptQuality(container, text, reply);
+          } catch (error) {
+            serviceStatus.textContent = error.message || "校验失败";
+            save.disabled = false;
+            save.textContent = "重新校验";
+          }
+        });
+        editorActions.append(save, importButton);
+        root.appendChild(editorActions);
+      }
+      const issues = Array.isArray(validation.issues) ? validation.issues : [];
+      if (issues.length) {
+        const list = document.createElement("div");
+        list.className = "forecast-warnings";
+        issues.forEach((issue) => {
+          const item = document.createElement("div");
+          item.className = "forecast-warning warning";
+          const textNode = document.createElement("p");
+          textNode.textContent = issue;
+          item.appendChild(textNode);
+          list.appendChild(item);
+        });
+        root.appendChild(list);
+      }
+      const detail = document.createElement("div");
+      detail.className = "insight-note formatted-response";
+      detail.textContent = text;
+      root.appendChild(detail);
+      container.replaceChildren(root);
+      return true;
+    }
+
+    function renderForecastPanel(container, reply) {
+      const forecast = reply?.data?.forecast;
+      if (!forecast || !Array.isArray(forecast.series)) return false;
+      const root = document.createElement("div");
+      root.className = "forecast-panel";
+
+      const head = document.createElement("div");
+      head.className = "forecast-head";
+      const copy = document.createElement("div");
+      const title = document.createElement("h3");
+      title.className = "forecast-title";
+      title.textContent = `未来 ${forecast.horizon_days} 天现金流`;
+      const subtitle = document.createElement("p");
+      subtitle.className = "forecast-subtitle";
+      subtitle.textContent = `${forecast.as_of} 起算 · ${forecast.data_scope}`;
+      copy.append(title, subtitle);
+      const confidence = document.createElement("span");
+      confidence.className = "forecast-confidence";
+      confidence.textContent = `置信度 ${Math.round(Number(forecast.confidence || 0) * 100)}%`;
+      head.append(copy, confidence);
+      root.appendChild(head);
+
+      const metrics = document.createElement("div");
+      metrics.className = "forecast-metrics";
+      [
+        ["当前可动用", `¥${money(forecast.start_balance)}`],
+        ["预计最低", `¥${money(forecast.min_balance)}`],
+        ["预测期末", `¥${money(forecast.end_balance)}`]
+      ].forEach(([label, value]) => {
+        const item = document.createElement("div");
+        item.className = "forecast-metric";
+        const labelNode = document.createElement("span");
+        labelNode.textContent = label;
+        const valueNode = document.createElement("strong");
+        valueNode.textContent = value;
+        item.append(labelNode, valueNode);
+        metrics.appendChild(item);
+      });
+      root.appendChild(metrics);
+
+      const controls = document.createElement("div");
+      controls.className = "forecast-controls";
+      const controlValues = {};
+      [
+        ["purchase", "一次性消费", 0, 50000, 1000, 0, "元"],
+        ["incomeDrop", "收入下降", 0, 60, 5, 0, "%"],
+        ["extraMonthly", "每月新增支出", 0, 10000, 500, 0, "元"],
+        ["investment", "计划投资", 0, 100000, 1000, 0, "元"],
+        ["investmentReturn", "投资预期年化", 0, 20, 1, 3, "%"],
+      ].forEach(([key, label, min, max, step, value, unit]) => {
+        const control = document.createElement("label");
+        control.className = "forecast-control";
+        const name = document.createElement("strong");
+        name.textContent = label;
+        const output = document.createElement("output");
+        const range = document.createElement("input");
+        range.type = "range";
+        range.min = String(min);
+        range.max = String(max);
+        range.step = String(step);
+        range.value = String(value);
+        controlValues[key] = Number(value);
+        const update = () => {
+          controlValues[key] = Number(range.value);
+          output.textContent = `${Number(range.value).toLocaleString("zh-CN")}${unit}`;
+        };
+        range.addEventListener("input", update);
+        update();
+        control.append(name, output, range);
+        controls.appendChild(control);
+      });
+      root.appendChild(controls);
+
+      const chart = document.createElement("div");
+      chart.className = "forecast-chart";
+      chart.setAttribute("role", "img");
+      chart.setAttribute(
+        "aria-label",
+        `未来${forecast.horizon_days}天余额折线图，最低余额${money(forecast.min_balance)}元`
+      );
+      const width = 760;
+      const height = 225;
+      const margin = { top: 18, right: 18, bottom: 32, left: 68 };
+      const plotWidth = width - margin.left - margin.right;
+      const plotHeight = height - margin.top - margin.bottom;
+      const values = forecast.series.map((item) => Number(item.balance));
+      const baselineValues = Array.isArray(forecast.baseline_series)
+        ? forecast.baseline_series.map((item) => Number(item.balance))
+        : [];
+      const allValues = values.concat(baselineValues);
+      const rawMin = Math.min(...allValues, 0);
+      const rawMax = Math.max(...allValues, 0);
+      const padding = Math.max((rawMax - rawMin) * 0.08, 1);
+      const yMin = rawMin - padding;
+      const yMax = rawMax + padding;
+      const x = (index) => margin.left + (index / Math.max(values.length - 1, 1)) * plotWidth;
+      const y = (value) => margin.top + ((yMax - value) / Math.max(yMax - yMin, 1)) * plotHeight;
+      const linePath = values.map((value, index) => `${index ? "L" : "M"}${x(index).toFixed(2)},${y(value).toFixed(2)}`).join(" ");
+      const baselinePath = baselineValues.length
+        ? baselineValues.map((value, index) => `${index ? "L" : "M"}${x(index).toFixed(2)},${y(value).toFixed(2)}`).join(" ")
+        : "";
+      const areaPath = `${linePath} L${x(values.length - 1).toFixed(2)},${(margin.top + plotHeight).toFixed(2)} L${x(0).toFixed(2)},${(margin.top + plotHeight).toFixed(2)} Z`;
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      svg.setAttribute("aria-hidden", "true");
+      [0, 0.25, 0.5, 0.75, 1].forEach((ratio) => {
+        const value = yMax - (yMax - yMin) * ratio;
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", margin.left);
+        line.setAttribute("x2", width - margin.right);
+        line.setAttribute("y1", y(value));
+        line.setAttribute("y2", y(value));
+        line.setAttribute("stroke", "var(--line)");
+        line.setAttribute("stroke-width", "1");
+        svg.appendChild(line);
+        const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        label.setAttribute("x", margin.left - 8);
+        label.setAttribute("y", y(value) + 4);
+        label.setAttribute("text-anchor", "end");
+        label.setAttribute("class", "axis-label");
+        label.textContent = `${Math.round(value / 1000)}k`;
+        svg.appendChild(label);
+      });
+      if (yMin < 0 && yMax > 0) {
+        const zero = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        zero.setAttribute("x1", margin.left);
+        zero.setAttribute("x2", width - margin.right);
+        zero.setAttribute("y1", y(0));
+        zero.setAttribute("y2", y(0));
+        zero.setAttribute("class", "zero-line");
+        svg.appendChild(zero);
+      }
+      const area = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      area.setAttribute("d", areaPath);
+      area.setAttribute("class", "area-balance");
+      svg.appendChild(area);
+      if (baselinePath) {
+        const baselineNode = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        baselineNode.setAttribute("d", baselinePath);
+        baselineNode.setAttribute("class", "line-baseline");
+        svg.appendChild(baselineNode);
+      }
+      const linePathNode = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      linePathNode.setAttribute("d", linePath);
+      linePathNode.setAttribute("class", "line-balance");
+      svg.appendChild(linePathNode);
+      const minIndex = values.indexOf(Math.min(...values));
+      const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      marker.setAttribute("cx", x(minIndex));
+      marker.setAttribute("cy", y(values[minIndex]));
+      marker.setAttribute("r", "5");
+      marker.setAttribute("class", "min-marker");
+      svg.appendChild(marker);
+      [0, Math.floor((values.length - 1) / 3), Math.floor((values.length - 1) * 2 / 3), values.length - 1]
+        .filter((value, index, list) => list.indexOf(value) === index)
+        .forEach((index) => {
+          const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          label.setAttribute("x", x(index));
+          label.setAttribute("y", height - 10);
+          label.setAttribute("text-anchor", index === 0 ? "start" : index === values.length - 1 ? "end" : "middle");
+          label.setAttribute("class", "axis-label");
+          label.textContent = forecast.series[index].date.slice(5);
+          svg.appendChild(label);
+        });
+      chart.appendChild(svg);
+      root.appendChild(chart);
+      if (baselinePath) {
+        const legend = document.createElement("div");
+        legend.className = "forecast-legend";
+        const current = document.createElement("span");
+        const currentLine = document.createElement("i");
+        current.append(currentLine, "当前情景");
+        const baseline = document.createElement("span");
+        baseline.className = "baseline";
+        const baselineLine = document.createElement("i");
+        baseline.append(baselineLine, "基准预测");
+        legend.append(current, baseline);
+        root.appendChild(legend);
+      }
+
+      if (Array.isArray(forecast.warnings) && forecast.warnings.length) {
+        const warnings = document.createElement("div");
+        warnings.className = "forecast-warnings";
+        forecast.warnings.forEach((warning) => {
+          const item = document.createElement("div");
+          item.className = `forecast-warning ${warning.level || ""}`.trim();
+          const titleNode = document.createElement("strong");
+          titleNode.textContent = warning.title || "风险提示";
+          const detail = document.createElement("p");
+          detail.textContent = warning.detail || "";
+          item.append(titleNode, detail);
+          warnings.appendChild(item);
+        });
+        root.appendChild(warnings);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "forecast-actions";
+      [
+        ["应用情景滑块", "__scenario__"],
+        ["试算购买8000元电脑", "如果下个月买8000元电脑会怎样"],
+        ["试算收入下降20%", "收入下降20%后未来90天现金流会怎样"],
+        ["重新预测", "预测我未来90天的现金流"]
+      ].forEach(([label, prompt]) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "forecast-action";
+        button.textContent = label;
+        button.addEventListener("click", async () => {
+          if (busy) return;
+          if (prompt !== "__scenario__") {
+            sendMessage(prompt);
+            return;
+          }
+          busy = true;
+          sendButton.disabled = true;
+          serviceStatus.textContent = "正在更新财务情景";
+          try {
+            const response = await fetchWithAuth("/v1/forecast/simulate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                session_id: sessionId,
+                months: Math.max(1, Math.round(Number(forecast.horizon_days || 90) / 30)),
+                purchase_amount: controlValues.purchase,
+                income_change_pct: -controlValues.incomeDrop,
+                extra_monthly_expense: controlValues.extraMonthly,
+                investment_amount: controlValues.investment,
+                investment_return_pct: controlValues.investmentReturn
+              })
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.message || "情景计算失败");
+            appendMessage("agent", payload.reply.text, payload.reply);
+          } catch (error) {
+            appendMessage("agent", error.message || "情景计算失败", {
+              kind: "error",
+              intent: "forecast.cashflow"
+            });
+          } finally {
+            busy = false;
+            sendButton.disabled = false;
+            serviceStatus.textContent = "接口就绪";
+          }
+        });
+        actions.appendChild(button);
+      });
+      root.appendChild(actions);
+      container.replaceChildren(root);
+      return true;
+    }
+
+    function renderProactivePanel(container, reply) {
+      const alerts = reply?.data?.brief;
+      if (!Array.isArray(alerts)) return false;
+      const root = document.createElement("div");
+      root.className = "proactive-panel";
+      const head = document.createElement("div");
+      head.className = "insight-head";
+      const copy = document.createElement("div");
+      const title = document.createElement("h3");
+      title.className = "insight-title";
+      title.textContent = "个人 CFO 主动简报";
+      const subtitle = document.createElement("p");
+      subtitle.className = "insight-subtitle";
+      subtitle.textContent = "现金流、订阅、信用卡和异常交易统一扫描";
+      copy.append(title, subtitle);
+      const badge = document.createElement("span");
+      badge.className = "insight-badge";
+      badge.textContent = `${alerts.length} 项提醒`;
+      head.append(copy, badge);
+      root.appendChild(head);
+      const list = document.createElement("div");
+      list.className = "insight-list";
+      alerts.forEach((alert) => {
+        const item = document.createElement("div");
+        item.className = `insight-item ${alert.level || ""}`.trim();
+        const titleNode = document.createElement("strong");
+        titleNode.textContent = alert.title || "提醒";
+        const detail = document.createElement("p");
+        detail.textContent = alert.detail || "";
+        item.append(titleNode, detail);
+        if (alert.suggested_prompt) {
+          const action = document.createElement("button");
+          action.type = "button";
+          action.className = "insight-action";
+          action.textContent = "处理";
+          action.addEventListener("click", () => {
+            if (!busy) sendMessage(alert.suggested_prompt);
+          });
+          item.appendChild(action);
+        }
+        list.appendChild(item);
+      });
+      root.appendChild(list);
+      container.replaceChildren(root);
+      return true;
+    }
+
+    function renderHealthPanel(container, reply) {
+      const health = reply?.data?.health;
+      if (!health) return false;
+      const root = document.createElement("div");
+      root.className = "forecast-panel";
+      const head = document.createElement("div");
+      head.className = "insight-head";
+      const copy = document.createElement("div");
+      const title = document.createElement("h3");
+      title.className = "insight-title";
+      title.textContent = "个人财务健康分";
+      const subtitle = document.createElement("p");
+      subtitle.className = "insight-subtitle";
+      subtitle.textContent = health.method || "7 个维度加权评分";
+      copy.append(title, subtitle);
+      const badge = document.createElement("span");
+      badge.className = "insight-badge";
+      badge.textContent = health.grade || "需评估";
+      head.append(copy, badge);
+      root.appendChild(head);
+
+      const overview = document.createElement("div");
+      overview.className = "health-overview";
+      const score = document.createElement("div");
+      score.className = "health-score";
+      score.style.setProperty("--score", String(Math.max(0, Math.min(Number(health.score || 0), 100))));
+      const scoreCopy = document.createElement("div");
+      scoreCopy.className = "health-score-copy";
+      const scoreValue = document.createElement("strong");
+      scoreValue.textContent = Number(health.score || 0).toFixed(1);
+      const scoreLabel = document.createElement("span");
+      scoreLabel.textContent = "/ 100";
+      scoreCopy.append(scoreValue, scoreLabel);
+      score.appendChild(scoreCopy);
+      const dimensions = document.createElement("div");
+      dimensions.className = "health-dimensions";
+      (health.dimensions || []).forEach((item) => {
+        const row = document.createElement("div");
+        row.className = `health-dimension${
+          item.score < 55 ? " poor" : item.score < 75 ? " watch" : ""
+        }`;
+        const label = document.createElement("span");
+        label.textContent = item.label;
+        const bar = document.createElement("div");
+        bar.className = "health-bar";
+        const fill = document.createElement("i");
+        fill.style.width = `${Math.max(0, Math.min(Number(item.score || 0), 100))}%`;
+        bar.appendChild(fill);
+        const value = document.createElement("strong");
+        value.textContent = Math.round(Number(item.score || 0));
+        row.append(label, bar, value);
+        row.title = item.detail || "";
+        dimensions.appendChild(row);
+      });
+      overview.append(score, dimensions);
+      root.appendChild(overview);
+
+      const recommendations = document.createElement("div");
+      recommendations.className = "forecast-warnings";
+      (health.recommendations || []).forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "forecast-warning warning";
+        const name = document.createElement("strong");
+        name.textContent = `[${item.priority || "中"}优先级] ${item.title}`;
+        const detail = document.createElement("p");
+        detail.textContent = item.detail;
+        const meta = document.createElement("div");
+        meta.className = "health-advice-meta";
+        [
+          `目标：${item.target || "-"}`,
+          `预计提升：${Number(item.expected_score_gain || 0).toFixed(1)} 分`
+        ].forEach((value) => {
+          const badge = document.createElement("span");
+          badge.textContent = value;
+          meta.appendChild(badge);
+        });
+        card.append(name, detail, meta);
+        if (Array.isArray(item.steps) && item.steps.length) {
+          const steps = document.createElement("ul");
+          steps.className = "health-advice-steps";
+          item.steps.forEach((step) => {
+            const li = document.createElement("li");
+            li.textContent = step;
+            steps.appendChild(li);
+          });
+          card.appendChild(steps);
+        }
+        recommendations.appendChild(card);
+      });
+      root.appendChild(recommendations);
+      const actions = document.createElement("div");
+      actions.className = "forecast-actions";
+      const proactive = document.createElement("button");
+      proactive.type = "button";
+      proactive.className = "forecast-action";
+      proactive.textContent = "查看主动事件";
+      proactive.addEventListener("click", async () => {
+        await loadEventCenter();
+        renderEventCenter();
+        eventCenterDialog.showModal();
+      });
+      actions.appendChild(proactive);
+      root.appendChild(actions);
+      container.replaceChildren(root);
+      return true;
+    }
+
+    function renderDailyBriefIntake(container, reply) {
+      const intake = reply?.data?.daily_brief_intake;
+      if (!intake) return false;
+      const root = document.createElement("div");
+      root.className = "forecast-panel";
+      const head = document.createElement("div");
+      head.className = "insight-head";
+      const copy = document.createElement("div");
+      const title = document.createElement("h3");
+      title.className = "insight-title";
+      title.textContent = intake.title || "生成每日简报前请确认材料";
+      const subtitle = document.createElement("p");
+      subtitle.className = "insight-subtitle";
+      subtitle.textContent = intake.intro || "";
+      copy.append(title, subtitle);
+      const badge = document.createElement("span");
+      badge.className = "insight-badge";
+      badge.textContent = "等待材料";
+      head.append(copy, badge);
+      root.appendChild(head);
+
+      const materials = document.createElement("div");
+      materials.className = "daily-material-list";
+      (intake.materials || []).forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "daily-material";
+        const tag = document.createElement("span");
+        tag.className = "daily-material-tag";
+        tag.textContent = item.required ? "必选" : "可选";
+        const body = document.createElement("div");
+        const name = document.createElement("strong");
+        name.textContent = `${item.name || "材料"} · ${item.status || "待提交"}`;
+        const note = document.createElement("span");
+        note.textContent = item.note || "";
+        body.append(name, note);
+        row.append(tag, body);
+        materials.appendChild(row);
+      });
+      root.appendChild(materials);
+
+      const channels = document.createElement("div");
+      channels.className = "daily-channel-list";
+      (intake.channels || []).forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "daily-channel";
+        const body = document.createElement("div");
+        const name = document.createElement("strong");
+        name.textContent = item.label || "提交材料";
+        const note = document.createElement("span");
+        note.textContent = item.type === "upload"
+          ? "支持 PNG、JPG、WEBP、CSV、XLSX、XLSM"
+          : item.type === "paste"
+            ? "点击后在输入框中粘贴微信、支付宝或银行账单文本"
+            : "使用当前会话中已经接入并确认的数据";
+        body.append(name, note);
+        const action = document.createElement("button");
+        action.type = "button";
+        action.className = "forecast-action";
+        action.textContent = item.type === "confirm" ? "确认生成" : "打开";
+        action.addEventListener("click", () => {
+          if (busy) return;
+          if (item.action === "upload") {
+            fileInput.click();
+          } else if (item.action === "paste") {
+            input.focus();
+            input.placeholder = "粘贴账单文本后发送";
+          } else if (item.command) {
+            sendMessage(item.command);
+          }
+        });
+        row.append(body, action);
+        channels.appendChild(row);
+      });
+      root.appendChild(channels);
+      const note = document.createElement("div");
+      note.className = "insight-note";
+      note.textContent = intake.privacy || "";
+      root.appendChild(note);
+      container.replaceChildren(root);
+      return true;
+    }
+
+    function renderWealthComparison(container, reply) {
+      const comparison = reply?.data?.comparison;
+      if (!comparison) return false;
+      const products = Array.isArray(comparison.products)
+        ? comparison.products
+        : [];
+      const root = document.createElement("div");
+      root.className = "forecast-panel";
+      const head = document.createElement("div");
+      head.className = "insight-head";
+      const copy = document.createElement("div");
+      const title = document.createElement("h3");
+      title.className = "insight-title";
+      title.textContent = "产品横向对比";
+      const subtitle = document.createElement("p");
+      subtitle.className = "insight-subtitle";
+      subtitle.textContent = "只比较差异和取舍，不生成组合比例或购买指令";
+      copy.append(title, subtitle);
+      const badge = document.createElement("span");
+      badge.className = "insight-badge";
+      badge.textContent = `${products.length} 个产品`;
+      head.append(copy, badge);
+      root.appendChild(head);
+
+      const wrap = document.createElement("div");
+      wrap.className = "comparison-table-wrap";
+      const table = document.createElement("table");
+      table.className = "analytics-table";
+      const thead = document.createElement("thead");
+      const header = document.createElement("tr");
+      ["比较项", ...products.map((item) => item.name || "产品")].forEach((label) => {
+        const th = document.createElement("th");
+        th.textContent = label;
+        header.appendChild(th);
+      });
+      thead.appendChild(header);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      (comparison.criteria || []).forEach((row) => {
+        const tr = document.createElement("tr");
+        row.forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = value;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      root.appendChild(wrap);
+
+      const conclusion = document.createElement("div");
+      conclusion.className = "comparison-conclusion";
+      [
+        `风险最低：${comparison.lowest_risk || "-"}`,
+        `费率最低：${comparison.lowest_cost || "-"}`,
+        `流动性最好：${comparison.most_liquid || "-"}`
+      ].forEach((value) => {
+        const chip = document.createElement("span");
+        chip.textContent = value;
+        conclusion.appendChild(chip);
+      });
+      root.appendChild(conclusion);
+
+      const descriptions = document.createElement("div");
+      descriptions.className = "insight-list";
+      products.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "insight-item";
+        const name = document.createElement("strong");
+        name.textContent = `${item.name} · ${item.risk_label}`;
+        const detail = document.createElement("p");
+        detail.textContent = item.description || "";
+        row.append(name, detail);
+        descriptions.appendChild(row);
+      });
+      root.appendChild(descriptions);
+      container.replaceChildren(root);
+      return true;
+    }
+
+    function renderPlaybookPanel(container, reply) {
+      const steps = reply?.data?.playbook;
+      if (!Array.isArray(steps) || !steps.length) return false;
+      const anomaly = reply.data.anomaly || {};
+      const actionLabels = {
+        contain: "确认冻结",
+        verify: "立即核对",
+        dispute: "确认发起争议",
+        replace: "确认挂失补卡",
+        monitor: "立即复核"
+      };
+      const root = document.createElement("div");
+      root.className = "playbook-panel";
+      const head = document.createElement("div");
+      head.className = "insight-head";
+      const copy = document.createElement("div");
+      const title = document.createElement("h3");
+      title.className = "insight-title";
+      title.textContent = `风险处置：${anomaly.merchant || "异常交易"}`;
+      const subtitle = document.createElement("p");
+      subtitle.className = "insight-subtitle";
+      subtitle.textContent = `${anomaly.date || ""} · ¥${money(Math.abs(anomaly.amount || 0))} · 风险分 ${Math.round(anomaly.score || 0)}`;
+      copy.append(title, subtitle);
+      const badge = document.createElement("span");
+      badge.className = "insight-badge";
+      badge.textContent = anomaly.level === "danger" ? "高危" : "需关注";
+      head.append(copy, badge);
+      root.appendChild(head);
+      const list = document.createElement("div");
+      list.className = "playbook-list";
+      steps.forEach((step, index) => {
+        const item = document.createElement("div");
+        item.className = `playbook-step${step.needs_confirmation ? " danger" : ""}`;
+        const indexNode = document.createElement("span");
+        indexNode.className = "playbook-index";
+        indexNode.textContent = String(index + 1);
+        const titleNode = document.createElement("strong");
+        titleNode.textContent = `${step.title}${step.needs_confirmation ? " · 需确认" : ""}`;
+        const detail = document.createElement("p");
+        detail.textContent = step.detail || "";
+        item.append(indexNode, titleNode, detail);
+        if (step.command) {
+          const action = document.createElement("button");
+          action.type = "button";
+          action.className = "playbook-action";
+          action.textContent = actionLabels[step.stage] || "确认执行";
+          action.addEventListener("click", () => {
+            if (busy) return;
+            if (step.needs_confirmation) {
+              pendingPlaybookAction = { step, trigger: action };
+              playbookActionTitle.textContent = `${actionLabels[step.stage] || "确认执行"}？`;
+              playbookActionMessage.textContent = [
+                step.detail || "",
+                "点击确认后会先由系统生成核对信息；需要身份验证时仍会要求验证码或交易密码。"
+              ].filter(Boolean).join("\n");
+              playbookActionDialog.showModal();
+              return;
+            }
+            executePlaybookAction(step, action);
+          });
+          item.appendChild(action);
+        }
+        list.appendChild(item);
+      });
+      root.appendChild(list);
+      const note = document.createElement("div");
+      note.className = "insight-note";
+      note.textContent = "“确认”按钮会带入对应业务；冻结、挂失和争议提交仍需你的明确确认，身份验证不会跳过。";
+      root.appendChild(note);
+      container.replaceChildren(root);
+      return true;
+    }
+
+    function renderReconcilePanel(container, reply) {
+      if (reply?.intent !== "account.reconcile" || !reply?.data) return false;
+      const issues = Array.isArray(reply.data.issues) ? reply.data.issues : [];
+      const root = document.createElement("div");
+      root.className = "reconcile-panel";
+      const head = document.createElement("div");
+      head.className = "insight-head";
+      const copy = document.createElement("div");
+      const title = document.createElement("h3");
+      title.className = "insight-title";
+      title.textContent = issues.length ? "发现账务差异" : "账务核对一致";
+      const subtitle = document.createElement("p");
+      subtitle.className = "insight-subtitle";
+      subtitle.textContent = reply.data.purpose
+        || `已核对 ${reply.data.cards || 0} 张银行卡、关联账户和总资产`;
+      copy.append(title, subtitle);
+      const badge = document.createElement("span");
+      badge.className = "insight-badge";
+      badge.textContent = issues.length ? `${issues.length} 项差异` : "通过";
+      head.append(copy, badge);
+      root.appendChild(head);
+      const metrics = document.createElement("div");
+      metrics.className = "reconcile-metrics";
+      [
+        ["有效银行卡资产", `¥${money(reply.data.asset_total)}`],
+        ["应有资产合计", `¥${money(reply.data.expected_asset_total)}`],
+        ["差异数量", String(issues.length)],
+        ["绝对差额", `¥${money(reply.data.absolute_difference || 0)}`],
+      ].forEach(([label, value]) => {
+        const item = document.createElement("div");
+        item.className = "reconcile-metric";
+        const labelNode = document.createElement("span");
+        labelNode.textContent = label;
+        const valueNode = document.createElement("strong");
+        valueNode.textContent = value;
+        item.append(labelNode, valueNode);
+        metrics.appendChild(item);
+      });
+      root.appendChild(metrics);
+      if (issues.length) {
+        const list = document.createElement("div");
+        list.className = "reconcile-issues";
+        const details = Array.isArray(reply.data.issue_details)
+          ? reply.data.issue_details
+          : [];
+        const displayIssues = details.length
+          ? details
+          : issues.map((message) => ({ message, repair_commands: [] }));
+        displayIssues.forEach((detail) => {
+          const item = document.createElement("div");
+          item.className = "reconcile-issue";
+          const text = document.createElement("p");
+          text.textContent = detail.message;
+          item.appendChild(text);
+          if (Array.isArray(detail.repair_commands) && detail.repair_commands.length) {
+            const actions = document.createElement("div");
+            actions.className = "playbook-actions";
+            detail.repair_commands.forEach((command) => {
+              const button = document.createElement("button");
+              button.type = "button";
+              button.className = "playbook-action";
+              button.textContent = command.includes("以银行卡余额为准")
+                ? "以卡余额修正"
+                : "以账户余额修正";
+              button.addEventListener("click", () => {
+                if (!busy) sendMessage(command);
+              });
+              actions.appendChild(button);
+            });
+            item.appendChild(actions);
+          }
+          list.appendChild(item);
+        });
+        root.appendChild(list);
+      }
+      const note = document.createElement("div");
+      note.className = "insight-note";
+      note.textContent = issues.length
+        ? "手工修正必须明确选择真实口径，并在下一步确认；修正会写入审计日志。"
+        : "对账用于验证卡片展示、底层账户和总资产函数是否同源；当前未发现差异。";
+      root.appendChild(note);
+      container.replaceChildren(root);
+      return true;
+    }
+
+    function renderReconcileAdjustment(container, reply) {
+      const adjustment = reply?.data?.adjustment;
+      if (!adjustment) return false;
+      const root = document.createElement("div");
+      root.className = "reconcile-panel";
+      const head = document.createElement("div");
+      head.className = "insight-head";
+      const copy = document.createElement("div");
+      const title = document.createElement("h3");
+      title.className = "insight-title";
+      title.textContent = `尾号${adjustment.card_tail || "-"}账务差异已修正`;
+      const subtitle = document.createElement("p");
+      subtitle.className = "insight-subtitle";
+      subtitle.textContent = adjustment.source_of_truth === "card"
+        ? "以银行卡展示余额为准，关联账户已同步"
+        : "以关联账户余额为准，银行卡展示已同步";
+      copy.append(title, subtitle);
+      const badge = document.createElement("span");
+      badge.className = "insight-badge";
+      badge.textContent = "已审计";
+      head.append(copy, badge);
+      root.appendChild(head);
+
+      const metrics = document.createElement("div");
+      metrics.className = "reconcile-metrics";
+      const before = adjustment.before || {};
+      const after = adjustment.after || {};
+      [
+        ["修正前卡账", `¥${money(before.card)}`],
+        ["修正前账户", `¥${money(before.account)}`],
+        ["修正后卡账", `¥${money(after.card)}`],
+        ["修正后账户", `¥${money(after.account)}`],
+      ].forEach(([label, value]) => {
+        const item = document.createElement("div");
+        item.className = "reconcile-metric";
+        const labelNode = document.createElement("span");
+        labelNode.textContent = label;
+        const valueNode = document.createElement("strong");
+        valueNode.textContent = value;
+        item.append(labelNode, valueNode);
+        metrics.appendChild(item);
+      });
+      root.appendChild(metrics);
+      const actions = document.createElement("div");
+      actions.className = "forecast-actions";
+      const rerun = document.createElement("button");
+      rerun.type = "button";
+      rerun.className = "forecast-action";
+      rerun.textContent = "重新核对";
+      rerun.addEventListener("click", () => {
+        if (!busy) sendMessage("帮我做账务对账");
+      });
+      actions.appendChild(rerun);
+      root.appendChild(actions);
+      const note = document.createElement("div");
+      note.className = "insight-note";
+      note.textContent = "本次调整已写入审计日志；原型不会修改真实银行账务。";
+      root.appendChild(note);
+      container.replaceChildren(root);
+      return true;
+    }
+
+    function renderWealthAnalyticsPanel(container, reply) {
+      const analytics = reply?.data?.analytics;
+      if (!analytics) return false;
+      const root = document.createElement("div");
+      root.className = "analytics-panel";
+      const head = document.createElement("div");
+      head.className = "insight-head";
+      const copy = document.createElement("div");
+      const title = document.createElement("h3");
+      title.className = "insight-title";
+      title.textContent = "产品与组合风险分析";
+      const subtitle = document.createElement("p");
+      subtitle.className = "insight-subtitle";
+      subtitle.textContent = "波动和回撤为风险等级情景估计，不是历史业绩";
+      copy.append(title, subtitle);
+      const badge = document.createElement("span");
+      badge.className = "insight-badge";
+      badge.textContent = `分散度 ${analytics.diversification || "-"}`;
+      head.append(copy, badge);
+      root.appendChild(head);
+      const table = document.createElement("table");
+      table.className = "analytics-table";
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      ["组合平均波动", "最坏情景回撤", "产品数", "资产类别"].forEach((label) => {
+        const th = document.createElement("th");
+        th.textContent = label;
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      const row = document.createElement("tr");
+      [
+        `${Number(analytics.average_volatility_pct || 0).toFixed(2)}%`,
+        `${Number(analytics.worst_drawdown_pct || 0).toFixed(2)}%`,
+        String(analytics.product_count || 0),
+        (analytics.asset_classes || []).join("、") || "-"
+      ].forEach((value) => {
+        const td = document.createElement("td");
+        td.textContent = value;
+        row.appendChild(td);
+      });
+      tbody.appendChild(row);
+      table.appendChild(tbody);
+      root.appendChild(table);
+      const note = document.createElement("div");
+      note.className = "insight-note";
+      note.textContent = reply.text;
+      root.appendChild(note);
+      container.replaceChildren(root);
+      return true;
+    }
+
+    function renderAAStatusPanel(container, reply) {
+      const sheets = reply?.data?.sheets;
+      if (!Array.isArray(sheets)) return false;
+      const root = document.createElement("div");
+      root.className = "aa-status-panel";
+      const title = document.createElement("h3");
+      title.className = "insight-title";
+      title.textContent = "AA收款进度";
+      root.appendChild(title);
+      if (!sheets.length) {
+        const empty = document.createElement("p");
+        empty.className = "insight-subtitle";
+        empty.textContent = "当前没有AA收款单。";
+        root.appendChild(empty);
+      }
+      sheets.forEach((sheet) => {
+        const item = document.createElement("div");
+        item.className = "insight-item";
+        const name = document.createElement("strong");
+        name.textContent = `${sheet.title} · ¥${money(sheet.total_amount)}`;
+        const detail = document.createElement("p");
+        detail.textContent = (sheet.participants || [])
+          .map((person) => `${person.name || person.label || "参与人"} ${person.status === "paid" ? "已付" : "待付"}`)
+          .join(" / ");
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.className = "aa-copy";
+        copy.textContent = "复制分享文案";
+        copy.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(sheet.share_text || "");
+            copy.textContent = "已复制";
+          } catch {
+            copy.textContent = "复制失败";
+          }
+        });
+        item.append(name, detail, copy);
+        root.appendChild(item);
+      });
+      container.replaceChildren(root);
+      return true;
     }
 
 
@@ -2381,6 +4521,7 @@
         const intent = document.createElement("span");
         intent.textContent = reply.intent || "agent";
         meta.append(kind, intent);
+        renderWorkflowStrip(meta, reply.data?.workflow);
         bubble.appendChild(meta);
       }
 
@@ -2397,7 +4538,62 @@
       const giftOptions = Array.isArray(reply?.data?.options)
         ? reply.data.options
         : [];
-      if (Array.isArray(subscriptionItems) && subscriptionItems.length) {
+      const forecastPanel = reply?.intent === "forecast.cashflow";
+      const receiptQualityPanel = Boolean(reply?.data?.quality);
+      const dailyBriefPanel = Boolean(reply?.data?.daily_brief_intake);
+      const proactivePanel = reply?.intent === "advisor.proactive";
+      const healthPanel = reply?.intent === "advisor.health_score";
+      const playbookPanel = reply?.intent === "risk.playbook";
+      const reconcilePanel = reply?.intent === "account.reconcile";
+      const reconcileAdjustPanel = reply?.intent === "account.reconcile_adjust";
+      const comparePanel = reply?.intent === "wealth.compare";
+      const analyticsPanel = reply?.intent === "wealth.analytics";
+      const aaStatusPanel = reply?.intent === "transfer.aa_status";
+      if (receiptQualityPanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderReceiptQuality(content, text, reply)) content.textContent = text;
+      } else if (dailyBriefPanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderDailyBriefIntake(content, reply)) content.textContent = text;
+      } else if (forecastPanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderForecastPanel(content, reply)) content.textContent = text;
+      } else if (proactivePanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderProactivePanel(content, reply)) content.textContent = text;
+      } else if (healthPanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderHealthPanel(content, reply)) content.textContent = text;
+      } else if (playbookPanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderPlaybookPanel(content, reply)) content.textContent = text;
+      } else if (reconcilePanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderReconcilePanel(content, reply)) content.textContent = text;
+      } else if (reconcileAdjustPanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderReconcileAdjustment(content, reply)) content.textContent = text;
+      } else if (comparePanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderWealthComparison(content, reply)) content.textContent = text;
+      } else if (analyticsPanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderWealthAnalyticsPanel(content, reply)) content.textContent = text;
+      } else if (aaStatusPanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderAAStatusPanel(content, reply)) content.textContent = text;
+      } else if (Array.isArray(subscriptionItems) && subscriptionItems.length) {
         content.className = "bubble-content";
         bubble.classList.add("wide", "subscription-bubble");
         renderSubscriptionContent(content, text, reply);
@@ -2435,6 +4631,24 @@
           details.appendChild(row);
         });
         bubble.appendChild(details);
+      }
+      const txnIds = [
+        reply?.data?.txn_id,
+        reply?.data?.out_txn_id,
+        reply?.data?.in_txn_id,
+      ].filter(Boolean);
+      if (txnIds.length) {
+        const actions = document.createElement("div");
+        actions.className = "message-actions";
+        [...new Set(txnIds)].forEach((txnId) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "message-action";
+          button.textContent = `查看交易凭证 ${txnId}`;
+          button.addEventListener("click", () => showTransactionDetails(txnId));
+          actions.appendChild(button);
+        });
+        bubble.appendChild(actions);
       }
 
       article.append(avatar, bubble);
@@ -2509,7 +4723,8 @@
 
     async function sendMessage(text) {
       const content = (text || "").trim();
-      if (!content || busy) return;
+      if (!content || busy) return null;
+      let finalReply = null;
       busy = true;
       sendButton.disabled = true;
       serviceStatus.textContent = "正在处理";
@@ -2531,6 +4746,7 @@
         if (result.error) {
           appendMessage("agent", result.error, { kind: "error", intent: "session" });
         } else if (result.reply) {
+          finalReply = result.reply;
           appendMessage("agent", result.reply.text, result.reply);
           if (
             result.reply.intent === "wealth.risk_assess"
@@ -2554,6 +4770,7 @@
         serviceStatus.textContent = "接口就绪";
         input.focus();
       }
+      return finalReply;
     }
 
     function fileToBase64(file) {
@@ -2592,6 +4809,10 @@
       try {
         await ensureSession();
         const data = await fileToBase64(file);
+        pendingUploadPreview = file.type.startsWith("image/")
+          ? `data:${file.type};base64,${data}`
+          : "";
+        pendingUploadRotation = 0;
         const response = await fetchWithAuth("/v1/uploads", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3070,7 +5291,7 @@
         const status = document.createElement("select");
         [
           ["active", "正常"], ["frozen", "已冻结"], ["lost", "已挂失"],
-          ["cancelled", "已销卡"], ["pending", "待激活"]
+          ["cancelled", "已销卡"], ["pending", "待激活"], ["rejected", "申请未通过"]
         ].forEach(([value, label]) => {
           const option = document.createElement("option");
           option.value = value;
@@ -3095,6 +5316,37 @@
           makeSettingsField("单笔限额", single),
           makeSettingsField("备注", note),
         );
+        if (card.kind === "credit") {
+          const statement = document.createElement("div");
+          statement.className = "card-statement-summary";
+          [
+            ["账单日", card.billing_day ? `每月 ${card.billing_day} 日` : "-"],
+            ["还款日", card.due_day ? `每月 ${card.due_day} 日` : "-"],
+            ["本期账单", `¥${money(card.statement_amount)}`],
+            ["最低还款", `¥${money(card.minimum_payment)}`],
+            ["利息", `¥${money(card.interest_due)}`],
+            ["费用", `¥${money(card.fees_due)}`],
+            ["临时额度", `¥${money(card.temporary_limit)}`],
+            ["分期余额", `¥${money(card.installment_balance)}`],
+          ].forEach(([label, value]) => {
+            const item = document.createElement("span");
+            item.textContent = `${label} ${value}`;
+            statement.appendChild(item);
+          });
+          grid.appendChild(statement);
+        }
+        if (Array.isArray(card.application_history) && card.application_history.length) {
+          const timeline = document.createElement("div");
+          timeline.className = "card-lifecycle";
+          card.application_history.forEach((item, index) => {
+            const row = document.createElement("div");
+            row.textContent = `${index + 1}. ${item.label || item.stage || "状态更新"}${
+              item.at ? ` · ${String(item.at).replace("T", " ").slice(0, 19)}` : ""
+            }`;
+            timeline.appendChild(row);
+          });
+          grid.appendChild(timeline);
+        }
 
         const switches = document.createElement("div");
         switches.className = "card-switches";
@@ -3354,6 +5606,49 @@
       }
     });
 
+    detailDialogClose.addEventListener("click", () => detailDialog.close());
+    detailDialog.addEventListener("cancel", () => detailDialog.close());
+    eventCenterClose.addEventListener("click", () => eventCenterDialog.close());
+    eventCenterDialog.addEventListener("cancel", () => eventCenterDialog.close());
+    eventCenterButton.addEventListener("click", async () => {
+      await loadEventCenter();
+      renderEventCenter();
+      if (!eventCenterDialog.open) eventCenterDialog.showModal();
+    });
+
+    async function executePlaybookAction(step, trigger) {
+      if (!step?.command || busy) return;
+      if (trigger) trigger.disabled = true;
+      try {
+        const firstReply = await sendMessage(step.command);
+        if (
+          firstReply?.kind === "confirm"
+          && step.needs_confirmation
+          && ["card.freeze", "card.report_lost", "risk.dispute"].includes(firstReply.intent)
+        ) {
+          // The action button and this dialog are the user's explicit confirmation.
+          // Send the agent's confirm turn so the requested operation can proceed.
+          await sendMessage("确认");
+        }
+      } finally {
+        if (trigger) trigger.disabled = false;
+      }
+    }
+
+    playbookActionCancel.addEventListener("click", () => {
+      pendingPlaybookAction = null;
+      playbookActionDialog.close();
+    });
+    playbookActionDialog.addEventListener("cancel", () => {
+      pendingPlaybookAction = null;
+    });
+    playbookActionConfirm.addEventListener("click", async () => {
+      const action = pendingPlaybookAction;
+      pendingPlaybookAction = null;
+      playbookActionDialog.close();
+      if (action) await executePlaybookAction(action.step, action.trigger);
+    });
+
     let dragDepth = 0;
     function hasFiles(event) {
       return event.dataTransfer && Array.from(event.dataTransfer.types || []).includes("Files");
@@ -3419,7 +5714,10 @@
       error.textContent = "业务分类加载失败";
       capabilityCategories.appendChild(error);
     });
-    ensureSession().then(() => refreshProfileSummary()).catch(() => {
+    ensureSession().then(() => Promise.all([
+      refreshProfileSummary(),
+      loadEventCenter()
+    ])).catch(() => {
       serviceStatus.textContent = "接口不可用";
       appendMessage("agent", "无法连接 Agent 服务，请确认 API 已启动。", { kind: "error", intent: "network" });
     });

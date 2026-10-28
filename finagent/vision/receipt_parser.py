@@ -63,6 +63,8 @@ class ParsedTransaction:
     category: str = "其他"
     raw_line: str = ""
     confidence: float = 1.0
+    field_confidence: Dict[str, float] = field(default_factory=dict)
+    needs_review: List[str] = field(default_factory=list)
 
     def to_payload(self) -> Dict[str, object]:
         return {
@@ -71,6 +73,10 @@ class ParsedTransaction:
             "merchant": self.merchant,
             "amount": self.amount,
             "category": self.category,
+            "confidence": self.confidence,
+            "field_confidence": dict(self.field_confidence),
+            "needs_review": list(self.needs_review),
+            "raw_line": self.raw_line,
         }
 
 

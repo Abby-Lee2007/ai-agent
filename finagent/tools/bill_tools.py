@@ -490,7 +490,14 @@ class ReceiptScanTool(Tool):
         if result.summary is not None:
             return self._summary_result(result)
         if not result.ok or not result.records:
-            return ToolResult(False, result.message or "没有识别到交易明细。")
+            return ToolResult(
+                False,
+                result.message or "没有识别到交易明细。",
+                data={
+                    "quality": result.quality,
+                    "validation": result.validation,
+                },
+            )
 
         rows = [
             [record.date, record.time or "-", record.merchant,
@@ -504,7 +511,14 @@ class ReceiptScanTool(Tool):
             f"（识别方式：{result.backend_label}）：",
             render_table(["日期", "时间", "商户", "金额", "类别"], rows),
             f"  合计支出 {result.total_expense:,.2f} 元（{expense_count} 笔支出）",
+            f"  识别质量：{result.quality.get('grade', '未评估')}"
+            f"（{result.quality.get('score', 0):.0f}/100，"
+            f"平均置信度 {result.quality.get('average_confidence', 0) * 100:.0f}%）",
         ]
+        validation_issues = list(result.validation.get("issues") or [])
+        if validation_issues:
+            lines.append("  核对提示：")
+            lines.extend(f"    · {issue}" for issue in validation_issues)
         low_confidence = [r for r in result.records if r.confidence < 0.8]
         if low_confidence:
             lines.append(f"  提示：其中 {len(low_confidence)} 笔由离线 OCR 推断，"
@@ -514,7 +528,10 @@ class ReceiptScanTool(Tool):
             "source": result.image_path,
             "backend": result.backend,
             "backend_label": result.backend_label,
+            "raw_text": result.raw_text,
             "records": [record.to_payload() for record in result.records],
+            "quality": result.quality,
+            "validation": result.validation,
         }
         return ToolResult(
             True,
@@ -523,6 +540,9 @@ class ReceiptScanTool(Tool):
                 "count": len(result.records),
                 "total_expense": result.total_expense,
                 "backend": result.backend,
+                "quality": result.quality,
+                "validation": result.validation,
+                "records": [record.to_payload() for record in result.records],
                 "follow_up": {
                     "tool": "bill.import_receipt",
                     "args": {},
@@ -542,6 +562,8 @@ class ReceiptScanTool(Tool):
         lines = [
             f"已识别账单汇总页（{period}，识别方式：{result.backend_label or result.backend}）",
             f"  本月支出 {summary.total_expense:,.2f} 元",
+            f"  识别质量：{result.quality.get('grade', '未评估')}"
+            f"（{result.quality.get('score', 0):.0f}/100）",
         ]
         if summary.categories:
             category_rows = [

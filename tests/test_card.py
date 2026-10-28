@@ -19,6 +19,30 @@ class TestCardManagement(unittest.TestCase):
         self.assertIn("银联｜工资卡", reply.text)
         self.assertIn("微众银行｜网购专用虚拟卡", reply.text)
 
+    def test_credit_card_statement_details(self):
+        reply = self.agent.handle("查看信用卡账单")
+
+        self.assertEqual(reply.intent, "card.statement")
+        self.assertTrue(reply.ok)
+        self.assertEqual(reply.data["billing_day"], 5)
+        self.assertEqual(reply.data["due_day"], 23)
+        self.assertAlmostEqual(reply.data["statement_amount"], 12340.0)
+        self.assertIn("最低还款", reply.text)
+
+    def test_virtual_card_instant_issue_and_one_time_pan(self):
+        reply = self.agent.handle("办一张工商银行虚拟卡网购用")
+
+        self.assertEqual(reply.intent, "card.apply")
+        if reply.kind == "confirm":
+            reply = self.agent.handle("确认")
+        self.assertTrue(reply.ok)
+        self.assertIn("虚拟卡号（仅本次展示）", reply.text)
+        card = self.agent.store.cards[reply.data["card_id"]]
+        self.assertEqual(card.status, "active")
+        self.assertEqual(card.virtual_pan_once, "")
+        timeline = self.agent.handle(f"查看虚拟卡尾号{card.tail}的卡号")
+        self.assertIn("此前已经展示并清除", timeline.text)
+
     def test_add_existing_card_and_open_new_card_are_different_intents(self):
         bind_agent = make_agent()
         self.assertEqual(bind_agent.handle("添加一张工商银行储蓄卡").intent, "card.bind")

@@ -7,8 +7,10 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List
 
+from finagent.analytics.product_risk import estimate_product_analytics
 from finagent.data.card_ledger import (
     card_asset_total,
     sync_cards_for_account,
@@ -17,6 +19,7 @@ from finagent.data.card_ledger import (
 )
 from finagent.data.models import Holding
 from finagent.data.provenance import source_badge
+from finagent.data.transaction_lifecycle import enrich_transaction
 from finagent.risk.scorecard import assess_risk_profile
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, render_table
 from finagent.tools.transfer_tools import resolve_account, resolve_payment_card
@@ -164,6 +167,20 @@ EQUITY_CATEGORIES = {"股票", "股票基金", "指数基金"}
 LIVING_WORDS = ("生活费", "急用", "房租", "学费", "救命", "借的钱")
 
 
+def _is_fund_product(product: Any) -> bool:
+    """Treat listed ETFs and off-exchange funds as funds, regardless of asset pool."""
+    return (
+        getattr(product, "asset_class", "") == "fund"
+        or "基金" in str(getattr(product, "category", ""))
+    )
+
+
+def _is_bond_fund(product: Any) -> bool:
+    category = str(getattr(product, "category", ""))
+    tags = " ".join(str(item) for item in (getattr(product, "tags", []) or []))
+    return "债券" in category or "纯债" in tags or "固收" in tags
+
+
 class ProductRecommendTool(Tool):
     """产品推荐与对比。
 
@@ -184,7 +201,7 @@ class ProductRecommendTool(Tool):
         ToolParam("amount", "number", False, "计划投入金额（元）"),
         ToolParam("horizon", "string", False, "投资期限", enum=["short", "mid", "long"]),
         ToolParam("asset_class", "string", False, "资产类别",
-                  enum=["stock", "bond", "fund", "derivative", "deposit"]),
+                  enum=["stock", "bond", "bond_fund", "fund", "derivative", "deposit"]),
         ToolParam("purpose", "string", False, "资金性质", enum=["living", "idle"]),
     ]
     examples = ["推荐几个理财产品", "我有5万块，稳健一点怎么配置",
@@ -205,6 +222,7 @@ class ProductRecommendTool(Tool):
         requested = str(asset_class).lower().strip()
         wants_stock = requested in {"stock", "equity"}
         wants_bond = requested == "bond"
+        wants_bond_fund = requested == "bond_fund"
         wants_fund = requested == "fund"
         wants_derivative = requested == "derivative"
         wants_deposit = requested == "deposit"
@@ -276,6 +294,15 @@ class ProductRecommendTool(Tool):
                 if live_pool:
                     pool = live_pool
             lines.append("下面给你的是「权益类里相对低波动」的选择，注意它们仍然是 R4、不是低风险资产：")
+        elif wants_bond_fund:
+            max_risk = min(user_level + 1, 5)
+            pool = [
+                p for p in _products(ctx)
+                if _is_fund_product(p)
+                and _is_bond_fund(p)
+                and p.risk_level <= max_risk
+            ]
+            lines.append("债券基金（仍属于基金，主要风险来自利率和信用）：")
         elif wants_bond:
             max_risk = min(user_level + 1, 5)
             pool = [p for p in _products(ctx)
@@ -284,9 +311,25 @@ class ProductRecommendTool(Tool):
             lines.append("  国债以持有到期吃票息为主；可转债有股性，波动明显大于纯债。")
         elif wants_fund:
             max_risk = min(user_level + 1, 5)
-            pool = [p for p in _products(ctx)
-                    if p.asset_class == "fund" and p.risk_level <= max_risk]
-            lines.append(f"按你的风险等级「{assessment['label']}」，可选的基金如下：")
+            # "推荐基金" defaults to non-bond funds. Users who specifically want
+            # bond funds are routed to the bond pool by the intent parser.
+            pool = [
+                p for p in _products(ctx)
+                if _is_fund_product(p)
+                and not _is_bond_fund(p)
+                and p.risk_level <= max_risk
+            ]
+            if market.enabled:
+                live_pool = [
+                    p for p in pool
+                    if p.has_live_data
+                ]
+                if live_pool:
+                    pool = live_pool
+            lines.append(
+                f"按你的风险等级「{assessment['label']}」，"
+                "可选的基金如下（默认排除纯债基金）："
+            )
         elif wants_deposit:
             max_risk = 1
             pool = [p for p in _products(ctx) if p.asset_class == "deposit"]
@@ -326,20 +369,41 @@ class ProductRecommendTool(Tool):
         pool = affordable
         filter_key = requested or "mixed"
         previous_filter = str(ctx.session.get("wealth_recommend_filter") or "")
-        offset = int(ctx.session.get("wealth_recommend_offset") or 0)
+        seen_ids = list(ctx.session.get("wealth_recommend_seen") or [])
+        cycle = int(ctx.session.get("wealth_recommend_cycle") or 1)
+        batch_number = int(ctx.session.get("wealth_recommend_batch") or 0) + 1
         if previous_filter != filter_key:
-            offset = 0
-        if offset >= len(pool):
-            offset = 0
-        rotated = pool[offset:] + pool[:offset]
-        pool = rotated[:5]
+            seen_ids = []
+            cycle = 1
+            batch_number = 1
+        seen_set = set(str(item) for item in seen_ids)
+        unseen = [product for product in pool if product.product_id not in seen_set]
+        cycle_reset = False
+        if not unseen:
+            cycle += 1
+            seen_set = set()
+            unseen = list(pool)
+            cycle_reset = True
+        pool = unseen[:5]
         if not pool:
             return ToolResult(False, "当前没有匹配您风险等级的产品。")
         ctx.session["wealth_recommend_filter"] = filter_key
-        ctx.session["wealth_recommend_offset"] = (offset + len(pool)) % max(len(affordable), 1)
+        ctx.session["wealth_recommend_seen"] = list(
+            seen_set | {product.product_id for product in pool}
+        )
+        ctx.session["wealth_recommend_cycle"] = cycle
+        ctx.session["wealth_recommend_batch"] = batch_number
         lines.append(
             f"根据您的风险等级「{assessment['label']}」，本次共展示 {len(pool)} 只产品。"
         )
+        lines.append(f"  当前为第 {batch_number} 批候选")
+        if cycle > 1:
+            lines.append(f"  当前为第 {cycle} 轮候选")
+        if cycle_reset:
+            lines.append(
+                "  当前筛选条件下没有更多未展示过的新产品，"
+                "因此重新从完整候选集开始，不冒充新品。"
+            )
 
         # ---------------- 取真实行情 / 净值 ----------------
         stock_symbols = [p.symbol for p in pool if p.symbol_type == "stock"]
@@ -414,6 +478,7 @@ class ProductRecommendTool(Tool):
                 "fee_rate": product.fee_rate,
                 "data_source": data_label,
                 "description": self._plain_product_description(product),
+                "analytics": estimate_product_analytics(product),
             })
 
         lines.append("")
@@ -543,6 +608,10 @@ class ProductRecommendTool(Tool):
                 "product_details": product_details,
                 "purchase_prompt": allow_allocation,
                 "has_more": len(affordable) > len(pool),
+                "batch_number": batch_number,
+                "batch_cycle": cycle,
+                "batch_reset": cycle_reset,
+                "seen_count": len(ctx.session["wealth_recommend_seen"]),
                 "filter_options": ["存款", "债券", "基金", "换一批"],
             },
             summary=(f"已按{class_label}推荐 {len(pool)} 只产品"
@@ -704,6 +773,222 @@ class ProductRecommendTool(Tool):
         return plan_rows, expected_return
 
 
+class ProductCompareTool(Tool):
+    """Compare 2-3 products without issuing a purchase recommendation."""
+
+    name = "wealth.compare"
+    category = "理财操作"
+    description = "横向比较风险、收益口径、流动性、费率、数据来源与适用人群"
+    risk_level = "low"
+    params = [
+        ToolParam("products", "string", False, "产品名称，可用顿号、逗号或“和”连接"),
+        ToolParam(
+            "asset_class",
+            "string",
+            False,
+            "未指定产品时的比较范围",
+            enum=["stock", "bond", "fund", "deposit", "mixed"],
+        ),
+    ]
+    examples = ["比较一下稳健型理财产品", "对比稳利债券A和微众活期+"]
+
+    def run(  # type: ignore[override]
+        self,
+        ctx: ToolContext,
+        products: str = "",
+        asset_class: str = "",
+    ) -> ToolResult:
+        assessment = assess_user_risk(ctx)
+        user_level = int(assessment["score"])
+        requested = str(asset_class or "").lower().strip()
+        names = [
+            item.strip()
+            for item in re.split(r"[、,，;；]|和", str(products or ""))
+            if item.strip()
+        ]
+        selected = []
+        for name in names:
+            product = _find_product(ctx, name)
+            if product is not None and product not in selected:
+                selected.append(product)
+
+        if not selected:
+            max_risk = min(user_level + 1, 5)
+            pool = [
+                product for product in _products(ctx)
+                if product.asset_class != "derivative"
+                and product.risk_level <= max_risk
+            ]
+            if requested == "fund":
+                pool = [
+                    product for product in pool
+                    if _is_fund_product(product) and not _is_bond_fund(product)
+                ]
+            elif requested == "bond":
+                pool = [
+                    product for product in pool
+                    if product.asset_class == "bond" or _is_bond_fund(product)
+                ]
+            elif requested == "stock":
+                pool = [product for product in pool if product.asset_class == "stock"]
+            elif requested == "deposit":
+                pool = [product for product in pool if product.asset_class == "deposit"]
+            if requested in {"fund", "stock"}:
+                live_candidates = [product for product in pool if product.has_live_data]
+                if live_candidates:
+                    pool = live_candidates
+
+            role_order = {"存款": 0, "货币基金": 1, "债券基金": 2, "混合基金": 3}
+            used_categories = set()
+            for product in sorted(
+                pool,
+                key=lambda item: (
+                    item.risk_level,
+                    role_order.get(item.category, 9),
+                    item.name,
+                ),
+            ):
+                if product.category in used_categories:
+                    continue
+                selected.append(product)
+                used_categories.add(product.category)
+                if len(selected) >= 3:
+                    break
+            if len(selected) < 2:
+                for product in pool:
+                    if product in selected:
+                        continue
+                    selected.append(product)
+                    if len(selected) >= 3:
+                        break
+        selected = selected[:3]
+        if len(selected) < 2:
+            return ToolResult(
+                False,
+                "至少需要 2 个可比较的产品。请指定产品名称，"
+                "或说“比较稳健型理财产品”自动选择候选。",
+            )
+
+        market = ctx.session.get("market")
+        if market is None:
+            from finagent.data.market import MarketDataProvider
+            market = MarketDataProvider()
+        stock_symbols = [
+            product.symbol for product in selected
+            if product.symbol_type == "stock"
+        ]
+        quotes = market.quotes(stock_symbols) if stock_symbols else {}
+        navs = {}
+        for product in selected:
+            if product.symbol_type != "fund":
+                continue
+            nav = market.fund_nav(product.symbol)
+            if nav is not None:
+                navs[product.symbol] = nav
+
+        compared: List[Dict[str, Any]] = []
+        for product in selected:
+            current_value = (
+                f"演示参考 {product.expected_return * 100:.2f}%"
+                if product.expected_return > 0 else "-"
+            )
+            data_source = "演示参数"
+            is_live = False
+            if product.symbol_type == "stock" and product.symbol in quotes:
+                quote = quotes[product.symbol]
+                current_value = f"{quote.price:,.3f} 元 / {quote.change_pct:+.2f}%"
+                data_source = source_badge(
+                    quote.source, quote.live, quote.is_demo, quote.stale
+                )
+                is_live = True
+            elif product.symbol_type == "fund" and product.symbol in navs:
+                nav = navs[product.symbol]
+                current_value = f"净值 {nav.nav:,.4f}（{nav.date}）"
+                data_source = source_badge(
+                    nav.source, nav.live, nav.is_demo, nav.stale
+                )
+                is_live = True
+            analytics = estimate_product_analytics(product)
+            compared.append({
+                "product_id": product.product_id,
+                "name": product.name,
+                "code": product.symbol.upper() if product.symbol else product.product_id,
+                "category": product.category,
+                "risk_level": product.risk_level,
+                "min_amount": product.min_amount,
+                "liquidity": product.redemption_rule or product.liquidity,
+                "fee_rate": product.fee_rate,
+                "current_value": current_value,
+                "data_source": data_source,
+                "is_live": is_live,
+                "volatility_pct": analytics.get("estimated_annual_volatility_pct", 0),
+                "drawdown_pct": analytics.get("estimated_max_drawdown_pct", 0),
+                "description": ProductRecommendTool._plain_product_description(product),
+            })
+
+        criteria = [
+            ["风险等级"] + [f"R{item['risk_level']}" for item in compared],
+            ["产品类型"] + [item["category"] for item in compared],
+            ["当前价格/净值"] + [item["current_value"] for item in compared],
+            ["数据来源"] + [item["data_source"] for item in compared],
+            ["起投金额"] + [f"{item['min_amount']:,.0f} 元" for item in compared],
+            ["流动性"] + [item["liquidity"] for item in compared],
+            ["费率"] + [f"{item['fee_rate'] * 100:.2f}%" for item in compared],
+            ["情景波动"] + [f"{item['volatility_pct']:.1f}%" for item in compared],
+            ["情景最大回撤"] + [f"{item['drawdown_pct']:.1f}%" for item in compared],
+        ]
+        lowest_risk = min(compared, key=lambda item: item["risk_level"])
+        lowest_cost = min(compared, key=lambda item: item["fee_rate"])
+        most_liquid = min(
+            compared,
+            key=lambda item: (
+                0 if "T+0" in item["liquidity"] or "活期" in item["liquidity"] else 1,
+                item["liquidity"],
+            ),
+        )
+        lines = [
+            "理财产品横向对比",
+            f"  比较范围：{'、'.join(item['name'] for item in compared)}",
+            render_table(
+                ["比较项"] + [item["name"] for item in compared],
+                criteria,
+            ),
+            "",
+            "差异结论：",
+            f"  · 风险最低：{lowest_risk['name']}（R{lowest_risk['risk_level']}）",
+            f"  · 费率最低：{lowest_cost['name']}（{lowest_cost['fee_rate'] * 100:.2f}%）",
+            f"  · 流动性最好：{most_liquid['name']}（{most_liquid['liquidity']}）",
+            "  · 对比模式不生成组合比例，也不要求立即购买。",
+            "",
+            "适用人群说明：",
+        ]
+        lines.extend(f"  · {item['name']}：{item['description']}" for item in compared)
+        lines.append("")
+        if any(item["is_live"] for item in compared):
+            lines.append(
+                "真实价格或净值只代表当前公开数据，不代表未来收益；"
+                "场外基金净值通常为 T-1 披露。"
+            )
+        else:
+            lines.append("本次比较包含演示参数，收益与费率不是实际产品承诺。")
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            data={
+                "comparison": {
+                    "products": compared,
+                    "criteria": criteria,
+                    "lowest_risk": lowest_risk["name"],
+                    "lowest_cost": lowest_cost["name"],
+                    "most_liquid": most_liquid["name"],
+                    "purchase_prompt": False,
+                },
+                "user_level": user_level,
+            },
+            summary=f"已横向对比 {len(compared)} 个产品",
+        )
+
+
 class SubscribeTool(Tool):
     """一键申购。"""
 
@@ -780,6 +1065,15 @@ class SubscribeTool(Tool):
             channel="APP",
             note=f"{target.category}申购",
         )
+        enrich_transaction(
+            txn,
+            ctx.clock,
+            metadata={
+                "product_id": target.product_id,
+                "product_name": target.name,
+                "amount": value,
+            },
+        )
         asset_total_after = card_asset_total(ctx.store, user.user_id)
         # 同一产品已有持仓时直接累加，避免持仓列表里出现一堆零散的同名份额
         holding = next(
@@ -802,6 +1096,22 @@ class SubscribeTool(Tool):
             holding.principal = round(holding.principal + value, 2)
             holding.market_value = round(holding.market_value + value, 2)
             ctx.store.touch(holding)
+
+        sandbox = ctx.session.get("sandbox")
+        sandbox_execution_id = ""
+        if sandbox is not None:
+            execution = sandbox.broker.submit_order(
+                txn.txn_id,
+                side="subscribe",
+                product_id=target.product_id,
+                amount=value,
+                symbol=target.symbol,
+            )
+            sandbox.gateway.complete_immediately(
+                execution,
+                provider_reference=f"BROKER-{txn.txn_id[-8:].upper()}",
+            )
+            sandbox_execution_id = execution.execution_id
 
         market = ctx.session.get("market")
         quote = None
@@ -846,7 +1156,8 @@ class SubscribeTool(Tool):
             data={"holding_id": holding.holding_id, "product": target.name, "amount": value,
                   "risk_level": target.risk_level, "payment_card_id": payer.card_id,
                   "payment_card_balance_after": payer.balance,
-                  "asset_total_after": asset_total_after, "txn_id": txn.txn_id},
+                  "asset_total_after": asset_total_after, "txn_id": txn.txn_id,
+                  "sandbox_execution_id": sandbox_execution_id},
             summary=f"已申购「{target.name}」{value:,.2f} 元",
         )
 
@@ -895,6 +1206,7 @@ class WealthRedeemTool(Tool):
         account = resolve_account(ctx)
         rows = []
         total_redeemed = 0.0
+        sandbox_execution_ids: List[str] = []
         for holding in targets:
             prod = ctx.providers.wealth.get(holding.product_id) if getattr(ctx, "providers", None) else store.products.get(holding.product_id)
             name = prod.name if prod else holding.product_id
@@ -912,7 +1224,7 @@ class WealthRedeemTool(Tool):
                 account.balance = round(account.balance + value, 2)
                 ctx.store.touch(account)
                 sync_cards_for_account(ctx.store, account)
-                store.add_transaction(
+                redemption_txn = store.add_transaction(
                     user_id=user.user_id,
                     account_id=account.account_id,
                     amount=value,
@@ -921,6 +1233,31 @@ class WealthRedeemTool(Tool):
                     channel="APP",
                     note="理财赎回",
                 )
+                enrich_transaction(
+                    redemption_txn,
+                    ctx.clock,
+                    metadata={
+                        "holding_id": holding.holding_id,
+                        "product_id": holding.product_id,
+                        "amount": value,
+                    },
+                )
+                sandbox = ctx.session.get("sandbox")
+                if sandbox is not None:
+                    execution = sandbox.broker.submit_order(
+                        redemption_txn.txn_id,
+                        side="redeem",
+                        product_id=holding.product_id,
+                        amount=value,
+                        symbol=getattr(prod, "symbol", ""),
+                    )
+                    sandbox.gateway.complete_immediately(
+                        execution,
+                        provider_reference=(
+                            f"BROKER-REDEEM-{redemption_txn.txn_id[-8:].upper()}"
+                        ),
+                    )
+                    sandbox_execution_ids.append(execution.execution_id)
             total_redeemed += value
             rows.append([name, f"{value:,.2f}", "已清仓" if holding.status == "redeemed" else "部分赎回",
                          prod.liquidity if prod else "-"])
@@ -940,7 +1277,10 @@ class WealthRedeemTool(Tool):
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"total": round(total_redeemed, 2)},
+            data={
+                "total": round(total_redeemed, 2),
+                "sandbox_execution_ids": sandbox_execution_ids,
+            },
             summary=f"已赎回 {total_redeemed:,.2f} 元",
         )
 

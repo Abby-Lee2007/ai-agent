@@ -279,6 +279,13 @@ try {
     const taobaoLinks = cards
       .map((card) => card.querySelector(".gift-taobao-link"))
       .filter(Boolean);
+    const actionBlocks = cards
+      .map((card) => card.querySelector(".gift-option-actions"))
+      .filter(Boolean);
+    const cardHeights = cards.map((card) => card.getBoundingClientRect().height);
+    const actionBottoms = actionBlocks.map(
+      (actions) => actions.getBoundingClientRect().bottom
+    );
     const bubbleRect = bubble?.getBoundingClientRect();
     return {
       count: cards.length,
@@ -297,6 +304,13 @@ try {
         new URL(link.href).searchParams.get("q") || ""
       ),
       taobaoHosts: taobaoLinks.map((link) => new URL(link.href).hostname),
+      priceCaptions: cards.map(
+        (card) => card.querySelector(".gift-price-caption")?.textContent || ""
+      ),
+      uniformCardHeight: cardHeights.length > 0
+        && Math.max(...cardHeights) - Math.min(...cardHeights) <= 1,
+      alignedActions: actionBottoms.length > 0
+        && Math.max(...actionBottoms) - Math.min(...actionBottoms) <= 1,
       columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").length : 0,
       allInside: Boolean(bubbleRect) && cards.every((card) => {
         const rect = card.getBoundingClientRect();
@@ -311,6 +325,12 @@ try {
   assert(giftLayout.taobaoLinkCount === 3, "生日礼物方案缺少淘宝搜索入口");
   assert(giftLayout.taobaoLinksSafe, "淘宝搜索链接缺少安全窗口属性");
   assert(giftLayout.taobaoHosts.every((host) => host === "s.taobao.com"), "淘宝搜索链接域名不正确");
+  assert(
+    giftLayout.priceCaptions.every((caption) => ["方案价", "市场参考价"].includes(caption)),
+    "礼物卡价格标签不统一",
+  );
+  assert(giftLayout.uniformCardHeight, "礼物方案卡高度不一致");
+  assert(giftLayout.alignedActions, "礼物方案卡底部按钮没有对齐");
   assert(
     giftLayout.taobaoQueries.every((query) =>
       query.includes("生日礼物")
@@ -910,6 +930,217 @@ try {
   assert(anomalyLayout.allItemsComplete, "异常交易原因或建议被裁切");
   assert(!anomalyLayout.horizontalScroll, "异常交易列表仍然依赖横向滚动");
   assert(anomalyLayout.insideViewport, "异常交易列表超出视口");
+  await sendPrompt(cdp, "给王强转1块，用微信", "请核对关键信息");
+  await sendPrompt(cdp, "确认", "请输入付款银行卡");
+  await sendPrompt(cdp, "246810", "转账成功");
+  await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    bubble?.querySelector(".message-action")?.click();
+    return true;
+  })()`);
+  await waitFor(cdp, `document.querySelector("#detail-dialog")?.open === true`);
+  const transactionDetail = await evaluate(cdp, `({
+    text: document.querySelector("#detail-dialog-content")?.textContent || "",
+    rows: document.querySelectorAll("#detail-dialog-content .transaction-detail-row").length
+  })`);
+  assert(transactionDetail.text.includes("银行处理流水号"), "交易凭证缺少银行流水号");
+  assert(transactionDetail.text.includes("生命周期"), "交易凭证缺少生命周期");
+  assert(transactionDetail.rows >= 8, "交易凭证字段不完整");
+  await evaluate(cdp, `document.querySelector("#detail-dialog-close").click()`);
+  await sendPrompt(cdp, "预测我未来90天的现金流", "未来 90 天现金流");
+  const forecastLayout = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const panel = bubble?.querySelector(".forecast-panel");
+    const chart = panel?.querySelector(".forecast-chart svg");
+    const line = chart?.querySelector(".line-balance");
+    const baseline = chart?.querySelector(".line-baseline");
+    const workflow = bubble?.querySelector(".workflow-strip");
+    const rect = bubble?.getBoundingClientRect();
+    return {
+      panel: Boolean(panel),
+      chart: Boolean(chart),
+      hasLine: Boolean(line?.getAttribute("d")),
+      hasBaseline: Boolean(baseline?.getAttribute("d")),
+      controls: panel?.querySelectorAll(".forecast-control").length || 0,
+      workflow: workflow?.textContent || "",
+      insideViewport: rect ? rect.left >= 0 && rect.right <= innerWidth + 1 : false,
+      pageFits: document.documentElement.scrollWidth <= innerWidth
+    };
+  })()`);
+  assert(forecastLayout.panel, "现金流预测没有生成数字孪生面板");
+  assert(forecastLayout.chart && forecastLayout.hasLine, "现金流预测图没有生成折线");
+  assert(forecastLayout.hasBaseline, "现金流预测图没有生成基准对比线");
+  assert(forecastLayout.controls >= 5, "现金流预测缺少交互情景滑块");
+  assert(forecastLayout.workflow.includes("顾问 Agent"), "工作流没有显示多 Agent 角色");
+  assert(forecastLayout.insideViewport, "现金流预测面板超出视口");
+  assert(forecastLayout.pageFits, "现金流预测面板导致页面横向滚动");
+  await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    bubble?.querySelector(".workflow-open")?.click();
+    return true;
+  })()`);
+  await waitFor(cdp, `document.querySelector("#detail-dialog")?.open === true`);
+  const workflowDetails = await evaluate(cdp, `({
+    rows: document.querySelectorAll("#detail-dialog-content .transaction-detail-row").length,
+    text: document.querySelector("#detail-dialog-content")?.textContent || ""
+  })`);
+  assert(workflowDetails.rows >= 3, "Agent 操作中心没有展示工作流步骤");
+  assert(workflowDetails.text.includes("理解 Agent"), "工作流缺少理解 Agent 信息");
+  await evaluate(cdp, `document.querySelector("#detail-dialog-close").click()`);
+  await screenshot(cdp, "desktop-forecast.png");
+  await sendPrompt(cdp, "主动财务管家", "个人 CFO");
+  const proactive = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    return {
+      panel: Boolean(bubble?.querySelector(".proactive-panel")),
+      items: bubble?.querySelectorAll(".insight-item").length || 0
+    };
+  })()`);
+  assert(proactive.panel, "主动财务管家没有生成结构化简报");
+  assert(proactive.items > 0, "主动财务管家没有生成提醒项");
+  await sendPrompt(cdp, "今天有什么要注意的", "材料");
+  const dailyIntake = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    return {
+      panel: Boolean(bubble?.querySelector(".daily-material-list")),
+      materials: bubble?.querySelectorAll(".daily-material").length || 0,
+      channels: bubble?.querySelectorAll(".daily-channel").length || 0,
+      hasUpload: [...(bubble?.querySelectorAll(".daily-channel strong") || [])]
+        .some((item) => item.textContent.includes("上传")),
+      hasConfirm: [...(bubble?.querySelectorAll(".daily-channel strong") || [])]
+        .some((item) => item.textContent.includes("已接入数据"))
+    };
+  })()`);
+  assert(dailyIntake.panel, "每日简报没有先展示材料清单");
+  assert(dailyIntake.materials >= 4, "每日简报材料清单不完整");
+  assert(dailyIntake.channels >= 3, "每日简报缺少提交通道");
+  assert(dailyIntake.hasUpload, "每日简报缺少上传入口");
+  assert(dailyIntake.hasConfirm, "每日简报缺少使用已接入数据的确认入口");
+  await evaluate(cdp, `(() => {
+    const buttons = [...document.querySelectorAll(".daily-channel .forecast-action")];
+    buttons.at(-1)?.click();
+    return buttons.length;
+  })()`);
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent.includes("数据口径：")`,
+    15_000,
+  );
+  await sendPrompt(cdp, "我的财务健康分", "个人财务健康分");
+  const health = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    return {
+      panel: Boolean(bubble?.querySelector(".health-overview")),
+      dimensions: bubble?.querySelectorAll(".health-dimension").length || 0,
+      advice: bubble?.querySelectorAll(".forecast-warning").length || 0,
+      adviceSteps: bubble?.querySelectorAll(".health-advice-steps li").length || 0
+    };
+  })()`);
+  assert(health.panel, "财务健康分没有生成评分面板");
+  assert(health.dimensions === 7, "财务健康分维度数量异常");
+  assert(health.advice === 3, "财务健康分没有生成三条优先建议");
+  assert(health.adviceSteps >= 3, "财务健康建议缺少可执行步骤");
+  await sendPrompt(cdp, "比较一下基金产品", "产品横向对比");
+  const wealthCompare = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const rows = bubble?.querySelectorAll(".comparison-table-wrap tbody tr") || [];
+    return {
+      table: Boolean(bubble?.querySelector(".comparison-table-wrap")),
+      products: bubble?.querySelectorAll(".comparison-table-wrap thead th").length
+        ? bubble.querySelectorAll(".comparison-table-wrap thead th").length - 1
+        : 0,
+      rows: rows.length,
+      conclusions: bubble?.querySelectorAll(".comparison-conclusion span").length || 0
+    };
+  })()`);
+  assert(wealthCompare.table, "产品对比没有生成横向表格");
+  assert(wealthCompare.products >= 2, "产品对比候选数量不足");
+  assert(wealthCompare.rows >= 6, "产品对比维度不足");
+  assert(wealthCompare.conclusions >= 3, "产品对比缺少差异结论");
+  await sendPrompt(cdp, "帮我做账务对账", "同源");
+  const reconcilePanel = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    return {
+      panel: Boolean(bubble?.querySelector(".reconcile-panel")),
+      purpose: bubble?.querySelector(".insight-subtitle")?.textContent || "",
+      note: bubble?.querySelector(".insight-note")?.textContent || ""
+    };
+  })()`);
+  assert(reconcilePanel.panel, "账务对账没有生成结构化面板");
+  assert(reconcilePanel.purpose.includes("核对"), "账务对账没有解释用途");
+  assert(reconcilePanel.note.includes("同源"), "账务对账缺少口径说明");
+  await evaluate(cdp, `document.querySelector("#event-center-button").click()`);
+  await waitFor(cdp, `document.querySelector("#event-center-dialog")?.open === true`);
+  const eventCenter = await evaluate(cdp, `({
+    items: document.querySelectorAll("#event-center-list .event-center-item").length,
+    summary: document.querySelectorAll("#event-center-list .event-center-summary-item").length,
+    levels: document.querySelectorAll("#event-center-list .event-level").length,
+    meta: document.querySelectorAll("#event-center-list .event-center-meta").length,
+    badge: document.querySelector("#event-badge")?.textContent || "0"
+  })`);
+  assert(eventCenter.items > 0, "主动事件中心没有事件");
+  assert(eventCenter.summary === 4, "主动事件中心缺少统计概览");
+  assert(eventCenter.levels === eventCenter.items, "主动事件缺少优先级标签");
+  assert(eventCenter.meta === eventCenter.items, "主动事件缺少来源与状态标签");
+  assert(Number(eventCenter.badge) > 0, "主动事件角标没有更新");
+  await evaluate(cdp, `(() => {
+    document.querySelector("#event-center-list .event-center-item .event-center-actions button:nth-child(2)")?.click();
+    return true;
+  })()`);
+  await waitFor(
+    cdp,
+    `document.querySelectorAll("#event-center-list .event-center-item").length < ${eventCenter.items}`,
+  );
+  const eventAfterSnooze = await evaluate(cdp, `({
+    items: document.querySelectorAll("#event-center-list .event-center-item").length,
+    badge: document.querySelector("#event-badge")?.textContent || "0"
+  })`);
+  assert(eventAfterSnooze.items < eventCenter.items, "稍后提醒后事件没有从列表隐藏");
+  assert(Number(eventAfterSnooze.badge) < Number(eventCenter.badge), "稍后提醒后角标没有减少");
+  await evaluate(cdp, `document.querySelector("#event-center-close").click()`);
+  await sendPrompt(cdp, "给我最近异常交易的风险处置方案", "风险处置");
+  const playbook = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    return {
+      panel: Boolean(bubble?.querySelector(".playbook-panel")),
+      steps: bubble?.querySelectorAll(".playbook-step").length || 0,
+      actions: bubble?.querySelectorAll(".playbook-action").length || 0,
+      actionTexts: [...(bubble?.querySelectorAll(".playbook-action") || [])]
+        .map((button) => button.textContent.trim())
+    };
+  })()`);
+  assert(playbook.panel, "风险处置链没有生成结构化面板");
+  assert(playbook.steps === 5, "风险处置链步骤数量异常");
+  assert(playbook.actions === 5, "风险处置链缺少步骤操作按钮");
+  assert(
+    playbook.actionTexts.every((text) => text && text !== "打开步骤"),
+    "风险处置步骤仍在使用无动作含义的“打开步骤”按钮",
+  );
+  assert(
+    playbook.actionTexts.some((text) => text.includes("确认")),
+    "风险处置链缺少可直接确认的高风险动作",
+  );
+  await evaluate(cdp, `document.querySelector(".playbook-action")?.click()`);
+  await waitFor(cdp, `document.querySelector("#playbook-action-dialog")?.open === true`);
+  const playbookDialog = await evaluate(cdp, `({
+    title: document.querySelector("#playbook-action-title")?.textContent || "",
+    message: document.querySelector("#playbook-action-message")?.textContent || ""
+  })`);
+  assert(playbookDialog.title.includes("确认"), "风险处置确认弹窗标题异常");
+  assert(playbookDialog.message.includes("身份验证"), "风险处置确认弹窗没有说明验证要求");
+  await evaluate(cdp, `document.querySelector("#playbook-action-confirm").click()`);
+  await waitFor(
+    cdp,
+    `document.querySelector("#playbook-action-dialog")?.open === false
+      && [...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent.includes("已冻结")`,
+    15_000,
+  );
+  const playbookDirectAction = await evaluate(cdp, `({
+    text: [...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent || "",
+    dialogClosed: document.querySelector("#playbook-action-dialog")?.open === false
+  })`);
+  assert(playbookDirectAction.dialogClosed, "确认执行后风险处置弹窗没有关闭");
+  assert(playbookDirectAction.text.includes("已冻结"), "确认按钮没有直接完成冻结动作");
   await screenshot(cdp, "desktop.png");
 
   await openChat(cdp, 390, 844, true);
@@ -1024,6 +1255,21 @@ try {
     `[...document.querySelectorAll(".message.agent .bubble")].some((node) => node.textContent.includes("识别方式"))`,
     15_000,
   );
+  const ocrQuality = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    return {
+      panel: Boolean(bubble?.querySelector(".forecast-panel")),
+      hasQuality: bubble?.textContent.includes("识别质量") || false,
+      hasConfidence: bubble?.querySelectorAll(".forecast-metric").length >= 3,
+      editorRows: bubble?.querySelectorAll(".receipt-editor tbody tr").length || 0,
+      hasCorrection: Boolean(bubble?.querySelector(".receipt-editor-actions"))
+    };
+  })()`);
+  assert(ocrQuality.panel, "账单识别没有生成质量面板");
+  assert(ocrQuality.hasQuality, "账单识别没有展示质量评分");
+  assert(ocrQuality.hasConfidence, "账单识别没有展示置信度指标");
+  assert(ocrQuality.editorRows > 0, "账单识别没有生成可编辑核对表");
+  assert(ocrQuality.hasCorrection, "账单识别缺少人工校正操作");
 
   console.log(JSON.stringify({
     ok: true,
@@ -1034,9 +1280,18 @@ try {
     savedContacts,
     billTable: tableLayout,
     anomalyTable: anomalyLayout,
+    forecastLayout,
+    proactive,
+    dailyIntake,
+    playbook,
+    playbookDirectAction,
+    health,
+    wealthCompare,
+    reconcilePanel,
     mobileAnomaly,
     staleSessionRetry: true,
     fileUpload: true,
+    ocrQuality,
     accessPasswordTested: Boolean(accessPassword),
     artifacts: outDir,
   }, null, 2));

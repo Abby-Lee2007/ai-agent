@@ -136,6 +136,72 @@ class TestCrossScene(unittest.TestCase):
         self.assertIn("礼物偏好", reply.text)
         self.assertIn("preferences", self.agent.session.pending.missing)
 
+    def test_spouse_alias_uses_saved_birthday_during_person_slot(self):
+        reply = self.agent.handle("生日惊喜")
+        self.assertEqual(self.agent.session.pending.missing, ["person"])
+
+        reply = self.agent.handle("配偶")
+
+        self.assertEqual(reply.intent, "crossscene.birthday_plan")
+        self.assertIn("林雅雯", reply.text)
+        self.assertIn("2026-11-20", reply.text)
+        self.assertNotIn("没有「配偶」的生日", reply.text)
+        self.assertEqual(self.agent.session.pending.missing, ["preferences", "avoid", "budget"])
+
+    def test_spouse_alias_can_replace_person_while_birthday_is_pending(self):
+        self.agent.handle("生日惊喜")
+        reply = self.agent.handle("老师")
+        self.assertEqual(self.agent.session.pending.missing, ["birthday"])
+
+        reply = self.agent.handle("老婆")
+
+        self.assertIn("林雅雯", reply.text)
+        self.assertIn("2026-11-20", reply.text)
+        self.assertNotIn("请输入「11月20日」", reply.text)
+        self.assertEqual(self.agent.session.pending.slots["person"], "老婆")
+        self.assertEqual(self.agent.session.pending.missing, ["preferences", "avoid", "budget"])
+
+    def test_combined_birthday_answer_splits_and_syncs_profile(self):
+        self.agent.handle("生日惊喜")
+        reply = self.agent.handle("老婆")
+        self.assertEqual(reply.intent, "crossscene.birthday_plan")
+
+        reply = self.agent.handle(
+            "海鲜过敏、郁金香过敏、喜欢跑步、第五人格、有睡眠障碍"
+        )
+
+        self.assertIn("预算", reply.text)
+        self.assertNotIn("礼物偏好", reply.text)
+        self.assertEqual(self.agent.session.pending.missing, ["budget"])
+        self.assertIn("跑步", self.agent.session.pending.slots["preferences"])
+        self.assertIn("第五人格", self.agent.session.pending.slots["preferences"])
+        self.assertIn("睡眠障碍", self.agent.session.pending.slots["preferences"])
+        self.assertIn("海鲜过敏", self.agent.session.pending.slots["avoid"])
+        self.assertIn("郁金香过敏", self.agent.session.pending.slots["avoid"])
+
+        prefs = self.agent.store.get_user("u_001").preferences
+        stored_favorites = "、".join(prefs.get("favorite_gift") or [])
+        stored_avoid = "、".join(prefs.get("avoid") or [])
+        self.assertIn("第五人格", stored_favorites)
+        self.assertIn("海鲜", stored_avoid)
+        self.assertIn("郁金香过敏", stored_avoid)
+
+    def test_long_preference_answer_is_not_rejected(self):
+        self.agent.handle("生日惊喜")
+        self.agent.handle("老婆")
+
+        reply = self.agent.handle(
+            "平时喜欢饰品、手工、蓝色、玫瑰和茉莉的味道、爱跑步"
+        )
+
+        self.assertIn("过敏", reply.text)
+        self.assertNotIn("礼物偏好", reply.text)
+        self.assertEqual(self.agent.session.pending.missing, ["avoid", "budget"])
+        self.assertIn(
+            "蓝色",
+            self.agent.session.pending.slots["preferences"],
+        )
+
     def test_gift_recommendations_respect_allergies_and_support_switch(self):
         recommendation = begin_birthday_recommendation(
             self.agent,
@@ -258,6 +324,88 @@ class TestCrossScene(unittest.TestCase):
             and option["items"][0]["price_pending"]
             for option in options
         ))
+        self.assertTrue(all(
+            option.get("price_label")
+            and option.get("price_estimate_min", 0) > 0
+            and option.get("price_estimate_max", 0)
+            >= option.get("price_estimate_min", 0)
+            and option.get("price_source") == "市场参考区间（非实时淘宝价格）"
+            for option in options
+        ))
+        self.assertIn("市场参考价", recommendation.text)
+        self.assertNotIn("价格待核实", recommendation.text)
+
+    def test_hobby_preferences_generate_concrete_gifts_and_new_batches(self):
+        recommendation = begin_birthday_recommendation(
+            self.agent,
+            budget="2000",
+            preferences="还喜欢编织、长跑、第五人格",
+            avoid="无",
+        )
+        first = recommendation.data["options"]
+        names = [option["name"] for option in first]
+
+        self.assertEqual(len(first), 3)
+        self.assertGreaterEqual(recommendation.data["total_options"], 9)
+        self.assertFalse(any(name.endswith(("生日礼物", "礼盒", "精选")) for name in names))
+        self.assertTrue(any("毛线" in name or "编织" in name for name in names))
+        self.assertTrue(any("跑步" in name or "运动" in name for name in names))
+        self.assertTrue(any("第五人格" in name for name in names))
+        self.assertTrue(all(option.get("external_only") for option in first))
+        self.assertTrue(all(option.get("price_label") for option in first))
+
+        second_reply = self.agent.handle("换一批")
+        second = second_reply.data["options"]
+        second_names = [option["name"] for option in second]
+        self.assertEqual(len(second), 3)
+        self.assertFalse(set(names) & set(second_names))
+        self.assertEqual(second_reply.data["batch_index"], 2)
+
+        third_reply = self.agent.handle("换一批")
+        third_names = [option["name"] for option in third_reply.data["options"]]
+        self.assertFalse(set(names) & set(third_names))
+        self.assertFalse(set(second_names) & set(third_names))
+
+    def test_sleep_need_is_turned_into_concrete_gifts_with_saved_hobbies(self):
+        prefs = dict(self.agent.store.get_user("u_001").preferences or {})
+        prefs["care_people"] = [{
+            "person_id": "CARE-SPOUSE",
+            "name": "林雅雯",
+            "relation": "配偶",
+            "birthday": "1996-11-20",
+            "favorite_gift": ["鲜花", "蛋糕", "还喜欢编织、长跑、第五人格"],
+            "avoid": ["海鲜"],
+        }]
+        self.agent.store.get_user("u_001").preferences = prefs
+
+        recommendation = begin_birthday_recommendation(
+            self.agent,
+            budget="2000",
+            preferences="她睡眠质量不好",
+            avoid="无",
+        )
+        options = recommendation.data["options"]
+        names = [option["name"] for option in options]
+
+        self.assertTrue(any(
+            word in names[0] for word in ("眼罩", "白噪音", "颈枕", "阅读灯")
+        ))
+        self.assertTrue(any(
+            word in " ".join(names)
+            for word in ("编织", "跑步", "第五人格")
+        ))
+        self.assertFalse(any(name.endswith(("生日礼物", "礼盒", "精选")) for name in names))
+        self.assertIn("不宣称治疗失眠", recommendation.text)
+        self.assertTrue(all(option.get("price_label") for option in options))
+
+        next_batch = self.agent.handle("换一批")
+        next_names = [option["name"] for option in next_batch.data["options"]]
+        self.assertFalse(set(names) & set(next_names))
+        self.assertTrue(all(
+            option.get("search_query") not in {"她睡眠质量不好 生日礼物"}
+            for option in options
+            if option.get("search_query")
+        ))
 
     def test_birthday_preference_followup_acknowledges_answer(self):
         prefs = dict(self.agent.store.get_user("u_001").preferences or {})
@@ -343,8 +491,16 @@ class TestCrossScene(unittest.TestCase):
     def test_daily_brief_aggregates_multiple_domains(self):
         reply = self.agent.handle("今天有什么要注意的")
         self.assertEqual(reply.intent, "crossscene.daily_brief")
+        self.assertEqual(reply.kind, "confirm")
+        self.assertTrue(reply.data["daily_brief_intake"]["materials"])
+        self.assertTrue(reply.data["daily_brief_intake"]["channels"])
+        self.assertIn("不会随机编造", reply.text)
+
+        reply = self.agent.handle("确认")
         for section in ("风险提醒", "订阅扣费", "待执行计划"):
             self.assertIn(section, reply.text)
+        self.assertTrue(reply.data["materials_confirmed"])
+        self.assertIn("数据口径", reply.text)
 
     def test_goal_list(self):
         recommendation = begin_birthday_recommendation(self.agent)

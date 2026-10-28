@@ -68,6 +68,11 @@ CATEGORIES: Tuple[CapabilityCategory, ...] = (
                 aliases=("AA", "平摊", "分摊", "均摊"),
             ),
             CapabilityAction(
+                "transfer_aa_status", "AA收款进度", "AA收款进度",
+                "transfer.aa_status",
+                aliases=("AA状态", "谁还没付款", "收款进度"),
+            ),
+            CapabilityAction(
                 "tasks", "待执行任务", "我有哪些定时转账",
                 "transfer.list_scheduled",
                 aliases=("待执行任务", "定时任务", "预约任务"),
@@ -95,6 +100,11 @@ CATEGORIES: Tuple[CapabilityCategory, ...] = (
                 "bill_anomaly", "异常交易识别", "帮我看看最近有没有异常交易",
                 "bill.anomaly",
                 aliases=("异常交易", "盗刷", "可疑交易", "重复扣款"),
+            ),
+            CapabilityAction(
+                "risk_playbook", "风险事件处置", "给我最近异常交易的风险处置方案",
+                "risk.playbook",
+                aliases=("风险处置", "盗刷怎么办", "争议交易", "交易处置"),
             ),
             CapabilityAction(
                 "bill_category", "消费分类统计", "分析我这个月的消费分类",
@@ -138,8 +148,13 @@ CATEGORIES: Tuple[CapabilityCategory, ...] = (
                 aliases=("推荐理财产品", "买什么", "产品推荐"),
             ),
             CapabilityAction(
+                "wealth_analytics", "产品风险分析", "分析这些理财产品的风险",
+                "wealth.analytics",
+                aliases=("最大回撤", "组合风险", "波动率", "理财风险分析"),
+            ),
+            CapabilityAction(
                 "wealth_compare", "产品对比", "比较一下稳健型理财产品",
-                "wealth.recommend",
+                "wealth.compare",
                 aliases=("产品对比", "比较产品", "对比理财"),
             ),
             CapabilityAction(
@@ -167,6 +182,16 @@ CATEGORIES: Tuple[CapabilityCategory, ...] = (
             CapabilityAction(
                 "card_list", "卡片列表", "我有哪些卡", "card.list",
                 aliases=("我的卡", "卡片列表", "有哪些银行卡"),
+            ),
+            CapabilityAction(
+                "card_statement", "信用卡账单", "查看信用卡账单",
+                "card.statement",
+                aliases=("本期应还", "最低还款", "信用卡还款日", "账单日"),
+            ),
+            CapabilityAction(
+                "card_timeline", "申请进度", "查看信用卡申请进度",
+                "card.timeline",
+                aliases=("卡片进度", "审批时间线", "卡片生命周期"),
             ),
             CapabilityAction(
                 "card_apply", "申请卡片", "我想申请一张信用卡", "card.apply",
@@ -291,6 +316,31 @@ CATEGORIES: Tuple[CapabilityCategory, ...] = (
 
 
 GLOBAL_ACTIONS: Tuple[CapabilityAction, ...] = (
+    CapabilityAction(
+        "financial_twin", "财务数字孪生", "预测我未来90天的现金流",
+        "forecast.cashflow",
+        aliases=("财务数字孪生", "现金流预测", "未来90天", "资金缺口"),
+    ),
+    CapabilityAction(
+        "proactive_cfo", "主动财务管家", "主动财务管家",
+        "advisor.proactive",
+        aliases=("主动财务管家", "财务体检", "个人CFO", "主动提醒"),
+    ),
+    CapabilityAction(
+        "financial_health", "财务健康分", "我的财务健康分",
+        "advisor.health_score",
+        aliases=("财务健康分", "健康评分", "财务评分"),
+    ),
+    CapabilityAction(
+        "event_center", "主动事件中心", "我的主动事件",
+        "advisor.events",
+        aliases=("主动事件", "财务通知", "事件中心"),
+    ),
+    CapabilityAction(
+        "account_reconcile", "账务对账", "帮我做账务对账",
+        "account.reconcile",
+        aliases=("账务对账", "账实一致", "核对余额"),
+    ),
     CapabilityAction(
         "daily_brief", "每日简报", "今天有什么要注意的",
         "crossscene.daily_brief",

@@ -19,6 +19,7 @@ from finagent.data.card_ledger import (
 )
 from finagent.data.models import Account, Card
 from finagent.data.providers import build_data_providers
+from finagent.data.transaction_lifecycle import enrich_transaction
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, render_table
 from finagent.utils import parse_date
 
@@ -233,6 +234,35 @@ class TransferTool(Tool):
             note=(note or "转账") + f"（{CHANNEL_LABELS[channel]}）",
             tags=["transfer", channel],
         )
+        enrich_transaction(
+            txn,
+            ctx.clock,
+            expected_minutes=2 if channel == "bank" else 0,
+            risk_notes=decision.reasons,
+            metadata={
+                "payee": payee_obj.name,
+                "receiving_account": target_account,
+                "channel": channel,
+            },
+        )
+        sandbox = ctx.session.get("sandbox")
+        sandbox_execution_id = ""
+        if sandbox is not None:
+            execution = sandbox.payment.submit(
+                "transfer",
+                txn.txn_id,
+                {
+                    "channel": channel,
+                    "payee": payee_obj.name,
+                    "amount": value,
+                    "receiving_account": target_account,
+                },
+            )
+            sandbox.gateway.complete_immediately(
+                execution,
+                provider_reference=txn.bank_reference,
+            )
+            sandbox_execution_id = execution.execution_id
         update_card_balance(ctx.store, payer, payer.balance - value)
         ctx.store.touch(payee_obj)
         self._credit_payee(ctx, payee_obj, value)
@@ -261,6 +291,7 @@ class TransferTool(Tool):
                 "card_balance": payer.balance,
                 "asset_total_after": asset_total_after,
                 "risk": decision.summary(),
+                "sandbox_execution_id": sandbox_execution_id,
             },
             summary=f"已向{payee_obj.name}转账 {value:,.2f} 元",
         )
@@ -367,6 +398,36 @@ class InternalTransferTool(Tool):
             note=note or "本人银行卡内部划转",
             tags=["internal_transfer", "internal_transfer_in"],
         )
+        enrich_transaction(
+            out_txn,
+            ctx.clock,
+            risk_notes=decision.reasons,
+            metadata={"target_card": target.card_id, "kind": "internal_transfer_out"},
+        )
+        enrich_transaction(
+            in_txn,
+            ctx.clock,
+            risk_notes=[],
+            metadata={"source_card": source.card_id, "kind": "internal_transfer_in"},
+        )
+        sandbox = ctx.session.get("sandbox")
+        sandbox_execution_id = ""
+        if sandbox is not None:
+            execution = sandbox.bank.submit(
+                "internal_transfer",
+                out_txn.txn_id,
+                {
+                    "from_card_id": source.card_id,
+                    "to_card_id": target.card_id,
+                    "amount": value,
+                    "in_txn_id": in_txn.txn_id,
+                },
+            )
+            sandbox.gateway.complete_immediately(
+                execution,
+                provider_reference=f"CORE-{out_txn.txn_id[-8:].upper()}",
+            )
+            sandbox_execution_id = execution.execution_id
         asset_total_after = card_asset_total(ctx.store, ctx.user_id)
         lines = [
             f"本人银行卡内部划转成功：{value:,.2f} 元",
@@ -392,6 +453,7 @@ class InternalTransferTool(Tool):
                 "in_txn_id": in_txn.txn_id,
                 "asset_total_unchanged": True,
                 "asset_total_after": asset_total_after,
+                "sandbox_execution_id": sandbox_execution_id,
             },
             summary=f"已在本人银行卡间划转 {value:,.2f} 元",
         )

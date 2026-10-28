@@ -32,7 +32,7 @@ def _env_bool(name: str, default: bool) -> bool:
 # --------------------------------------------------------------------------
 APP_NAME = "AI Banking Agent"
 APP_SUBTITLE = "2026 FinTechathon 深圳国际金融科技大赛 · 人工智能国内赛道"
-PROJECT_VERSION = "0.1.0"
+PROJECT_VERSION = "0.2.0"
 
 DISCLAIMER = (
     "本系统为赛事原型 Demo：所有账户、交易、理财与卡片数据均为模拟数据，"
@@ -68,6 +68,7 @@ class LLMConfig:
     TIMEOUT = _env_float("FINAGENT_LLM_TIMEOUT", 20.0)
     TEMPERATURE = _env_float("FINAGENT_LLM_TEMPERATURE", 0.0)
     MAX_TOKENS = int(_env_float("FINAGENT_LLM_MAX_TOKENS", 1024))
+    TOOL_CALLING = _env_bool("FINAGENT_LLM_TOOL_CALLING", True)
 
     @classmethod
     def enabled(cls) -> bool:
@@ -77,6 +78,19 @@ class LLMConfig:
         if cls.MODE == "on":
             return True
         return bool(cls.API_KEY)
+
+
+class LicensedMarketConfig:
+    """Optional licensed market-data gateway.
+
+    The adapter expects a REST gateway that normalizes its licensed provider
+    response into the fields documented in finagent/data/licensed_market.py.
+    """
+
+    URL = os.getenv("FINAGENT_LICENSED_MARKET_URL", "").strip()
+    API_KEY = os.getenv("FINAGENT_LICENSED_MARKET_KEY", "").strip()
+    NAME = os.getenv("FINAGENT_LICENSED_MARKET_NAME", "licensed-market").strip()
+    TIMEOUT = _env_float("FINAGENT_LICENSED_MARKET_TIMEOUT", 8.0)
 
 
 # --------------------------------------------------------------------------
@@ -97,6 +111,14 @@ class RiskPolicy:
     DAILY_TRANSFER_LIMIT = _env_float("FINAGENT_DAILY_TRANSFER_LIMIT", 200_000.0)
     # 首次交易的新收款人单笔上限（元）
     NEW_PAYEE_LIMIT = _env_float("FINAGENT_NEW_PAYEE_LIMIT", 5_000.0)
+    # 新收款人较大金额进入冷静期，需等待后再次确认
+    NEW_PAYEE_COOLING_THRESHOLD = _env_float(
+        "FINAGENT_NEW_PAYEE_COOLING_THRESHOLD",
+        3_000.0,
+    )
+    NEW_PAYEE_COOLING_MINUTES = int(
+        _env_float("FINAGENT_NEW_PAYEE_COOLING_MINUTES", 10)
+    )
     # 超过该金额需要二次确认
     CONFIRM_THRESHOLD = _env_float("FINAGENT_CONFIRM_THRESHOLD", 1_000.0)
     # 常用收款人（通讯录已有）的单笔确认门槛更宽松

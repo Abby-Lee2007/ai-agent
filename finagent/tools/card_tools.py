@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import re
+import hashlib
 from datetime import timedelta
 from typing import Any
 
@@ -20,6 +21,7 @@ from finagent.data.card_ledger import (
 )
 from finagent.data.models import Card
 from finagent.data.provenance import source_badge
+from finagent.data.transaction_lifecycle import enrich_transaction
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, render_table
 
 KIND_LABEL = {
@@ -35,6 +37,7 @@ STATUS_LABEL = {
     "lost": "已挂失",
     "cancelled": "已销卡",
     "pending": "待激活",
+    "rejected": "申请未通过",
 }
 
 SCOPE_LABEL = {
@@ -94,7 +97,10 @@ class CardListTool(Tool):
         rows = []
         for c in cards:
             if c.kind == "credit":
-                limit = f"额度 {c.credit_limit:,.0f} / 已用 {c.used:,.0f}"
+                limit = (
+                    f"额度 {c.credit_limit:,.0f} / 已用 {c.used:,.0f}；"
+                    f"本期 {c.statement_amount:,.0f}"
+                )
                 balance = f"可用 {c.available:,.0f}"
             else:
                 limit = f"日限额 {c.daily_limit:,.0f}"
@@ -447,6 +453,12 @@ class CardBindTool(Tool):
             overseas_enabled=False,
             issued_at=ctx.clock.iso(),
             note=f"{bank_name}储蓄卡（绑定）",
+            application_stage="active",
+            application_history=[
+                {"stage": "submitted", "label": "提交绑卡资料", "at": ctx.clock.iso()},
+                {"stage": "verified", "label": "卡号、密码和手机号验证通过", "at": ctx.clock.iso()},
+                {"stage": "active", "label": "绑定成功", "at": ctx.clock.iso()},
+            ],
         )
         ctx.store.cards[card.card_id] = card
         ctx.store.touch(card)
@@ -559,13 +571,37 @@ class CardApplyTool(Tool):
             limit = float(limit_request) if limit_request is not None else defaults[kind]
         except (TypeError, ValueError):
             limit = defaults[kind]
+        card_id = ctx.store.next_id("cards")
+        sequence = re.sub(r"\D", "", card_id)[-4:].zfill(4)
+        instant_virtual = kind == "virtual"
+        digest = hashlib.sha256(card_id.encode("utf-8")).hexdigest()
+        virtual_pan = (
+            "6229" + "".join(str(int(ch, 16) % 10) for ch in digest[:12])
+            if instant_virtual else ""
+        )
+        virtual_cvv = (
+            "".join(str(int(ch, 16) % 10) for ch in digest[12:15])
+            if instant_virtual else ""
+        )
+        history = [
+            {"stage": "submitted", "label": "提交申请资料", "at": ctx.clock.iso()},
+            {"stage": "preapproved", "label": "模拟预审通过", "at": ctx.clock.iso()},
+        ]
+        if instant_virtual:
+            history.append(
+                {"stage": "active", "label": "虚拟卡即时发卡并激活", "at": ctx.clock.iso()}
+            )
+        else:
+            history.append(
+                {"stage": "pending", "label": "等待模拟终审", "at": ctx.clock.iso()}
+            )
         card = Card(
-            card_id=ctx.store.next_id("cards"),
+            card_id=card_id,
             user_id=user.user_id,
             kind=kind,
             brand=bank_name,
-            tail="****",
-            status="pending",
+            tail=sequence if instant_virtual else "****",
+            status="active" if instant_virtual else "pending",
             credit_limit=limit if kind == "supplementary" else 0.0,
             daily_limit=min(limit, 50_000.0) if kind != "credit" else limit,
             single_limit=min(limit / 5, 5_000.0),
@@ -573,6 +609,10 @@ class CardApplyTool(Tool):
             contactless_enabled=kind != "virtual",
             issued_at=ctx.clock.iso(),
             note=note or "新申请",
+            application_stage="active" if instant_virtual else "pending",
+            application_history=history,
+            virtual_pan_once=virtual_pan,
+            virtual_cvv_once=virtual_cvv,
         )
         ctx.store.cards[card.card_id] = card
         ctx.store.touch(card)
@@ -590,14 +630,34 @@ class CardApplyTool(Tool):
             payload={"card_id": card.card_id},
         )
         lines = [
-            f"申请已提交：{bank_name} {KIND_LABEL[kind]}"
+            (
+                f"虚拟卡即时发卡成功：{bank_name} {KIND_LABEL[kind]}"
+                if instant_virtual
+                else f"申请已提交：{bank_name} {KIND_LABEL[kind]}"
+            )
             + (f"（期望额度 {limit:,.0f} 元）" if limit else ""),
-            f"  申请编号：{card.card_id}   当前状态：待审批",
-            "  预计审批时间：几分钟至 1 个工作日（演示环境）。",
-            "  系统会在状态变化时提醒；审批通过后可一键激活。",
+            f"  申请编号：{card.card_id}   当前状态："
+            f"{'已激活' if instant_virtual else '待审批'}",
         ]
+        if instant_virtual:
+            lines.extend([
+                f"  虚拟卡号（仅本次展示）：{virtual_pan}",
+                f"  安全码（仅本次展示）：{virtual_cvv}",
+                f"  尾号：{sequence}；单笔限额 {card.single_limit:,.0f} 元，"
+                f"日限额 {card.daily_limit:,.0f} 元",
+            ])
+        else:
+            lines.extend([
+                "  预计审批时间：几分钟至 1 个工作日（演示环境）。",
+                "  系统会记录资料提交、预审、补充材料、审批和激活时间线。",
+            ])
         if note:
             lines.append(f"  备注：{note}")
+        if instant_virtual:
+            card.virtual_pan_revealed_at = ctx.clock.iso()
+            card.virtual_pan_once = ""
+            card.virtual_cvv_once = ""
+            ctx.store.touch(card)
         return ToolResult(
             True,
             "\n".join(lines),
@@ -652,6 +712,12 @@ class CardApplyTool(Tool):
             contactless_enabled=True,
             issued_at=ctx.clock.iso(),
             note=note or f"{bank_name}{account_class}储蓄卡（开户）",
+            application_stage="active",
+            application_history=[
+                {"stage": "submitted", "label": "提交开户资料", "at": ctx.clock.iso()},
+                {"stage": "preapproved", "label": "模拟预审通过", "at": ctx.clock.iso()},
+                {"stage": "active", "label": "开户并激活成功", "at": ctx.clock.iso()},
+            ],
         )
         ctx.store.cards[card.card_id] = card
         ctx.store.touch(card)
@@ -799,6 +865,12 @@ class CardApplyTool(Tool):
                 contactless_enabled=True,
                 issued_at=ctx.clock.iso(),
                 note=application_note,
+                application_stage="pending_review",
+                application_history=[
+                    {"stage": "submitted", "label": "提交信用卡申请", "at": ctx.clock.iso()},
+                    {"stage": "preapproved", "label": f"模拟预审：{decision}", "at": ctx.clock.iso()},
+                    {"stage": "pending", "label": "等待模拟终审", "at": ctx.clock.iso()},
+                ],
             )
             ctx.store.cards[card.card_id] = card
             ctx.store.touch(card)
@@ -816,14 +888,35 @@ class CardApplyTool(Tool):
                 payload={"card_id": card.card_id, "status": "pending_review"},
             )
         else:
+            card_id = ctx.store.next_id("cards")
+            card = Card(
+                card_id=card_id,
+                user_id=ctx.user_id,
+                kind="credit",
+                brand=bank_name,
+                tail="****",
+                status="rejected",
+                credit_limit=0.0,
+                daily_limit=0.0,
+                single_limit=0.0,
+                issued_at=ctx.clock.iso(),
+                note=f"{bank_name}信用卡申请未通过（评分 {score}/100）",
+                application_stage="rejected",
+                application_history=[
+                    {"stage": "submitted", "label": "提交信用卡申请", "at": ctx.clock.iso()},
+                    {"stage": "prechecked", "label": f"模拟预审评分 {score}/100", "at": ctx.clock.iso()},
+                    {"stage": "rejected", "label": "模拟预审未通过", "at": ctx.clock.iso()},
+                ],
+            )
+            ctx.store.cards[card.card_id] = card
+            ctx.store.touch(card)
             task = ctx.store.add_task(
                 user_id=ctx.user_id,
                 kind="reminder",
                 run_date=review_date,
                 title=f"{bank_name}信用卡申请结果通知",
-                payload={"status": "preliminary_rejected"},
+                payload={"status": "preliminary_rejected", "card_id": card.card_id},
             )
-            card_id = ctx.store.next_id("card_applications")
 
         ctx.store.log(
             "card.apply_credit",
@@ -856,7 +949,7 @@ class CardApplyTool(Tool):
             "\n".join(lines),
             data={
                 "application_id": card_id,
-                "card_id": card_id if decision != "未通过" else "",
+                "card_id": card_id,
                 "task_id": task.task_id,
                 "kind": "credit",
                 "decision": decision,
@@ -1007,6 +1100,25 @@ class CreditCardRepayTool(Tool):
                 False,
                 f"还款金额超过信用卡当前欠款 {target.used:,.2f} 元。",
             )
+        remaining = value
+        fees_paid = min(remaining, max(target.fees_due, 0.0))
+        remaining -= fees_paid
+        interest_paid = min(remaining, max(target.interest_due, 0.0))
+        remaining -= interest_paid
+        principal_paid = round(remaining, 2)
+        target.fees_due = round(max(target.fees_due - fees_paid, 0.0), 2)
+        target.interest_due = round(
+            max(target.interest_due - interest_paid, 0.0),
+            2,
+        )
+        target.statement_amount = round(
+            max(target.statement_amount - value, 0.0),
+            2,
+        )
+        target.minimum_payment = round(
+            min(target.minimum_payment, target.statement_amount * 0.1),
+            2,
+        )
         decision = ctx.risk.check_operation(
             "card.repay",
             {"amount": value, "account": source.card_id},
@@ -1031,6 +1143,21 @@ class CreditCardRepayTool(Tool):
             note="信用卡账单还款",
             tags=["credit_card_repayment", f"card:{target.card_id}"],
         )
+        enrich_transaction(
+            txn,
+            ctx.clock,
+            expected_minutes=0,
+            risk_notes=decision.reasons,
+            metadata={
+                "credit_card": target.card_id,
+                "payment_card": source.card_id,
+                "amount_breakdown": {
+                    "fees": fees_paid,
+                    "interest": interest_paid,
+                    "principal": principal_paid,
+                },
+            },
+        )
         asset_total_after = card_asset_total(ctx.store, ctx.user_id)
         lines = [
             f"信用卡还款成功：{value:,.2f} 元",
@@ -1039,6 +1166,8 @@ class CreditCardRepayTool(Tool):
             f"  信用卡：尾号 {target.tail} 已用额度 "
             f"{used_before:,.2f} → {target.used:,.2f} 元",
             f"  信用卡可用额度：{target.available:,.2f} 元",
+            f"  还款冲抵：本金 {principal_paid:,.2f} 元、"
+            f"利息 {interest_paid:,.2f} 元、费用 {fees_paid:,.2f} 元",
             f"  还款流水：{txn.txn_id}",
             f"  银行卡资产总额：{asset_total_after:,.2f} 元",
         ]
@@ -1052,11 +1181,161 @@ class CreditCardRepayTool(Tool):
                 "payment_card_id": source.card_id,
                 "amount": value,
                 "credit_used_after": target.used,
+                "repayment_breakdown": {
+                    "principal": principal_paid,
+                    "interest": interest_paid,
+                    "fees": fees_paid,
+                },
                 "payment_card_balance_after": source.balance,
                 "txn_id": txn.txn_id,
                 "asset_total_after": asset_total_after,
             },
             summary=f"已用 {source.brand} 尾号 {source.tail} 还款 {value:,.2f} 元",
+        )
+
+
+class CardStatementTool(Tool):
+    """Credit-card statement and billing-cycle details."""
+
+    name = "card.statement"
+    category = "卡片管理"
+    description = "查看信用卡账单日、还款日、本期账单、最低还款、临时额度与费用"
+    risk_level = "low"
+    params = [ToolParam("card", "string", False, "信用卡名称或尾号")]
+    examples = ["查看信用卡账单", "信用卡本期应还多少", "信用卡还款日是什么时候"]
+
+    def run(self, ctx: ToolContext, card: str = "") -> ToolResult:  # type: ignore[override]
+        target = _find_card(ctx, card or "信用卡")
+        if target is None or target.kind != "credit":
+            return ToolResult(False, "没有找到对应的信用卡。")
+        remaining = round(max(target.statement_amount - target.minimum_payment, 0), 2)
+        lines = [
+            f"{_card_display(target)}账单详情",
+            f"  账单日：每月 {target.billing_day or 5} 日",
+            f"  还款日：每月 {target.due_day or 23} 日",
+            f"  本期账单：{target.statement_amount:,.2f} 元",
+            f"  最低还款：{target.minimum_payment:,.2f} 元",
+            f"  剩余应还：{target.statement_amount:,.2f} 元",
+            f"  利息：{target.interest_due:,.2f} 元",
+            f"  费用：{target.fees_due:,.2f} 元",
+            f"  分期余额：{target.installment_balance:,.2f} 元",
+            f"  当前已用额度：{target.used:,.2f} 元",
+            f"  可用额度：{target.available:,.2f} 元",
+            f"  临时额度：{target.temporary_limit:,.2f} 元"
+            + (
+                f"（有效期至 {target.temporary_limit_expires_at}）"
+                if target.temporary_limit_expires_at else ""
+            ),
+        ]
+        if target.overdue_days:
+            lines.append(f"  逾期状态：已逾期 {target.overdue_days} 天")
+        else:
+            lines.append("  逾期状态：未逾期")
+        lines.append(
+            f"  提示：最低还款后仍有 {remaining:,.2f} 元未结清，"
+            "剩余部分可能继续产生利息。"
+        )
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            data={
+                "card_id": target.card_id,
+                "billing_day": target.billing_day,
+                "due_day": target.due_day,
+                "statement_amount": target.statement_amount,
+                "minimum_payment": target.minimum_payment,
+                "remaining_due": remaining,
+                "interest_due": target.interest_due,
+                "fees_due": target.fees_due,
+                "installment_balance": target.installment_balance,
+                "temporary_limit": target.temporary_limit,
+                "temporary_limit_expires_at": target.temporary_limit_expires_at,
+                "overdue_days": target.overdue_days,
+            },
+            summary=f"信用卡本期应还 {target.statement_amount:,.2f} 元",
+        )
+
+
+class CardTimelineTool(Tool):
+    """Application lifecycle and one-time virtual-card details."""
+
+    name = "card.timeline"
+    category = "卡片管理"
+    description = "查看卡片申请、预审、审批和激活时间线，以及虚拟卡一次性安全信息"
+    risk_level = "low"
+    params = [
+        ToolParam("card", "string", False, "卡片名称或尾号"),
+        ToolParam(
+            "reveal",
+            "boolean",
+            False,
+            "是否一次性显示未展示过的虚拟卡号和安全码",
+            default=False,
+        ),
+    ]
+    examples = ["查看卡片申请进度", "显示我的虚拟卡卡号", "虚拟卡安全码"]
+
+    def run(  # type: ignore[override]
+        self,
+        ctx: ToolContext,
+        card: str = "",
+        reveal: Any = False,
+    ) -> ToolResult:
+        target = _find_card(ctx, card)
+        if target is None:
+            return ToolResult(False, "没有找到对应的卡片。")
+        stage_labels = {
+            "submitted": "资料已提交",
+            "prechecked": "模拟预审",
+            "preapproved": "模拟预审通过",
+            "pending": "等待审批",
+            "pending_review": "等待终审",
+            "manual_review": "人工复核",
+            "approved": "审批通过",
+            "active": "已激活",
+            "rejected": "申请未通过",
+        }
+        history = target.application_history or [
+            {"stage": target.application_stage or target.status, "label": "当前状态", "at": target.issued_at}
+        ]
+        lines = [
+            f"{_card_display(target)}生命周期",
+            f"  当前状态：{STATUS_LABEL.get(target.status, target.status)}",
+        ]
+        for item in history:
+            stage = str(item.get("stage") or "")
+            lines.append(
+                f"  · {stage_labels.get(stage, stage or '状态更新')}："
+                f"{item.get('label') or ''}"
+                + (f"（{item.get('at')}）" if item.get("at") else "")
+            )
+        if target.kind == "virtual":
+            lines.append("")
+            if bool(reveal):
+                if target.virtual_pan_once or target.virtual_cvv_once:
+                    lines.extend([
+                        f"  虚拟卡号（仅本次展示）：{target.virtual_pan_once or '已展示并清除'}",
+                        f"  安全码（仅本次展示）：{target.virtual_cvv_once or '已展示并清除'}",
+                    ])
+                    target.virtual_pan_revealed_at = ctx.clock.iso()
+                    target.virtual_pan_once = ""
+                    target.virtual_cvv_once = ""
+                    ctx.store.touch(target)
+                else:
+                    lines.append("  虚拟卡安全信息此前已经展示并清除，请补卡或重新发卡。")
+            else:
+                lines.append("  虚拟卡号和安全码默认隐藏；如需查看，请说「显示虚拟卡卡号」。")
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            data={
+                "card_id": target.card_id,
+                "status": target.status,
+                "application_stage": target.application_stage,
+                "history": history,
+                "virtual_pan_revealed_at": target.virtual_pan_revealed_at,
+            },
+            summary=f"已展示{target.tail}的卡片生命周期",
         )
 
 

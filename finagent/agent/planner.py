@@ -81,11 +81,16 @@ SIMPLE_PLANS: Dict[str, List[Tuple[str, Dict[str, str]]]] = {
     "wealth.recommend": [("wealth.recommend", {"risk_level": "risk_level", "amount": "amount",
                                                "horizon": "horizon", "asset_class": "asset_class",
                                                "purpose": "purpose"})],
+    "wealth.compare": [("wealth.compare", {"products": "products",
+                                           "asset_class": "asset_class"})],
     "wealth.subscribe": [("wealth.subscribe", {"product": "product", "amount": "amount",
                                                "account": "account"})],
     "wealth.redeem": [("wealth.redeem", {"product": "product", "amount": "amount"})],
     "wealth.portfolio": [("wealth.portfolio", {})],
+    "wealth.analytics": [("wealth.analytics", {"product": "product"})],
     "card.list": [("card.list", {})],
+    "card.statement": [("card.statement", {"card": "card"})],
+    "card.timeline": [("card.timeline", {"card": "card", "reveal": "reveal"})],
     "card.apply": [("card.apply", {"kind": "kind", "bank": "bank",
                                    "limit_request": "limit_request", "note": "note"})],
     "card.bind": [("card.bind", {"card_no": "card_no", "password": "password",
@@ -121,11 +126,37 @@ SIMPLE_PLANS: Dict[str, List[Tuple[str, Dict[str, str]]]] = {
     "goal.create": [("goal.create", {"name": "name", "target_amount": "target_amount",
                                      "deadline": "deadline", "scenario": "scenario"})],
     "goal.list": [("goal.list", {})],
+    "forecast.cashflow": [(
+        "forecast.cashflow",
+        {
+            "months": "months",
+            "purchase_amount": "purchase_amount",
+            "purchase_date": "purchase_date",
+            "income_change_pct": "income_change_pct",
+            "extra_monthly_expense": "extra_monthly_expense",
+            "investment_amount": "investment_amount",
+            "investment_return_pct": "investment_return_pct",
+        },
+    )],
+    "advisor.proactive": [("advisor.proactive", {})],
+    "advisor.health_score": [("advisor.health_score", {})],
+    "advisor.events": [("advisor.events", {"action": "action", "event_id": "event_id"})],
+    "risk.playbook": [("risk.playbook", {"case": "case"})],
+    "risk.dispute": [("risk.dispute", {"txn_id": "txn_id"})],
+    "account.reconcile": [("account.reconcile", {})],
+    "account.reconcile_adjust": [(
+        "account.reconcile_adjust",
+        {"card": "card", "source_of_truth": "source_of_truth", "reason": "reason"},
+    )],
+    "transfer.aa_status": [("transfer.aa_status", {})],
     "account.balance": [("account.balance", {})],
     "profile.show": [("profile.show", {})],
     "help": [("help", {})],
     "agent.about": [("agent.about", {})],
-    "crossscene.daily_brief": [("crossscene.daily_brief", {})],
+    "crossscene.daily_brief": [(
+        "crossscene.daily_brief",
+        {"data_mode": "data_mode"},
+    )],
     "crossscene.gift_plan": [
         ("crossscene.schedule_gift", {
             "person": "person",
@@ -186,6 +217,7 @@ DEFAULT_QUESTIONS = {
     "name": "请问这个目标叫什么名字？例如「旅行基金」。",
     "target_amount": "请问目标金额是多少？",
     "birthday": "请问 ta 的生日是哪一天？例如「11月20日」。",
+    "txn_id": "请提供需要发起争议的交易流水号，例如 TXN000001。",
     "date": "请问希望哪一天送达（日期）？例如「11月20日」或「下周六」。",
     "item": "请问想送什么礼物？例如「鲜花」「蛋糕」或「伴手礼」。",
     "preferences": "收礼人平时喜欢什么礼物、颜色、口味或活动？",
@@ -278,8 +310,9 @@ DATA_CONFIRM_INTENTS = {
 class Planner:
     """把意图翻译成可执行的工具调用计划。"""
 
-    def __init__(self, registry: ToolRegistry) -> None:
+    def __init__(self, registry: ToolRegistry, llm_planner=None) -> None:
         self.registry = registry
+        self.llm_planner = llm_planner
 
     def plan(self, intent: Intent, ctx: ToolContext) -> Plan:
         if intent.name == "crossscene.birthday_plan":
@@ -293,6 +326,14 @@ class Planner:
         template = SIMPLE_PLANS[intent.name]
         slots = dict(intent.slots)
         plan = Plan(intent=intent.name, slots=slots)
+        if (
+            intent.name == "wealth.recommend"
+            and "换一批" in str(intent.raw_text or "")
+            and not str(slots.get("asset_class") or "").strip()
+        ):
+            previous_filter = str(ctx.session.get("wealth_recommend_filter") or "")
+            if previous_filter and previous_filter != "mixed":
+                slots["asset_class"] = previous_filter
         missing = self._missing_slots(template, slots)
         if intent.name in CARD_TARGET_INTENTS:
             card_key = str(slots.get("card") or "").strip()
@@ -340,6 +381,21 @@ class Planner:
                 else self._question(missing[0])
             )
             return plan
+        if self.llm_planner is not None:
+            proposal = self.llm_planner.propose(
+                intent.name,
+                template,
+                slots,
+                intent.raw_text,
+            )
+            if proposal is not None:
+                plan.steps = [PlanStep(
+                    tool=proposal["tool"],
+                    args=proposal["args"],
+                    note="LLM Tool Calling + deterministic argument validation",
+                )]
+                plan.description = self._describe(plan.steps, ctx)
+                return plan
         plan.steps = self._build_steps(template, slots)
         plan.description = self._describe(plan.steps, ctx)
         return plan
@@ -718,6 +774,27 @@ class Planner:
                         f"余额 {payer.balance:,.2f} 元）"
                     )
                 return "；".join(parts)
+            if tool == "forecast.cashflow":
+                months = int(args.get("months") or 3)
+                scenario = []
+                if args.get("purchase_amount"):
+                    scenario.append(f"计划消费 {float(args['purchase_amount']):,.2f} 元")
+                if args.get("income_change_pct"):
+                    scenario.append(f"收入变化 {float(args['income_change_pct']):+.1f}%")
+                suffix = f"；情景：{'、'.join(scenario)}" if scenario else ""
+                return f"生成未来 {months * 30} 天现金流数字孪生{suffix}"
+            if tool == "advisor.proactive":
+                return "主动检查未来30天现金流、订阅、负债和异常交易"
+            if tool == "risk.playbook":
+                case = str(args.get("case") or "最近异常交易")
+                return f"为「{case}」生成风险止损、核对、争议、补卡和监控处置链"
+            if tool == "account.reconcile":
+                return "核对银行卡余额、关联账户与总资产口径"
+            if tool == "wealth.analytics":
+                product = str(args.get("product") or "上一批推荐产品")
+                return f"分析「{product}」的波动、回撤、费率、流动性和相关性"
+            if tool == "transfer.aa_status":
+                return "查看AA收款单、参与人状态和模拟分享文案"
             if tool == "transfer.internal":
                 source = resolve_payment_card(ctx, str(args.get("from_card") or ""))
                 target = resolve_payment_card(ctx, str(args.get("to_card") or ""))

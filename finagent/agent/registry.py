@@ -9,6 +9,8 @@ from typing import Dict, List, Optional
 
 from finagent.tools import (
     AboutTool,
+    AAPaymentStatusTool,
+    AccountReconcileTool,
     BalanceTool,
     BillAnalyzeTool,
     BillAnomalyTool,
@@ -22,7 +24,12 @@ from finagent.tools import (
     CardLimitAdjustTool,
     CardListTool,
     CardReportLostTool,
+    CardStatementTool,
+    CardTimelineTool,
     CardUnlockTool,
+    CashflowForecastTool,
+    EventCenterTool,
+    FinancialHealthTool,
     CreditCardRepayTool,
     DailyBriefTool,
     GiftRecommendTool,
@@ -33,11 +40,16 @@ from finagent.tools import (
     ListScheduledTransferTool,
     MembershipPurchaseTool,
     PortfolioTool,
+    ProductCompareTool,
+    ProactiveBriefTool,
     ProductRecommendTool,
     ProfileTool,
     ReceiptImportTool,
     ReceiptScanTool,
+    ReconcileAdjustTool,
     RiskAssessTool,
+    RiskDisputeTool,
+    RiskPlaybookTool,
     ScheduleGiftTool,
     ScheduledTransferTool,
     SplitBillTool,
@@ -50,6 +62,7 @@ from finagent.tools import (
     SubscriptionResumeTool,
     Tool,
     TransferTool,
+    WealthAnalyticsTool,
     WealthRedeemTool,
 )
 
@@ -98,12 +111,14 @@ def build_default_registry() -> ToolRegistry:
             ProfileTool(),
             HelpTool(),
             AboutTool(),
+            AccountReconcileTool(),
             # 智能转账
             TransferTool(),
             InternalTransferTool(),
             ScheduledTransferTool(),
             SplitBillTool(),
             ListScheduledTransferTool(),
+            AAPaymentStatusTool(),
             # 账单分析
             BillSupportedFormatsTool(),
             BillAnalyzeTool(),
@@ -115,9 +130,11 @@ def build_default_registry() -> ToolRegistry:
             # 理财操作
             RiskAssessTool(),
             ProductRecommendTool(),
+            ProductCompareTool(),
             SubscribeTool(),
             WealthRedeemTool(),
             PortfolioTool(),
+            WealthAnalyticsTool(),
             # 卡片管理
             CardListTool(),
             CardApplyTool(),
@@ -128,6 +145,8 @@ def build_default_registry() -> ToolRegistry:
             CardFreezeTool(),
             CardUnlockTool(),
             CardReportLostTool(),
+            CardStatementTool(),
+            CardTimelineTool(),
             # 订阅管理
             SubscriptionDetectTool(),
             SubscriptionListTool(),
@@ -142,6 +161,13 @@ def build_default_registry() -> ToolRegistry:
             GiftRecommendTool(),
             ScheduleGiftTool(),
             DailyBriefTool(),
+            CashflowForecastTool(),
+            FinancialHealthTool(),
+            EventCenterTool(),
+            ProactiveBriefTool(),
+            RiskPlaybookTool(),
+            RiskDisputeTool(),
+            ReconcileAdjustTool(),
         ]
     )
     return registry

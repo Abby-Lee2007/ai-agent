@@ -191,6 +191,39 @@ class TestSmartTransfer(unittest.TestCase):
         self.assertEqual(reply.kind, "executed")
         self.assertIsNone(self.agent.session.pending)
 
+    def test_transaction_has_lifecycle_and_bank_reference(self):
+        reply = send_money(self.agent, "给王强转500块")
+        txn = self.agent.store.transactions[reply.data["txn_id"]]
+
+        self.assertEqual(txn.lifecycle_status, "completed")
+        self.assertTrue(txn.submitted_at)
+        self.assertTrue(txn.completed_at)
+        self.assertTrue(txn.bank_reference.startswith("BANK-"))
+
+    def test_new_payee_large_transfer_enters_cooling_period(self):
+        reply = self.agent.handle("给13900007777转4000，用手机号")
+        self.assertEqual(reply.intent, "transfer.send")
+        self.assertEqual(self.agent.session.pending.kind, "transfer_cooling")
+        self.assertIn("安全冷静期", reply.text)
+
+        self.agent.clock.advance(minutes=10)
+        reply = self.agent.handle("确认")
+        self.assertEqual(self.agent.session.pending.kind, "payment_auth")
+
+    def test_sms_expires_and_can_be_resent(self):
+        agent = self.agent
+        agent.handle("给妈妈转25000块，用微信")
+        agent.handle("确认")
+        agent.handle("246810")
+        self.assertEqual(agent.session.pending.kind, "verify")
+        agent.clock.advance(minutes=3)
+        reply = agent.handle("123456")
+        self.assertIn("已过期", reply.text)
+        reply = agent.handle("重新发送")
+        self.assertIn("重新发送", reply.text)
+        reply = agent.handle("123456")
+        self.assertTrue(reply.ok)
+
     def test_scheduled_transfer_creates_task(self):
         reply = send_money(
             self.agent,

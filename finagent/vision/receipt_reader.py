@@ -12,6 +12,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -42,14 +43,84 @@ VISION_PROMPT = (
     "你是一个银行账单识别助手。请识别这张账单/小票/支付截图里的每一笔交易，"
     "只输出 JSON，不要任何解释。\n"
     '格式：{"records":[{"date":"YYYY-MM-DD","time":"HH:MM","merchant":"商户名",'
-    '"amount":-123.45,"category":"餐饮"}],"total":-123.45}\n'
+    '"amount":-123.45,"category":"餐饮","raw_line":"原始行",'
+    '"field_confidence":{"date":0.98,"merchant":0.91,"amount":0.99,"category":0.95}}],'
+    '"total":-123.45,"document_quality":0.92}\n'
     "规则：\n"
     "1. 金额为负数表示支出，正数表示收入；\n"
     "2. 日期统一成 YYYY-MM-DD，缺少年份时按账单年份推断；\n"
     "3. merchant 使用原始商户名，不要翻译、不要补全；\n"
     "4. category 只能取以下之一：" + "/".join(CATEGORY_CHOICES) + "；\n"
-    "5. 忽略页眉、页脚、卡号、合计、应还金额等非交易行。"
+    "5. field_confidence 的每个值必须是 0-1；看不清时不要猜成 1；\n"
+    "6. raw_line 保留截图里对应的原始文本，便于人工对照；\n"
+    "7. 忽略页眉、页脚、卡号、合计、应还金额等非交易行。"
 )
+
+FIELD_LABELS = {
+    "date": "日期",
+    "merchant": "商户",
+    "amount": "金额",
+    "category": "类别",
+}
+
+
+def _clamp_confidence(value: object, default: float = 0.5) -> float:
+    try:
+        return round(max(0.0, min(float(value), 1.0)), 3)
+    except (TypeError, ValueError):
+        return default
+
+
+def _ensure_field_confidence(records: List[ParsedTransaction]) -> None:
+    """Attach explainable per-field confidence and review flags."""
+    for record in records:
+        supplied = record.field_confidence if isinstance(record.field_confidence, dict) else {}
+        date_ok = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", record.date or ""))
+        merchant_ok = bool((record.merchant or "").strip()) and record.merchant != "未知商户"
+        amount_ok = abs(float(record.amount or 0)) >= 0.01
+        category_ok = record.category in CATEGORY_CHOICES
+        inferred = {
+            "date": 0.92 if date_ok else 0.35,
+            "merchant": 0.88 if merchant_ok else 0.3,
+            "amount": 0.94 if amount_ok else 0.25,
+            "category": 0.82 if category_ok else 0.55,
+        }
+        field_confidence = {
+            field: _clamp_confidence(
+                supplied.get(field),
+                inferred[field],
+            )
+            for field in FIELD_LABELS
+        }
+        review_fields = [
+            field for field, confidence in field_confidence.items()
+            if confidence < 0.8
+        ]
+        record.field_confidence = field_confidence
+        record.needs_review = review_fields
+        weighted = (
+            field_confidence["date"] * 0.25
+            + field_confidence["merchant"] * 0.3
+            + field_confidence["amount"] * 0.35
+            + field_confidence["category"] * 0.1
+        )
+        record.confidence = round(
+            min(_clamp_confidence(record.confidence, weighted), weighted),
+            3,
+        )
+
+
+def _declared_total(raw_text: str) -> Optional[float]:
+    matches = re.findall(
+        r"(?:合计支出|支出合计|总计|合计)\s*[:：]?\s*[¥￥]?\s*([\d,]+(?:\.\d{1,2})?)",
+        raw_text or "",
+    )
+    if not matches:
+        return None
+    try:
+        return float(matches[-1].replace(",", ""))
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -65,6 +136,129 @@ class ReceiptResult:
     image_path: str = ""
     errors: List[str] = field(default_factory=list)
     summary: Optional[BillSummary] = None
+    quality: Dict[str, Any] = field(default_factory=dict)
+    validation: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.quality and self.validation:
+            return
+        _ensure_field_confidence(self.records)
+        if self.summary is not None:
+            categories = len(self.summary.categories)
+            months = len(self.summary.months)
+            score = min(100.0, 70.0 + categories * 5 + months * 5)
+            issues = []
+            category_total = round(sum(item.amount for item in self.summary.categories), 2)
+            difference = round(abs(category_total - self.summary.total_expense), 2)
+            if (
+                category_total > 0
+                and self.summary.total_expense > 0
+                and difference > max(1.0, self.summary.total_expense * 0.02)
+            ):
+                issues.append(
+                    f"分类合计 {category_total:,.2f} 元与账单总额 "
+                    f"{self.summary.total_expense:,.2f} 元相差 {difference:,.2f} 元"
+                )
+                score = max(0.0, score - 15)
+            self.quality = {
+                "score": round(score, 1),
+                "grade": "良好" if score >= 80 else "需核对",
+                "record_count": 0,
+                "summary_mode": True,
+                "average_confidence": 0.9,
+            }
+            self.validation = {
+                "ok": bool(self.summary.total_expense or categories or months) and not issues,
+                "issues": (
+                    issues
+                    or ([] if (self.summary.total_expense or categories) else [
+                        "汇总页未识别到支出合计或分类结构"
+                    ])
+                ),
+                "amount_conservation": {
+                    "declared_total": self.summary.total_expense,
+                    "category_total": category_total,
+                    "difference": difference,
+                },
+            }
+            return
+        if not self.records:
+            self.quality = {
+                "score": 0.0,
+                "grade": "未识别",
+                "record_count": 0,
+                "summary_mode": False,
+                "average_confidence": 0.0,
+            }
+            self.validation = {"ok": False, "issues": ["没有识别到交易记录"]}
+            return
+        count = len(self.records)
+        missing_date = sum(1 for record in self.records if not record.date)
+        missing_merchant = sum(
+            1 for record in self.records if not record.merchant.strip()
+        )
+        key_counts: Dict[tuple, int] = {}
+        for record in self.records:
+            key = (record.date, record.merchant, round(record.amount, 2))
+            key_counts[key] = key_counts.get(key, 0) + 1
+        duplicate_count = sum(value - 1 for value in key_counts.values() if value > 1)
+        average_confidence = sum(
+            max(0.0, min(float(record.confidence), 1.0))
+            for record in self.records
+        ) / count
+        completeness = 1.0 - (missing_date + missing_merchant) / max(count * 2, 1)
+        score = min(
+            100.0,
+            average_confidence * 65 + completeness * 30
+            + (5 if duplicate_count == 0 else 0),
+        )
+        issues: List[str] = []
+        if average_confidence < 0.65:
+            issues.append("平均识别置信度偏低，建议放大截图或改用 CSV")
+        if missing_date:
+            issues.append(f"{missing_date} 笔交易缺少可靠日期")
+        if missing_merchant:
+            issues.append(f"{missing_merchant} 笔交易缺少商户名")
+        if duplicate_count:
+            issues.append(f"发现 {duplicate_count} 笔完全相同的疑似重复记录")
+        declared_total = _declared_total(self.raw_text)
+        amount_difference = (
+            round(abs(self.total_expense - declared_total), 2)
+            if declared_total is not None else None
+        )
+        if (
+            declared_total is not None
+            and amount_difference is not None
+            and amount_difference > max(1.0, declared_total * 0.02)
+        ):
+            issues.append(
+                f"明细支出合计 {self.total_expense:,.2f} 元与账单总计 "
+                f"{declared_total:,.2f} 元相差 {amount_difference:,.2f} 元"
+            )
+            score = max(0.0, score - 15)
+        self.quality = {
+            "score": round(score, 1),
+            "grade": "良好" if score >= 85 else ("需核对" if score >= 60 else "质量不足"),
+            "record_count": count,
+            "summary_mode": False,
+            "average_confidence": round(average_confidence, 3),
+            "low_confidence_count": sum(
+                1 for record in self.records if record.confidence < 0.8
+            ),
+            "duplicate_count": duplicate_count,
+            "completeness": round(completeness, 3),
+        }
+        self.validation = {
+            "ok": score >= 60 and not any("相差" in issue for issue in issues),
+            "issues": issues,
+            "review_required": bool(issues),
+            "amount_total": self.total_expense,
+            "amount_conservation": {
+                "declared_total": declared_total,
+                "detail_total": self.total_expense,
+                "difference": amount_difference,
+            },
+        }
 
     @property
     def total_expense(self) -> float:
@@ -308,6 +502,17 @@ class ReceiptReader:
             category = str(item.get("category") or "").strip()
             if category not in CATEGORY_CHOICES:
                 category = guess_category(merchant)
+            supplied_fields = item.get("field_confidence")
+            if not isinstance(supplied_fields, dict):
+                supplied_fields = item.get("field_confidences")
+            supplied_fields = supplied_fields if isinstance(supplied_fields, dict) else {}
+            field_confidence = {
+                field: _clamp_confidence(
+                    supplied_fields.get(field),
+                    _clamp_confidence(item.get("confidence"), 0.75),
+                )
+                for field in FIELD_LABELS
+            }
             records.append(
                 ParsedTransaction(
                     date=str(item.get("date") or fallback_date)[:10],
@@ -315,9 +520,12 @@ class ReceiptReader:
                     merchant=merchant,
                     amount=round(amount, 2),
                     category=category,
-                    confidence=0.95,
+                    confidence=_clamp_confidence(item.get("confidence"), 0.75),
+                    field_confidence=field_confidence,
+                    raw_line=str(item.get("raw_line") or "")[:1000],
                 )
             )
+        _ensure_field_confidence(records)
         return records
 
     def _from_windows_ocr(self, target: Path, today: Optional[date]) -> ReceiptResult:
