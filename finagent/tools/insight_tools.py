@@ -8,6 +8,8 @@ from finagent.analytics import (
     build_event_center,
     build_financial_health,
     build_cashflow_forecast,
+    build_data_quality_report,
+    build_probability_forecast,
     estimate_product_analytics,
     portfolio_risk_summary,
 )
@@ -79,6 +81,55 @@ class CashflowForecastTool(Tool):
             investment_amount=float(investment_amount or 0),
             investment_return_pct=float(investment_return_pct or 0),
         )
+        probability = forecast.get("probability") or {}
+        terminal_distribution = probability.get("terminal_balance") or {}
+        minimum_distribution = probability.get("minimum_balance") or {}
+        probability_intervals = probability.get("intervals") or {}
+        negative_balance = probability.get("negative_balance") or {}
+        probability_tail = probability.get("worst_tail") or {}
+        forecast.update({
+            "daily_quantiles": probability.get("daily_balance_quantiles") or [],
+            "terminal_quantiles": {
+                key: terminal_distribution.get(key, 0.0)
+                for key in ("p05", "p25", "p50", "p75", "p95")
+            },
+            "min_balance_quantiles": {
+                key: minimum_distribution.get(key, 0.0)
+                for key in ("p05", "p25", "p50", "p75", "p95")
+            },
+            "intervals": {
+                "terminal_50": probability_intervals.get(
+                    "p50_range_50pct", [0.0, 0.0]
+                ),
+                "terminal_90": probability_intervals.get(
+                    "p90_range_90pct", [0.0, 0.0]
+                ),
+                "minimum_50": [
+                    minimum_distribution.get("p25", 0.0),
+                    minimum_distribution.get("p75", 0.0),
+                ],
+                "minimum_90": [
+                    minimum_distribution.get("p05", 0.0),
+                    minimum_distribution.get("p95", 0.0),
+                ],
+            },
+            "negative_probability": negative_balance.get(
+                "probability_any_negative_during_period", 0.0
+            ),
+            "worst_5pct": {
+                "mean_terminal_balance": probability_tail.get(
+                    "mean_terminal_balance", 0.0
+                ),
+                "mean_min_balance": probability_tail.get(
+                    "mean_min_balance", 0.0
+                ),
+            },
+            "probability_simulations": probability.get("simulations", 0),
+            "probability_seed": probability.get("random_seed"),
+            "probability_method": probability.get(
+                "quantile_method", "seeded empirical distribution"
+            ),
+        })
         baseline = build_cashflow_forecast(
             ctx.store,
             ctx.providers,
@@ -143,17 +194,41 @@ class CashflowForecastTool(Tool):
                 ),
             })
         forecast["stress_tests"] = stress_tests
+        quality = build_data_quality_report(
+            ctx.store,
+            ctx.providers,
+            ctx.clock,
+            ctx.user_id,
+        )
 
         lines = [
             f"财务数字孪生（未来 {forecast['horizon_days']} 天）",
             f"  当前可动用资金：{forecast['start_balance']:,.2f} 元",
-            f"  预计期末余额：{forecast['end_balance']:,.2f} 元",
+            (
+                f"  期末余额：P50 {forecast['terminal_quantiles']['p50']:,.2f} 元，"
+                f"50% 区间 [{forecast['intervals']['terminal_50'][0]:,.2f}, "
+                f"{forecast['intervals']['terminal_50'][1]:,.2f}] 元"
+            ),
+            (
+                f"  90% 区间 [{forecast['intervals']['terminal_90'][0]:,.2f}, "
+                f"{forecast['intervals']['terminal_90'][1]:,.2f}] 元；"
+                f"出现负余额的概率 {forecast['negative_probability'] * 100:.1f}%"
+            ),
             f"  预计最低余额：{forecast['min_balance']:,.2f} 元"
             f"（{forecast['min_balance_date']}）",
+            (
+                f"  最低余额 P05：{forecast['min_balance_quantiles']['p05']:,.2f} 元；"
+                f"最差 5% 路径期末均值 "
+                f"{forecast['worst_5pct']['mean_terminal_balance']:,.2f} 元"
+            ),
             f"  建议保留：{forecast['essential_monthly']:,.2f} 元/月必要支出",
             f"  可安排资金：{forecast['safe_to_spend']:,.2f} 元",
             f"  建议日均非必要支出上限：{forecast['daily_safe_budget']:,.2f} 元",
             f"  模型数据：{forecast['data_scope']}；置信度约 {forecast['confidence'] * 100:.0f}%",
+            (
+                f"  数据质量 {quality['overall_score']:.1f}/100；"
+                f"{'已阻断个性化' if quality['blocks_personalization'] else '允许个性化'}"
+            ),
         ]
         probability = forecast.get("probability") or {}
         terminal_distribution = probability.get("terminal_balance") or {}
@@ -192,8 +267,8 @@ class CashflowForecastTool(Tool):
                     f"{worst_tail.get('cvar_5_terminal_loss', 0):,.2f} 元"
                 ),
             ])
-        quality = forecast.get("data_quality") or {}
-        quality_overall = quality.get("overall") or {}
+        unified_quality = forecast.get("data_quality") or {}
+        quality_overall = unified_quality.get("overall") or {}
         if quality_overall:
             lines.append(
                 f"  数据质量（独立于 OCR）：{quality_overall.get('score', 0):.2f}/100，"
@@ -281,16 +356,27 @@ class CashflowForecastTool(Tool):
         lines.append("")
         lines.append(f"综合建议：{forecast['recommendation']}")
         lines.append(
-            "以上将订阅、还款和任务视为确定性事件，对日常支出和工资做固定种子概率抽样；"
-            "结果不是实际银行余额承诺。"
+            "订阅、还款和任务保持确定性，日常支出和工资使用固定种子经验抽样；"
+            "区间和概率不是实际银行余额承诺。"
         )
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"forecast": forecast},
+            data={
+                "forecast": forecast,
+                "probability": {
+                    "scenario_count": forecast["probability_simulations"],
+                    "random_seed": forecast["probability_seed"],
+                    "terminal_quantiles": forecast["terminal_quantiles"],
+                    "intervals": forecast["intervals"],
+                    "negative_probability": forecast["negative_probability"],
+                },
+                "data_quality": quality,
+                "unified_data_quality": forecast.get("data_quality"),
+            },
             summary=(
-                f"{forecast['horizon_days']}天预测最低余额 "
-                f"{forecast['min_balance']:,.2f} 元"
+                f"{forecast['horizon_days']}天期末余额 P50 "
+                f"{forecast['terminal_quantiles']['p50']:,.2f} 元"
             ),
         )
 

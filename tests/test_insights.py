@@ -60,6 +60,21 @@ class TestCashflowDigitalTwin(unittest.TestCase):
             328.0,
         )
 
+    def test_forecast_returns_probability_bands_and_quality(self):
+        reply = self.agent.handle("预测我未来90天的现金流")
+
+        forecast = reply.data["forecast"]
+        self.assertIn("p05", forecast["terminal_quantiles"])
+        self.assertIn("p95", forecast["terminal_quantiles"])
+        self.assertIn("terminal_90", forecast["intervals"])
+        self.assertGreaterEqual(forecast["negative_probability"], 0.0)
+        self.assertLessEqual(forecast["negative_probability"], 1.0)
+        self.assertIn("data_quality", reply.data)
+        self.assertNotIn("quality", reply.data)
+        self.assertIn("overall_score", reply.data["data_quality"])
+        self.assertIn("50% 区间", reply.text)
+        self.assertIn("90% 区间", reply.text)
+
     def test_forecast_uses_uploaded_bill_transactions(self):
         account = self.agent.store.accounts_of("u_001")[0]
         self.agent.store.add_transaction(

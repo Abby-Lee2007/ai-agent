@@ -114,6 +114,9 @@ def summarize_probability_paths(
     loss_tail_minima = [
         path_minima[index] for index in worst_loss_indices
     ]
+    loss_tail_terminal = [
+        terminal[index] for index in worst_loss_indices
+    ]
     negative_end = sum(1 for value in terminal if value < 0) / path_count
     any_negative = sum(1 for value in path_minima if value < 0) / path_count
     daily_negative = [
@@ -179,6 +182,10 @@ def summarize_probability_paths(
                 "按 max(期初余额-期末余额,0) 降序，损失相同再按路径最低余额升序"
             ),
             "mean_min_balance": round(statistics.fmean(loss_tail_minima), 2),
+            "mean_terminal_balance": round(
+                statistics.fmean(loss_tail_terminal),
+                2,
+            ),
             "mean_terminal_loss": round(statistics.fmean(loss_tail_losses), 2),
             "cvar_5_terminal_loss": round(
                 statistics.fmean(loss_tail_losses),

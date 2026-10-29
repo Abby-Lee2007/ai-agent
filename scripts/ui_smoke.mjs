@@ -1047,6 +1047,8 @@ try {
     const fan50 = chart?.querySelector(".fan-50");
     const fan90 = chart?.querySelector(".fan-90");
     const probabilityPanel = panel?.querySelector(".model-audit-panel");
+    const band50 = chart?.querySelector(".band-50");
+    const band90 = chart?.querySelector(".band-90");
     const workflow = bubble?.querySelector(".workflow-strip");
     const rect = bubble?.getBoundingClientRect();
     return {
@@ -1056,6 +1058,8 @@ try {
       hasBaseline: Boolean(baseline?.getAttribute("d")),
       hasFan50: Boolean(fan50?.getAttribute("d")),
       hasFan90: Boolean(fan90?.getAttribute("d")),
+      hasBand50: Boolean(band50?.getAttribute("d")),
+      hasBand90: Boolean(band90?.getAttribute("d")),
       probabilityPanel: Boolean(probabilityPanel),
       probabilityRows: probabilityPanel?.querySelectorAll(".analytics-table tbody tr").length || 0,
       probabilityTitle: probabilityPanel?.querySelector(".model-audit-head strong")?.textContent || "",
@@ -1076,6 +1080,7 @@ try {
   assert(forecastLayout.chart && forecastLayout.hasLine, "现金流预测图没有生成折线");
   assert(forecastLayout.hasBaseline, "现金流预测图没有生成基准对比线");
   assert(forecastLayout.hasFan50 && forecastLayout.hasFan90, "现金流概率图缺少 50%/90% 区间");
+  assert(forecastLayout.hasBand50 && forecastLayout.hasBand90, "现金流预测图缺少 50%/90% 区间");
   assert(forecastLayout.probabilityPanel, "现金流面板缺少概率分位模块");
   assert(forecastLayout.probabilityRows === 5, "现金流概率分位表不完整");
   assert(forecastLayout.probabilityTitle.includes("概率现金流区间"), "现金流概率模块标题错误");

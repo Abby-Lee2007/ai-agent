@@ -10,6 +10,12 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from finagent.analytics import (
+    build_data_quality_report,
+    build_probability_forecast,
+    optimize_portfolio,
+    probability_risk_budget,
+)
 from finagent.analytics.product_risk import estimate_product_analytics
 from finagent.analytics.data_quality import build_data_quality
 from finagent.analytics.portfolio_optimizer import optimize_within_constraints
@@ -308,7 +314,31 @@ class ProductRecommendTool(Tool):
         )
         liquid = card_liquid if card_liquid > 0 else account_liquid
         emergency_need = round(profile.monthly_expense * 3, 2)
-        investable = max(0.0, round(liquid - emergency_need, 2))
+        probability = build_probability_forecast(
+            ctx.store,
+            ctx.providers,
+            ctx.clock,
+            ctx.user_id,
+            months=3,
+            simulations=240,
+        )
+        risk_budget = probability_risk_budget(probability)
+        quality = build_data_quality_report(
+            ctx.store,
+            ctx.providers,
+            ctx.clock,
+            ctx.user_id,
+        )
+        p05_min_balance = float(probability["min_balance_quantiles"]["p05"])
+        liquidity_stress = max(0.0, -p05_min_balance)
+        probability_cash_buffer = (
+            float(probability["baseline"]["essential_monthly"]) + liquidity_stress
+        )
+        required_cash_buffer = round(
+            max(probability_cash_buffer, emergency_need if is_living else 0.0),
+            2,
+        )
+        investable = max(0.0, round(liquid - required_cash_buffer, 2))
         affordable_budget = min(
             invest if invest > 0 else liquid,
             liquid,
@@ -448,6 +478,7 @@ class ProductRecommendTool(Tool):
                 data={
                     "affordable_budget": round(affordable_budget, 2),
                     "max_risk": max_risk,
+                    "asset_class": requested or "mixed",
                     "products": [],
                     "display_count": 0,
                     "filter_options": ["存款", "债券", "基金"],
@@ -803,15 +834,20 @@ class ProductRecommendTool(Tool):
         allow_allocation = not (is_living and investable <= 0)
         quant_plan: List[Dict[str, Any]] = []
         portfolio_optimization: Optional[Dict[str, Any]] = None
-        horizon_days = {"short": 90, "mid": 365, "long": 1095}.get(
-            horizon,
-            365,
-        )
+        optimization: Optional[Dict[str, Any]] = None
+        horizon_days = {
+            "short": 90,
+            "mid": 365,
+            "long": 1095,
+        }.get(horizon, 365)
         cash_buffer_weight = {
             "short": 0.20,
             "mid": 0.10,
             "long": 0.05,
         }.get(horizon, 0.10)
+        effective_risk_aversion = float(
+            risk_budget.get("risk_aversion") or 0.6
+        )
         if invest > 0:
             portfolio_optimization = optimize_within_constraints(
                 product_details,
@@ -820,7 +856,7 @@ class ProductRecommendTool(Tool):
                 horizon_days=horizon_days,
                 drawdown_tolerance_pct=profile.drawdown_tolerance * 100,
                 cash_buffer_weight=cash_buffer_weight,
-                risk_aversion=0.6,
+                risk_aversion=effective_risk_aversion,
                 max_single_weight=0.35,
                 max_portfolio_cvar_5_pct=max(
                     1.0,
@@ -829,83 +865,98 @@ class ProductRecommendTool(Tool):
                 simulations=0,
                 seed=20261029,
             )
-            if portfolio_optimization["status"] == "optimized":
-                allocation_rows = [
-                    [
-                        allocation["name"],
-                        f"R{allocation['risk_level']}",
-                        f"{allocation['weight'] * 100:.1f}%",
-                        f"{allocation['amount']:,.2f}",
-                    ]
-                    for allocation in portfolio_optimization["allocations"]
+
+        if invest > 0 and allow_allocation:
+            optimization_risk = (
+                min(5, user_level + 1) if wants_stock else user_level
+            )
+            plan_pool = [
+                product
+                for product in pool
+                if product.risk_level <= optimization_risk
+            ]
+            if quality.get("blocks_personalization"):
+                plan_pool = []
+            optimization = optimize_portfolio(
+                plan_pool,
+                liquid_assets=liquid,
+                requested_investment=invest,
+                client_risk=optimization_risk,
+                horizon_days=horizon_days,
+                cash_buffer=required_cash_buffer,
+                drawdown_limit=profile.drawdown_tolerance,
+                probability_forecast=probability,
+                seed=20261028,
+                risk_aversion=effective_risk_aversion,
+            )
+            plan_rows = [
+                [
+                    item["name"],
+                    f"{item['weight'] * 100:.0f}%",
+                    f"{item['amount']:,.2f}",
+                    f"预期年化 {item['expected_return'] * 100:.2f}% / R{item['risk_level']}",
                 ]
-                optimizer_metrics = portfolio_optimization["metrics"]
-                lines.append("")
-                lines.append(
-                    f"约束优化组合（投入 {invest:,.2f} 元，"
-                    f"风险厌恶系数 0.6，期限 {horizon_days} 天）："
-                )
+                for item in optimization["allocations"]
+            ]
+            lines.append("")
+            lines.append(
+                f"约束优化组合 / 组合配置建议（可投预算 "
+                f"{optimization['spendable_budget']:,.2f} 元）："
+            )
+            if optimization["status"] == "optimized":
+                quant_plan = list(optimization["allocations"])
                 lines.append(render_table(
-                    ["资产", "风险", "权重", "金额"],
-                    allocation_rows,
+                    ["产品", "比例", "金额", "收益/风险"],
+                    plan_rows,
                 ))
                 lines.append(
-                    f"  预期持有期收益 {optimizer_metrics['expected_horizon_return_pct']:.2f}%，"
-                    f"年化波动 {optimizer_metrics['annual_volatility_pct']:.2f}%，"
-                    f"CVaR5 损失 {optimizer_metrics['cvar_5_loss_pct']:.2f}%，"
-                    f"压力回撤 {optimizer_metrics['estimated_max_drawdown_pct']:.2f}%"
+                    f"  预期年化 {optimization['expected_return'] * 100:.2f}%；"
+                    f"年化波动 {optimization['volatility'] * 100:.2f}%；"
+                    f"最坏 5% 损失估计 {optimization['cvar_5pct'] * 100:.2f}%；"
+                    f"估计最大回撤 {optimization['estimated_drawdown'] * 100:.2f}%"
+                    f"（上限 {profile.drawdown_tolerance * 100:.2f}%）。"
                 )
                 lines.append(
-                    "  0.6 是无量纲风险厌恶系数：每 1 个百分点 CVaR 损失"
-                    "扣 0.6 个百分点目标值，不是 60% 仓位或 0.6 个百分点。"
+                    f"  现金缓冲 {required_cash_buffer:,.2f} 元；"
+                    f"P50-P05 尾部损失宽度 {risk_budget['tail_loss_pct'] * 100:.2f}%，"
+                    f"风险厌恶参数调整为 {effective_risk_aversion:.2f}。"
                 )
                 lines.append(
-                    "  独立约束复核："
-                    f"{'通过' if portfolio_optimization['independent_verification']['passed'] else '未通过'}；"
-                    "硬约束未被自动放宽。"
+                    f"  {effective_risk_aversion:.2f} 是无量纲系数：每 1 个百分点"
+                    " CVaR 损失按其数值扣除目标值，不是仓位比例或收益百分点。"
                 )
-            elif allow_allocation:
-                lines.append("")
-                lines.append(
-                    f"约束优化结果：{portfolio_optimization['reason']}。"
-                    "安全方案为 100% 现金/活期缓冲，不自动买入任何产品。"
-                )
-        if invest > 0 and allow_allocation:
-            if wants_stock and quotes:
-                lines.extend(self._live_plan(pool, quotes, invest))
-            elif market.enabled and any(
-                item.get("advice_score") for item in product_details
-            ):
-                plan_rows, plan_items = self._quantitative_plan(
-                    product_details,
-                    invest,
-                    user_level,
-                )
-                if plan_rows:
-                    quant_plan = plan_items
-                    lines.append("")
+                if (
+                    portfolio_optimization
+                    and portfolio_optimization.get("independent_verification")
+                ):
                     lines.append(
-                        f"基于适合度的风险预算参考（投入上限 {invest:,.2f} 元）："
+                        "  独立约束复核："
+                        f"{'通过' if portfolio_optimization['independent_verification']['passed'] else '未通过'}；"
+                        "硬约束未被自动放宽。"
                     )
-                    lines.append(render_table(
-                        ["产品", "适合度", "风险预算", "参考金额"],
-                        plan_rows,
+                if wants_stock and quotes:
+                    allocation_weights = {
+                        item["product_id"]: item["weight"]
+                        for item in optimization["allocations"]
+                    }
+                    lines.extend(self._live_plan(
+                        pool,
+                        quotes,
+                        optimization["spendable_budget"],
+                        allocation_weights,
                     ))
-                    lines.append(
-                        "  这不是收益预测或自动下单指令；执行时仍需选择具体产品、"
-                        "确认实时价格并完成身份验证。"
-                    )
-            elif any(p.expected_return > 0 for p in pool):
-                plan_pool = [p for p in pool if p.risk_level <= user_level] or pool
-                plan_rows, expected_return = self._build_plan(
-                    plan_pool, invest, horizon, wants_stock
+            else:
+                allow_allocation = False
+                lines.append(
+                    f"  当前没有满足全部硬约束的组合：{optimization['reason']}。"
+                    "系统不会为了给出推荐而放宽风险、期限或现金缓冲约束。"
                 )
-                if plan_rows:
-                    lines.append("")
-                    lines.append(f"组合配置建议（投入 {invest:,.2f} 元）：")
-                    lines.append(render_table(["产品", "比例", "金额", "收益测算"], plan_rows))
-                    lines.append(f"  组合测算年化约 {expected_return * 100:.2f}%，"
-                                 f"收益约 {invest * expected_return:,.2f} 元（演示参数）")
+                lines.append(
+                    f"  P05 最低余额 {probability['min_balance_quantiles']['p05']:,.2f} 元，"
+                    f"负余额概率 {probability['negative_probability'] * 100:.1f}%。"
+                )
+        elif invest > 0:
+            allow_allocation = False
 
         if wants_stock:
             lines.append("")
@@ -947,11 +998,23 @@ class ProductRecommendTool(Tool):
                 "也可以回复「暂不购买」。在下单前还会再次核对产品、金额、付款卡并验证身份。"
             )
         else:
-            lines.append("这笔生活费不足应急金，建议暂不购买；如需演示交易，可先补充资金。")
+            if is_living:
+                lines.append("这笔生活费不足应急金，建议暂不购买；如需演示交易，可先补充资金。")
+            else:
+                lines.append("当前没有满足现金缓冲和风险约束的可投组合，建议先保留现金。")
 
         class_labels = {"stock": "A股股票", "bond": "债券", "fund": "基金",
                         "derivative": "衍生品", "deposit": "存款"}
         class_label = class_labels.get(requested, "理财")
+        combined_quality = dict(quality)
+        combined_quality.update({
+            "overall": data_quality["overall"],
+            "metric_definitions": data_quality["metric_definitions"],
+            "critical_issues": data_quality["critical_issues"],
+            "block_reasons": data_quality["block_reasons"],
+            "is_production_data_quality": False,
+            "limitations": data_quality["limitations"],
+        })
         ctx.session["last_wealth_products"] = list(product_details)
         return ToolResult(
             True,
@@ -963,6 +1026,7 @@ class ProductRecommendTool(Tool):
                 "asset_class": requested or "mixed",
                 "purpose": "living" if is_living else "",
                 "emergency_need": emergency_need,
+                "required_cash_buffer": required_cash_buffer,
                 "investable": investable,
                 "affordable_budget": round(affordable_budget, 2),
                 "display_count": len(pool),
@@ -990,7 +1054,23 @@ class ProductRecommendTool(Tool):
                 ),
                 "risk_budget_plan": quant_plan,
                 "portfolio_optimization": portfolio_optimization,
-                "data_quality": data_quality,
+                "data_quality": combined_quality,
+                "unified_data_quality": data_quality,
+                "cashflow_distribution": {
+                    "p05_min_balance": probability["min_balance_quantiles"]["p05"],
+                    "p25_min_balance": probability["min_balance_quantiles"]["p25"],
+                    "p50_min_balance": probability["min_balance_quantiles"]["p50"],
+                    "p75_min_balance": probability["min_balance_quantiles"]["p75"],
+                    "p95_min_balance": probability["min_balance_quantiles"]["p95"],
+                    "terminal_interval_90": probability["intervals"]["terminal_90"],
+                    "negative_probability": probability["negative_probability"],
+                    "random_seed": probability["random_seed"],
+                    "scenario_count": probability["scenario_count"],
+                    "tail_loss_pct": risk_budget["tail_loss_pct"],
+                    "risk_aversion": risk_budget["risk_aversion"],
+                    "risk_budget_method": risk_budget["method"],
+                },
+                "optimization": optimization,
             },
             summary=(f"已按{class_label}推荐 {len(pool)} 只产品"
                      + ("；生活费不足应急金，不建议买入" if is_living and investable <= 0 else "")),
@@ -1090,13 +1170,35 @@ class ProductRecommendTool(Tool):
         )
 
     @staticmethod
-    def _live_plan(pool, quotes: Dict[str, Any], invest: float) -> List[str]:
+    def _live_plan(
+        pool,
+        quotes: Dict[str, Any],
+        invest: float,
+        allocation_weights: Dict[str, float] | None = None,
+    ) -> List[str]:
         """按真实价格估算能买多少股（A 股按 100 股整数倍）。"""
         available = [p for p in pool if p.symbol in quotes]
         if not available:
             return []
-        chosen = available[:2]
-        weights = [0.6, 0.4] if len(chosen) == 2 else [1.0]
+        if allocation_weights:
+            available = [
+                product
+                for product in available
+                if allocation_weights.get(product.product_id, 0.0) > 0
+            ]
+            chosen = available
+            weights = [
+                allocation_weights.get(product.product_id, 0.0)
+                for product in chosen
+            ]
+            total = sum(weights)
+            if total > 0:
+                weights = [weight / total for weight in weights]
+        else:
+            chosen = available[:2]
+            weights = [0.6, 0.4] if len(chosen) == 2 else [1.0] * len(chosen)
+        if not chosen:
+            return []
         rows = []
         for product, weight in zip(chosen, weights):
             quote = quotes[product.symbol]

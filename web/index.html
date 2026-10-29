@@ -1724,6 +1724,8 @@
       stroke-width: 1.5;
       stroke-dasharray: 5 4;
     }
+    .forecast-chart .band-90 { fill: var(--accent-soft); opacity: .45; }
+    .forecast-chart .band-50 { fill: var(--accent); opacity: .12; }
     .forecast-chart .area-balance { fill: var(--accent-soft); opacity: .7; }
     .forecast-chart .fan-90 { fill: #7bb8aa; opacity: .13; }
     .forecast-chart .fan-50 { fill: #4f9b8a; opacity: .18; }
@@ -2304,6 +2306,14 @@
     }
     .forecast-legend .fan-50 i { background: rgba(79, 155, 138, .28); }
     .forecast-legend .fan-90 i { background: rgba(123, 184, 170, .18); }
+    .forecast-legend .band-90 i {
+      height: 8px;
+      background: var(--accent-soft);
+    }
+    .forecast-legend .band-50 i {
+      height: 8px;
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+    }
 
     @media (max-width: 760px) {
       .app {
@@ -4445,6 +4455,10 @@
         ["预测期末", `¥${money(forecast.end_balance)}`],
         ["可安排资金", `¥${money(forecast.safe_to_spend)}`],
         ["建议日均预算", `¥${money(forecast.daily_safe_budget)}`],
+        ["P05 最低余额", `¥${money(forecast.min_balance_quantiles?.p05)}`],
+        ["期末 P50", `¥${money(
+          forecast.terminal_quantiles?.p50 ?? forecast.end_balance
+        )}`],
       ];
       if (scenarioActive) {
         const deltaMin = Number(forecast.scenario_delta_min || 0);
@@ -4474,7 +4488,7 @@
       const liquidityTail = probability.worst_liquidity_tail || {};
       const probabilityDaily = Array.isArray(probability.daily_balance_quantiles)
         ? probability.daily_balance_quantiles
-        : [];
+        : (Array.isArray(forecast.daily_quantiles) ? forecast.daily_quantiles : []);
       if (
         Object.keys(terminalDistribution).length
         && Object.keys(minimumDistribution).length
@@ -4755,13 +4769,13 @@
       if (fan90Path) {
         const fan90 = document.createElementNS("http://www.w3.org/2000/svg", "path");
         fan90.setAttribute("d", fan90Path);
-        fan90.setAttribute("class", "fan-90");
+        fan90.setAttribute("class", "fan-90 band-90");
         svg.appendChild(fan90);
       }
       if (fan50Path) {
         const fan50 = document.createElementNS("http://www.w3.org/2000/svg", "path");
         fan50.setAttribute("d", fan50Path);
-        fan50.setAttribute("class", "fan-50");
+        fan50.setAttribute("class", "fan-50 band-50");
         svg.appendChild(fan50);
       }
       const area = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -4807,11 +4821,11 @@
         legend.appendChild(current);
         if (probabilityDaily.length) {
           const fan50 = document.createElement("span");
-          fan50.className = "fan-50";
+          fan50.className = "fan-50 band-50";
           const fan50Swatch = document.createElement("i");
           fan50.append(fan50Swatch, "50% 区间（P25–P75）");
           const fan90 = document.createElement("span");
-          fan90.className = "fan-90";
+          fan90.className = "fan-90 band-90";
           const fan90Swatch = document.createElement("i");
           fan90.append(fan90Swatch, "90% 区间（P05–P95）");
           legend.append(fan50, fan90);
