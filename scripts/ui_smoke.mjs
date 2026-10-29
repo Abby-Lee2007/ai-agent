@@ -954,6 +954,8 @@ try {
     const chart = panel?.querySelector(".forecast-chart svg");
     const line = chart?.querySelector(".line-balance");
     const baseline = chart?.querySelector(".line-baseline");
+    const band50 = chart?.querySelector(".band-50");
+    const band90 = chart?.querySelector(".band-90");
     const workflow = bubble?.querySelector(".workflow-strip");
     const rect = bubble?.getBoundingClientRect();
     return {
@@ -961,6 +963,8 @@ try {
       chart: Boolean(chart),
       hasLine: Boolean(line?.getAttribute("d")),
       hasBaseline: Boolean(baseline?.getAttribute("d")),
+      hasBand50: Boolean(band50?.getAttribute("d")),
+      hasBand90: Boolean(band90?.getAttribute("d")),
       controls: panel?.querySelectorAll(".forecast-control").length || 0,
       workflow: workflow?.textContent || "",
       insideViewport: rect ? rect.left >= 0 && rect.right <= innerWidth + 1 : false,
@@ -970,6 +974,8 @@ try {
   assert(forecastLayout.panel, "现金流预测没有生成数字孪生面板");
   assert(forecastLayout.chart && forecastLayout.hasLine, "现金流预测图没有生成折线");
   assert(forecastLayout.hasBaseline, "现金流预测图没有生成基准对比线");
+  assert(forecastLayout.hasBand50, "现金流预测图没有生成 50% 区间");
+  assert(forecastLayout.hasBand90, "现金流预测图没有生成 90% 区间");
   assert(forecastLayout.controls >= 5, "现金流预测缺少交互情景滑块");
   assert(forecastLayout.workflow.includes("顾问 Agent"), "工作流没有显示多 Agent 角色");
   assert(forecastLayout.insideViewport, "现金流预测面板超出视口");

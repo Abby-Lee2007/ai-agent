@@ -1490,6 +1490,8 @@
       stroke-width: 1.5;
       stroke-dasharray: 5 4;
     }
+    .forecast-chart .band-90 { fill: var(--accent-soft); opacity: .45; }
+    .forecast-chart .band-50 { fill: var(--accent); opacity: .12; }
     .forecast-chart .area-balance { fill: var(--accent-soft); opacity: .7; }
     .forecast-chart .zero-line { stroke: var(--danger); stroke-width: 1; stroke-dasharray: 4 4; }
     .forecast-chart .min-marker { fill: var(--warning); stroke: var(--surface); stroke-width: 2; }
@@ -1923,6 +1925,14 @@
         var(--muted) 0 5px,
         transparent 5px 9px
       );
+    }
+    .forecast-legend .band-90 i {
+      height: 8px;
+      background: var(--accent-soft);
+    }
+    .forecast-legend .band-50 i {
+      height: 8px;
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
     }
 
     @media (max-width: 760px) {
@@ -3635,10 +3645,11 @@
 
       const metrics = document.createElement("div");
       metrics.className = "forecast-metrics";
+      const terminal = forecast.terminal_quantiles || {};
       [
         ["当前可动用", `¥${money(forecast.start_balance)}`],
-        ["预计最低", `¥${money(forecast.min_balance)}`],
-        ["预测期末", `¥${money(forecast.end_balance)}`]
+        ["P05 最低余额", `¥${money(forecast.min_balance_quantiles?.p05)}`],
+        ["期末 P50", `¥${money(terminal.p50 ?? forecast.end_balance)}`]
       ].forEach(([label, value]) => {
         const item = document.createElement("div");
         item.className = "forecast-metric";
@@ -3700,7 +3711,14 @@
       const baselineValues = Array.isArray(forecast.baseline_series)
         ? forecast.baseline_series.map((item) => Number(item.balance))
         : [];
-      const allValues = values.concat(baselineValues);
+      const dailyQuantiles = Array.isArray(forecast.daily_quantiles)
+        ? forecast.daily_quantiles
+        : [];
+      const quantileValues = dailyQuantiles.flatMap((item) => [
+        Number(item.p05),
+        Number(item.p95)
+      ]).filter(Number.isFinite);
+      const allValues = values.concat(baselineValues, quantileValues);
       const rawMin = Math.min(...allValues, 0);
       const rawMax = Math.max(...allValues, 0);
       const padding = Math.max((rawMax - rawMin) * 0.08, 1);
@@ -3713,6 +3731,20 @@
         ? baselineValues.map((value, index) => `${index ? "L" : "M"}${x(index).toFixed(2)},${y(value).toFixed(2)}`).join(" ")
         : "";
       const areaPath = `${linePath} L${x(values.length - 1).toFixed(2)},${(margin.top + plotHeight).toFixed(2)} L${x(0).toFixed(2)},${(margin.top + plotHeight).toFixed(2)} Z`;
+      const bandPath = (upperKey, lowerKey) => {
+        if (!dailyQuantiles.length) return "";
+        const upper = dailyQuantiles
+          .map((item, index) => [x(index), y(Number(item[upperKey]))]);
+        const lower = dailyQuantiles
+          .map((item, index) => [x(index), y(Number(item[lowerKey]))])
+          .reverse();
+        const points = upper.concat(lower);
+        return points
+          .map(([pointX, pointY], index) => `${index ? "L" : "M"}${pointX.toFixed(2)},${pointY.toFixed(2)}`)
+          .join(" ") + " Z";
+      };
+      const band90Path = bandPath("p95", "p05");
+      const band50Path = bandPath("p75", "p25");
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
       svg.setAttribute("aria-hidden", "true");
@@ -3747,6 +3779,18 @@
       area.setAttribute("d", areaPath);
       area.setAttribute("class", "area-balance");
       svg.appendChild(area);
+      if (band90Path) {
+        const band90 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        band90.setAttribute("d", band90Path);
+        band90.setAttribute("class", "band-90");
+        svg.insertBefore(band90, area);
+      }
+      if (band50Path) {
+        const band50 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        band50.setAttribute("d", band50Path);
+        band50.setAttribute("class", "band-50");
+        svg.insertBefore(band50, area);
+      }
       if (baselinePath) {
         const baselineNode = document.createElementNS("http://www.w3.org/2000/svg", "path");
         baselineNode.setAttribute("d", baselinePath);
@@ -3777,17 +3821,29 @@
         });
       chart.appendChild(svg);
       root.appendChild(chart);
-      if (baselinePath) {
+      if (baselinePath || dailyQuantiles.length) {
         const legend = document.createElement("div");
         legend.className = "forecast-legend";
         const current = document.createElement("span");
         const currentLine = document.createElement("i");
         current.append(currentLine, "当前情景");
-        const baseline = document.createElement("span");
-        baseline.className = "baseline";
-        const baselineLine = document.createElement("i");
-        baseline.append(baselineLine, "基准预测");
-        legend.append(current, baseline);
+        legend.appendChild(current);
+        if (dailyQuantiles.length) {
+          const band50 = document.createElement("span");
+          band50.className = "band-50";
+          band50.append(document.createElement("i"), "50% 区间");
+          const band90 = document.createElement("span");
+          band90.className = "band-90";
+          band90.append(document.createElement("i"), "90% 区间");
+          legend.append(band50, band90);
+        }
+        if (baselinePath) {
+          const baseline = document.createElement("span");
+          baseline.className = "baseline";
+          const baselineLine = document.createElement("i");
+          baseline.append(baselineLine, "基准预测");
+          legend.appendChild(baseline);
+        }
         root.appendChild(legend);
       }
 

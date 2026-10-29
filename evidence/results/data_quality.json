@@ -1,0 +1,66 @@
+{
+  "as_of": "2026-10-28",
+  "metric_dictionary_version": "2026-10-28",
+  "overall_score": 99.0,
+  "status": "good",
+  "blocks_personalization": false,
+  "critical_domains": [],
+  "domains": {
+    "transactions": {
+      "record_count": 321,
+      "missing_rate": 0.0,
+      "anomaly_rate": 0.0,
+      "updated_at": "2026-10-28T21:03:01",
+      "sample_coverage": 0.8111,
+      "freshness_coverage": 1.0,
+      "score": 98.1,
+      "status": "good",
+      "source": "accounts and imported transaction ledger"
+    },
+    "cards": {
+      "record_count": 4,
+      "missing_rate": 0.0,
+      "anomaly_rate": 0.0,
+      "updated_at": "2026-10-28T21:03:01",
+      "sample_coverage": 1.0,
+      "freshness_coverage": 1.0,
+      "score": 100.0,
+      "status": "good",
+      "source": "card provider"
+    },
+    "subscriptions": {
+      "record_count": 6,
+      "missing_rate": 0.0,
+      "anomaly_rate": 0.0,
+      "updated_at": "2026-10-28T21:03:01",
+      "sample_coverage": 1.0,
+      "freshness_coverage": 1.0,
+      "score": 100.0,
+      "status": "good",
+      "source": "subscription provider"
+    },
+    "products": {
+      "record_count": 26,
+      "missing_rate": 0.0,
+      "anomaly_rate": 0.0,
+      "updated_at": "2026-10-28T21:03:01",
+      "sample_coverage": 0.8846,
+      "freshness_coverage": 1.0,
+      "score": 98.8,
+      "status": "good",
+      "source": "wealth product provider"
+    },
+    "holdings": {
+      "record_count": 3,
+      "missing_rate": 0.0,
+      "anomaly_rate": 0.0,
+      "updated_at": "2026-10-28T21:03:01",
+      "sample_coverage": 1.0,
+      "freshness_coverage": 1.0,
+      "score": 100.0,
+      "status": "good",
+      "source": "wealth holding provider"
+    }
+  },
+  "warnings": []
+}

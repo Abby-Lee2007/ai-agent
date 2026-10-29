@@ -8,6 +8,8 @@ from finagent.analytics import (
     build_event_center,
     build_financial_health,
     build_cashflow_forecast,
+    build_data_quality_report,
+    build_probability_forecast,
     estimate_product_analytics,
     portfolio_risk_summary,
 )
@@ -59,12 +61,13 @@ class CashflowForecastTool(Tool):
                 scenario_date = date.fromisoformat(purchase_date)
             except ValueError:
                 scenario_date = ctx.clock.today()
-        forecast = build_cashflow_forecast(
+        probability = build_probability_forecast(
             ctx.store,
             ctx.providers,
             ctx.clock,
             ctx.user_id,
             months=int(months or 3),
+            simulations=240,
             purchase_amount=float(purchase_amount or 0),
             purchase_date=scenario_date,
             income_change_pct=float(income_change_pct or 0),
@@ -72,6 +75,18 @@ class CashflowForecastTool(Tool):
             investment_amount=float(investment_amount or 0),
             investment_return_pct=float(investment_return_pct or 0),
         )
+        forecast = dict(probability["baseline"])
+        forecast.update({
+            "daily_quantiles": probability["daily_quantiles"],
+            "terminal_quantiles": probability["terminal_quantiles"],
+            "min_balance_quantiles": probability["min_balance_quantiles"],
+            "intervals": probability["intervals"],
+            "negative_probability": probability["negative_probability"],
+            "worst_5pct": probability["worst_5pct"],
+            "probability_simulations": probability["scenario_count"],
+            "probability_seed": probability["random_seed"],
+            "probability_method": probability["method"],
+        })
         baseline = build_cashflow_forecast(
             ctx.store,
             ctx.providers,
@@ -86,16 +101,40 @@ class CashflowForecastTool(Tool):
             forecast["end_balance"] - baseline["end_balance"],
             2,
         )
+        quality = build_data_quality_report(
+            ctx.store,
+            ctx.providers,
+            ctx.clock,
+            ctx.user_id,
+        )
 
         lines = [
             f"财务数字孪生（未来 {forecast['horizon_days']} 天）",
             f"  当前可动用资金：{forecast['start_balance']:,.2f} 元",
-            f"  预计期末余额：{forecast['end_balance']:,.2f} 元",
+            (
+                f"  期末余额：P50 {forecast['terminal_quantiles']['p50']:,.2f} 元，"
+                f"50% 区间 [{forecast['intervals']['terminal_50'][0]:,.2f}, "
+                f"{forecast['intervals']['terminal_50'][1]:,.2f}] 元"
+            ),
+            (
+                f"  90% 区间 [{forecast['intervals']['terminal_90'][0]:,.2f}, "
+                f"{forecast['intervals']['terminal_90'][1]:,.2f}] 元；"
+                f"出现负余额的概率 {forecast['negative_probability'] * 100:.1f}%"
+            ),
             f"  预计最低余额：{forecast['min_balance']:,.2f} 元"
             f"（{forecast['min_balance_date']}）",
+            (
+                f"  最低余额 P05：{forecast['min_balance_quantiles']['p05']:,.2f} 元；"
+                f"最差 5% 路径期末均值 "
+                f"{forecast['worst_5pct']['mean_terminal_balance']:,.2f} 元"
+            ),
             f"  建议保留：{forecast['essential_monthly']:,.2f} 元/月必要支出",
             f"  可安排资金：{forecast['safe_to_spend']:,.2f} 元",
-            f"  模型数据：{forecast['data_scope']}；置信度约 {forecast['confidence'] * 100:.0f}%",
+            (
+                f"  模型数据：{forecast['data_scope']}；"
+                f"置信度约 {forecast['confidence'] * 100:.0f}%；"
+                f"数据质量 {quality['overall_score']:.1f}/100"
+            ),
         ]
         if forecast["warnings"]:
             lines.append("")
@@ -118,16 +157,26 @@ class CashflowForecastTool(Tool):
         lines.append("")
         lines.append(f"建议：{forecast['recommendation']}")
         lines.append(
-            "以上是基于演示账户、历史流水和当前订阅/任务的确定性情景测算，"
-            "不是实际银行余额承诺。"
+            "以上是基于演示账户、历史流水和当前订阅/任务的经验分布模拟，"
+            "区间和概率不是实际银行余额承诺。"
         )
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"forecast": forecast},
+            data={
+                "forecast": forecast,
+                "probability": {
+                    "scenario_count": probability["scenario_count"],
+                    "random_seed": probability["random_seed"],
+                    "terminal_quantiles": probability["terminal_quantiles"],
+                    "intervals": probability["intervals"],
+                    "negative_probability": probability["negative_probability"],
+                },
+                "data_quality": quality,
+            },
             summary=(
-                f"{forecast['horizon_days']}天预测最低余额 "
-                f"{forecast['min_balance']:,.2f} 元"
+                f"{forecast['horizon_days']}天期末余额 P50 "
+                f"{forecast['terminal_quantiles']['p50']:,.2f} 元"
             ),
         )
 

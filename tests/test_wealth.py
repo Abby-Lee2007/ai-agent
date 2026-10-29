@@ -30,6 +30,25 @@ class TestWealth(unittest.TestCase):
         self.assertIn("产品说明（用大白话解释）", reply.text)
         self.assertIn("是否继续申购", reply.text)
 
+    def test_recommendation_uses_distribution_and_constrained_optimizer(self):
+        reply = self.agent.handle("我有5万块，稳健一点怎么配置")
+
+        self.assertIn("optimization", reply.data)
+        self.assertIn("cashflow_distribution", reply.data)
+        self.assertIn("data_quality", reply.data)
+        self.assertNotIn("quality", reply.data)
+        self.assertIn("p05_min_balance", reply.data["cashflow_distribution"])
+        self.assertGreater(reply.data["cashflow_distribution"]["risk_aversion"], 0.3)
+        self.assertGreater(reply.data["cashflow_distribution"]["tail_loss_pct"], 0.0)
+        optimization = reply.data["optimization"]
+        self.assertIn(
+            optimization["status"],
+            {"optimized", "cash_only", "no_feasible_portfolio"},
+        )
+        self.assertAlmostEqual(sum(optimization["weights"].values()), 1.0, places=6)
+        self.assertIn("cash_buffer_satisfied", optimization["constraints"])
+        self.assertIn("约束优化", reply.text)
+
     def test_recommend_respects_risk_cap(self):
         reply = self.agent.handle("推荐几个理财产品")
         self.assertLessEqual(reply.data["max_risk"], 4)
