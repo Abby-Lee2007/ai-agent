@@ -15,6 +15,8 @@ from finagent.nlu.llm_client import LLMClient
 
 
 class LLMToolPlanner:
+    MODEL_OPTIONAL_ARG_ALLOWLIST = {"note", "reason"}
+
     def __init__(self, registry: ToolRegistry, llm: Optional[LLMClient]) -> None:
         self.registry = registry
         self.llm = llm
@@ -80,7 +82,9 @@ class LLMToolPlanner:
         slots: Dict[str, Any],
         raw_text: str,
     ) -> Optional[Dict[str, Any]]:
-        if not self.available or not candidates:
+        if not self.available or not candidates or len(candidates) != 1:
+            if len(candidates) > 1:
+                self.last_error = "多步骤计划禁止由模型重新选择或折叠工具"
             return None
         tools = self._tool_schemas(candidates)
         if not tools:
@@ -132,7 +136,11 @@ class LLMToolPlanner:
             )
             if param_spec is not None and not param_spec.required:
                 value = model_args.get(param)
-                if isinstance(value, (str, int, float, bool)):
+                if (
+                    param in self.MODEL_OPTIONAL_ARG_ALLOWLIST
+                    and isinstance(value, str)
+                    and len(value) <= 200
+                ):
                     args[param] = value
         required = self.registry.get(tool_name).required_params() if self.registry.get(tool_name) else []
         if any(name not in args for name in required):

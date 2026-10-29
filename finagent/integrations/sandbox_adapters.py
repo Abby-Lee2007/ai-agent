@@ -252,6 +252,8 @@ class BrokerSandboxAdapter(ProviderSandboxAdapter):
         amount: float,
         symbol: str = "",
         limit_price: Optional[float] = None,
+        quantity: float = 0.0,
+        fees: float = 0.0,
     ) -> SandboxExecution:
         side = str(side or "").strip().lower()
         if side not in {"subscribe", "redeem", "buy", "sell"}:
@@ -264,6 +266,8 @@ class BrokerSandboxAdapter(ProviderSandboxAdapter):
                 "amount": round(float(amount), 2),
                 "symbol": str(symbol or "").upper(),
                 "limit_price": limit_price,
+                "quantity": round(float(quantity), 4),
+                "fees": round(float(fees), 2),
                 "venue": "simulated-broker-desk",
             },
         )

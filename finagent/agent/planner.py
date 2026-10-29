@@ -140,6 +140,8 @@ SIMPLE_PLANS: Dict[str, List[Tuple[str, Dict[str, str]]]] = {
     )],
     "advisor.proactive": [("advisor.proactive", {})],
     "advisor.health_score": [("advisor.health_score", {})],
+    "macro.official": [("macro.official", {"refresh": "refresh"})],
+    "market.overview": [("market.overview", {})],
     "advisor.events": [("advisor.events", {"action": "action", "event_id": "event_id"})],
     "risk.playbook": [("risk.playbook", {"case": "case"})],
     "risk.dispute": [("risk.dispute", {"txn_id": "txn_id"})],
@@ -381,7 +383,7 @@ class Planner:
                 else self._question(missing[0])
             )
             return plan
-        if self.llm_planner is not None:
+        if self.llm_planner is not None and len(template) == 1:
             proposal = self.llm_planner.propose(
                 intent.name,
                 template,
@@ -827,7 +829,16 @@ class Planner:
             if tool == "bill.search":
                 return f"检索与「{args.get('keyword')}」相关的消费"
             if tool == "wealth.subscribe":
+                from finagent.tools.wealth_tools import (
+                    build_subscription_order,
+                    resolve_live_product,
+                )
                 product = ctx.providers.wealth.find(str(args.get("product") or ""))
+                if product is None:
+                    product = resolve_live_product(
+                        ctx,
+                        str(args.get("product") or ""),
+                    )
                 payer = resolve_payment_card(ctx, str(args.get("account") or ""))
                 product_text = (f"「{product.name}」（{product.product_id}，R{product.risk_level}）"
                                 if product else f"「{args.get('product')}」")
@@ -836,6 +847,34 @@ class Planner:
                     parts.append(f"费率：{product.fee_rate * 100:.2f}%")
                     parts.append(f"赎回：{product.redemption_rule}")
                     parts.append(f"数据：{product.source or '未知来源'}")
+                    if product.has_live_data:
+                        order, order_error = build_subscription_order(
+                            ctx,
+                            product,
+                            float(args.get("amount", 0)),
+                        )
+                        if order is None:
+                            parts.append(order_error)
+                        elif order["kind"] == "quote":
+                            parts.append(
+                                f"最新价 {float(order['price']):,.3f} 元"
+                                f"（{order['source']}，{order['as_of']}）"
+                            )
+                            parts.append(
+                                f"预计买入 {float(order['quantity']):,.0f}"
+                                f"{order['unit']}，模拟佣金 "
+                                f"{float(order['fee']):,.2f} 元，"
+                                f"实际扣款 {float(order['total_debit']):,.2f} 元"
+                            )
+                        else:
+                            parts.append(
+                                f"最新净值 {float(order['price']):,.4f} 元"
+                                f"（{order['source']}，{order['as_of']}）"
+                            )
+                            parts.append(
+                                f"预计确认 {float(order['quantity']):,.4f} 份，"
+                                f"申购费 {float(order['fee']):,.2f} 元"
+                            )
                 if payer:
                     parts.append(
                         f"付款银行卡：{payer.brand}（尾号 {payer.tail}，"

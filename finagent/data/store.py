@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -168,6 +169,30 @@ class DataStore:
                 record.updated_at = self.clock.iso()
             if source and hasattr(record, "source"):
                 record.source = source
+
+    def checkpoint(self) -> Dict[str, Any]:
+        """Capture the in-memory ledger for deterministic rollback.
+
+        The prototype uses an in-memory store, so a deep copy is small enough
+        for a single business operation and prevents partial tool side effects.
+        """
+        return {
+            "tables": {
+                table: copy.deepcopy(getattr(self, table))
+                for table in self.TABLES
+            },
+            "counters": copy.deepcopy(self.counters),
+            "audit": copy.deepcopy(self.audit),
+        }
+
+    def restore_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        """Restore a checkpoint captured by :meth:`checkpoint`."""
+        tables = checkpoint.get("tables") or {}
+        for table in self.TABLES:
+            if table in tables:
+                setattr(self, table, copy.deepcopy(tables[table]))
+        self.counters = copy.deepcopy(checkpoint.get("counters") or {})
+        self.audit = copy.deepcopy(checkpoint.get("audit") or [])
 
     # ------------------------------------------------------------------
     # 用户 / 账户
@@ -487,8 +512,13 @@ class DataStore:
         if not keyword:
             return None
         key = keyword.strip()
+        lowered = key.lower()
         for p in self.products.values():
-            if key == p.product_id or key == p.name:
+            if (
+                key == p.product_id
+                or key == p.name
+                or (p.symbol and lowered == p.symbol.lower())
+            ):
                 return p
         for p in self.products.values():
             if key in p.name or key in p.category:

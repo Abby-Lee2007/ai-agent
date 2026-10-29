@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date
+from datetime import date, timedelta
 
 from tests.support import make_agent
 from finagent.vision.receipt_reader import ReceiptReader
@@ -23,9 +23,41 @@ class TestCashflowDigitalTwin(unittest.TestCase):
         self.assertGreater(forecast["start_balance"], 0)
         self.assertTrue(forecast["events"])
         self.assertIn("confidence", forecast)
+        self.assertIn("cashflow_breakdown", forecast)
+        self.assertGreaterEqual(len(forecast["action_plan"]), 1)
+        self.assertEqual(len(forecast["stress_tests"]), 3)
+        self.assertIn("daily_safe_budget", forecast)
+        self.assertGreaterEqual(
+            len(forecast["cashflow_breakdown"]),
+            7,
+        )
         self.assertEqual(
             len(forecast["baseline_series"]),
             len(forecast["series"]),
+        )
+
+    def test_forecast_includes_pending_gift_budget(self):
+        account = self.agent.store.primary_account("u_001")
+        self.agent.store.add_task(
+            user_id="u_001",
+            kind="gift_order",
+            run_date=(self.agent.clock.today() + timedelta(days=8)).isoformat(),
+            title="生日蛋糕预约",
+            payload={"budget": 328.0, "person": "林雅雯", "item": "蛋糕"},
+        )
+
+        reply = self.agent.handle("预测我未来90天的现金流")
+        gift_events = [
+            event for event in reply.data["forecast"]["events"]
+            if event["kind"] == "scheduled_task"
+            and "生日蛋糕预约" in event["label"]
+        ]
+
+        self.assertTrue(gift_events)
+        self.assertEqual(gift_events[0]["amount"], -328.0)
+        self.assertGreaterEqual(
+            reply.data["forecast"]["cashflow_breakdown"]["scheduled_tasks"],
+            328.0,
         )
 
     def test_forecast_uses_uploaded_bill_transactions(self):
@@ -59,6 +91,19 @@ class TestCashflowDigitalTwin(unittest.TestCase):
             baseline["end_balance"] - projected["end_balance"],
             7000,
         )
+
+    def test_income_drop_scenario_returns_synced_parameters_and_deltas(self):
+        baseline = self.agent.handle("预测我未来90天的现金流").data["forecast"]
+        scenario = self.agent.handle("收入下降20%后未来90天现金流会怎样")
+        projected = scenario.data["forecast"]
+
+        self.assertEqual(projected["scenario"]["income_change_pct"], -20.0)
+        self.assertFalse(projected["scenario"]["is_baseline"])
+        self.assertLess(projected["end_balance"], baseline["end_balance"])
+        self.assertLess(projected["scenario_delta_end"], 0)
+        self.assertLess(projected["scenario_delta_min"], 0)
+        self.assertIn("当前情景", scenario.text)
+        self.assertIn("收入变化 -20%", scenario.text)
 
     def test_workflow_metadata_is_attached(self):
         reply = self.agent.handle("预测我未来90天的现金流")

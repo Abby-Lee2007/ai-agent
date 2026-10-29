@@ -12,6 +12,7 @@ runtime_uploads/
 .env
 ui-artifacts/
 ui-artifacts-dev/
+ui-artifacts-*/
 .chrome-profile/
 .edge-profile/
 

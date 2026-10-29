@@ -14,6 +14,11 @@ from datetime import date, timedelta
 from typing import Any, Dict, List, Tuple
 
 from finagent.data.models import Transaction
+from finagent.data.official_sources import (
+    OfficialDataError,
+    official_macro_answer_line,
+    official_macro_context,
+)
 from finagent.data.provenance import source_badge
 from finagent.data.providers import build_data_providers
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, format_money, render_table
@@ -124,6 +129,33 @@ def _summarize(txns: List[Transaction]) -> Dict[str, Any]:
     }
 
 
+def _official_spending_context(
+    current_expense: float,
+    previous_expense: float = 0.0,
+) -> Tuple[List[str], Dict[str, Any]]:
+    """Explain spending against official CPI without changing bill amounts."""
+    try:
+        macro = official_macro_context()
+    except (OfficialDataError, OSError, ValueError):
+        return [], {}
+    line = official_macro_answer_line(macro)
+    if not line:
+        return [], macro
+    lines = [line]
+    cpi = macro.get("cpi_yoy_pct")
+    if previous_expense > 0 and isinstance(cpi, (int, float)):
+        nominal_change = (current_expense - previous_expense) / previous_expense * 100
+        real_change = ((1 + nominal_change / 100) / (1 + cpi / 100) - 1) * 100
+        lines.append(
+            f"  粗略购买力对照：本期支出名义变化 {nominal_change:+.1f}%，"
+            f"扣除 {float(cpi):.2f}% 年度 CPI 后约为 {real_change:+.1f}%。"
+        )
+        lines.append(
+            "  这是跨频率的温和折算，不是严格同比；账单原始金额不会被调整。"
+        )
+    return lines, macro
+
+
 def _category_table(txns: List[Transaction], top: int = 8) -> Tuple[List[List[str]], Dict[str, float]]:
     """按类别汇总消费。"""
     totals: Dict[str, float] = defaultdict(float)
@@ -222,6 +254,10 @@ class BillAnalyzeTool(Tool):
             else 0.0
         )
         trend = "上升" if delta > 0 else ("下降" if delta < 0 else "持平")
+        macro_lines, official_macro = _official_spending_context(
+            stats["expense"],
+            prev_stats["expense"],
+        )
 
         lines = [
             f"{label}账单概览（{start} ~ {end}，共 {stats['count']} 笔）",
@@ -236,6 +272,9 @@ class BillAnalyzeTool(Tool):
             "高频商户 Top5：",
             render_table(["商户", "金额", "笔数"], _top_merchants(txns)),
         ]
+        if macro_lines:
+            lines.append("")
+            lines.extend(macro_lines)
         return ToolResult(
             True,
             "\n".join(lines),
@@ -246,6 +285,7 @@ class BillAnalyzeTool(Tool):
                 "start": start,
                 "end": end,
                 "data_scope": data_scope,
+                "official_macro": official_macro,
             },
             summary=f"{label}支出 {stats['expense']:,.2f} 元，结余 {stats['net']:,.2f} 元",
         )
@@ -340,6 +380,13 @@ class BillReportTool(Tool):
             return ToolResult(True, f"{label}没有交易记录，无法生成报告。", summary=f"{label}无数据")
 
         stats = _summarize(txns)
+        prev_start, prev_end, _ = _previous_bounds(period_key, today)
+        prev_txns, _ = _scope_transactions(ctx, prev_start, prev_end)
+        previous_expense = _summarize(prev_txns)["expense"]
+        macro_lines, official_macro = _official_spending_context(
+            stats["expense"],
+            previous_expense,
+        )
         rows, totals = _category_table(txns, top=10)
         anomalies = ctx.risk.detect_anomalies(
             ctx.user_id,
@@ -369,6 +416,9 @@ class BillReportTool(Tool):
             "",
             "四、异常与风险提示",
         ]
+        if macro_lines:
+            section_index = lines.index("二、消费结构")
+            lines[section_index:section_index] = macro_lines + [""]
         if anomalies:
             for a in anomalies[:6]:
                 lines.append(f"  - [{LEVEL_ICON.get(a.level, a.level)}] {a.date} {a.merchant} "
@@ -405,6 +455,7 @@ class BillReportTool(Tool):
                 "top_category": top_category,
                 "anomaly_count": len(anomalies),
                 "data_scope": data_scope,
+                "official_macro": official_macro,
             },
             summary=f"{label}支出 {stats['expense']:,.2f} 元，结余 {stats['net']:,.2f} 元",
         )

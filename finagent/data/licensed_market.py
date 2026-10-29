@@ -183,6 +183,24 @@ class MarketDataRouter:
                 return result
         return self.public.fund_nav(code) if self.public.enabled else None
 
+    def history(
+        self,
+        symbol: str,
+        limit: int = 250,
+    ) -> Optional[Dict[str, object]]:
+        if not self.enabled or not self.public.enabled:
+            return None
+        return self.public.history(symbol, limit)
+
+    def fund_nav_history(
+        self,
+        code: str,
+        limit: int = 250,
+    ) -> Optional[Dict[str, object]]:
+        if not self.enabled or not self.public.enabled:
+            return None
+        return self.public.fund_nav_history(code, limit)
+
     def status(self) -> Dict[str, object]:
         return {
             "mode": self.mode,

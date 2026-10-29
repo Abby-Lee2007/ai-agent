@@ -18,6 +18,8 @@
       --warning: #8a5b16;
       --warning-soft: #fff4dd;
       --danger: #a9362c;
+      --market-up: #c23a32;
+      --market-down: #087a5a;
       --shadow: 0 14px 40px rgba(25, 54, 49, 0.08);
     }
 
@@ -108,7 +110,123 @@
       background: #2f9c79;
       box-shadow: 0 0 0 4px #e4f4ee;
     }
-
+    .market-overview {
+      min-width: 0;
+      padding: 0;
+      background: transparent;
+    }
+    .market-overview-head,
+    .market-overview-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+    .market-overview-head { margin-bottom: 6px; }
+    .market-overview-title {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      min-width: 0;
+    }
+    .market-overview-title strong { font-size: 12px; }
+    .market-overview-title span {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 10.5px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .market-refresh {
+      flex: 0 0 auto;
+      min-height: 26px;
+      padding: 2px 8px;
+      border: 1px solid #b9d6cf;
+      border-radius: 5px;
+      color: var(--accent-strong);
+      background: var(--surface);
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+    .market-refresh:hover,
+    .market-refresh:focus-visible { background: var(--accent-soft); outline: none; }
+    .market-refresh:disabled { opacity: .55; cursor: wait; }
+    .market-overview-indices {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 0;
+      min-width: 0;
+    }
+    .market-index {
+      min-width: 0;
+      padding: 2px 10px;
+      border-left: 1px solid var(--line);
+    }
+    .market-index:first-child { padding-left: 0; border-left: 0; }
+    .market-index span,
+    .market-index small {
+      display: block;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 10px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .market-index strong {
+      display: inline-block;
+      margin: 1px 5px 0 0;
+      font-size: 14px;
+      font-variant-numeric: tabular-nums;
+    }
+    .market-index em {
+      font-size: 10.5px;
+      font-style: normal;
+      font-variant-numeric: tabular-nums;
+    }
+    .market-index .up { color: var(--market-up); }
+    .market-index .down { color: var(--market-down); }
+    .market-index .flat { color: var(--muted); }
+    .market-index.unavailable strong,
+    .market-index.unavailable em { color: var(--muted); }
+    .market-overview-meta {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .market-overview-meta span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .market-dialog { width: min(900px, calc(100% - 28px)); }
+    .market-dialog .detail-dialog-content { gap: 0; }
+    .market-dialog-note {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .market-dialog-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    .market-dialog-action {
+      min-height: 32px;
+      padding: 5px 10px;
+      border: 1px solid #b9d6cf;
+      border-radius: 5px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .market-dialog-action:hover,
+    .market-dialog-action:focus-visible { border-color: var(--accent); outline: none; }
     .workspace {
       min-width: 0;
       min-height: 0;
@@ -526,6 +644,82 @@
       line-height: 1.65;
       margin-bottom: 14px;
     }
+    .model-audit-panel {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 14px;
+      padding: 12px;
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: #fbfdfc;
+    }
+    .model-audit-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .model-audit-head strong { font-size: 13px; }
+    .model-audit-head span {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+    .model-audit-badge {
+      flex: 0 0 auto;
+      padding: 2px 7px;
+      border-radius: 999px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 10.5px;
+      font-weight: 800;
+    }
+    .model-audit-badge.warning {
+      color: #7a5511;
+      background: var(--warning-soft);
+    }
+    .model-audit-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+    .model-audit-metric {
+      min-width: 0;
+      padding: 8px 9px;
+      background: var(--surface);
+    }
+    .model-audit-metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 10.5px;
+    }
+    .model-audit-metric strong {
+      display: block;
+      margin-top: 3px;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .model-audit-note {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+    .data-quality-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 10px;
+      border-left: 3px solid var(--accent);
+      background: var(--surface-soft);
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+    .data-quality-line strong { color: var(--ink); }
     .wealth-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -558,6 +752,22 @@
       color: var(--accent-strong);
       background: var(--accent-soft);
       font-size: 11px;
+      font-weight: 800;
+    }
+    .wealth-badges {
+      display: flex;
+      flex: 0 0 auto;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+    .wealth-score {
+      padding: 2px 7px;
+      border: 1px solid #d8cba8;
+      border-radius: 999px;
+      color: #735417;
+      background: #fff8e8;
+      font-size: 10.5px;
       font-weight: 800;
     }
     .wealth-meta {
@@ -1209,6 +1419,30 @@
       color: #fff;
       background: var(--danger);
     }
+    .step-up-field {
+      display: grid;
+      gap: 6px;
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .step-up-field input {
+      height: 42px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: var(--surface);
+      font: 700 20px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: 8px;
+      text-align: center;
+    }
+    .step-up-error {
+      min-height: 18px;
+      margin: 7px 0 0;
+      color: var(--danger);
+      font-size: 12px;
+    }
     .history-list {
       min-height: 120px;
       padding: 4px 18px 16px;
@@ -1491,6 +1725,8 @@
       stroke-dasharray: 5 4;
     }
     .forecast-chart .area-balance { fill: var(--accent-soft); opacity: .7; }
+    .forecast-chart .fan-90 { fill: #7bb8aa; opacity: .13; }
+    .forecast-chart .fan-50 { fill: #4f9b8a; opacity: .18; }
     .forecast-chart .zero-line { stroke: var(--danger); stroke-width: 1; stroke-dasharray: 4 4; }
     .forecast-chart .min-marker { fill: var(--warning); stroke: var(--surface); stroke-width: 2; }
     .forecast-warnings,
@@ -1872,6 +2108,143 @@
     .transaction-detail-row strong { display: block; font-size: 12px; }
     .workflow-detail-step p,
     .transaction-detail-row p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+    .forecast-horizons {
+      display: inline-flex;
+      gap: 4px;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface-soft);
+    }
+    .forecast-horizon {
+      min-height: 28px;
+      padding: 4px 9px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .forecast-horizon.is-active {
+      border-color: #b9d6cf;
+      color: var(--accent-strong);
+      background: var(--surface);
+    }
+    .forecast-guide {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      padding: 9px 11px;
+      border-left: 3px solid var(--accent);
+      border-radius: 0 5px 5px 0;
+      color: var(--muted);
+      background: var(--accent-soft);
+      font-size: 11px;
+    }
+    .forecast-guide strong { color: var(--accent-strong); }
+    .scenario-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface-soft);
+    }
+    .scenario-summary span {
+      padding: 3px 7px;
+      border-radius: 4px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+    .cashflow-breakdown {
+      display: grid;
+      gap: 7px;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface-soft);
+    }
+    .cashflow-breakdown-row {
+      display: grid;
+      grid-template-columns: 105px minmax(0, 1fr) 100px;
+      align-items: center;
+      gap: 9px;
+      font-size: 11px;
+    }
+    .cashflow-breakdown-track {
+      height: 7px;
+      overflow: hidden;
+      border-radius: 4px;
+      background: var(--line);
+    }
+    .cashflow-breakdown-track i {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+    }
+    .cashflow-breakdown-row.expense .cashflow-breakdown-track i {
+      background: var(--warning);
+    }
+    .cashflow-breakdown-row.income .cashflow-breakdown-track i {
+      background: #2f9c79;
+    }
+    .cashflow-breakdown-value { text-align: right; font-weight: 700; }
+    .action-plan-list,
+    .stress-test-grid {
+      display: grid;
+      gap: 7px;
+    }
+    .action-plan-item {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 9px;
+      padding: 9px 10px;
+      border-left: 3px solid var(--accent);
+      border-radius: 0 5px 5px 0;
+      background: var(--surface-soft);
+    }
+    .action-plan-item.high { border-left-color: var(--danger); }
+    .action-plan-item.medium { border-left-color: var(--warning); }
+    .action-plan-priority {
+      align-self: start;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 9px;
+      font-weight: 800;
+    }
+    .action-plan-item.high .action-plan-priority {
+      color: var(--danger);
+      background: #fff1ef;
+    }
+    .action-plan-item.medium .action-plan-priority {
+      color: var(--warning);
+      background: var(--warning-soft);
+    }
+    .action-plan-item strong { display: block; font-size: 12px; }
+    .action-plan-item p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .stress-test-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .stress-test {
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--surface);
+    }
+    .stress-test span { display: block; color: var(--muted); font-size: 10px; }
+    .stress-test strong { display: block; margin-top: 3px; font-size: 13px; }
+    .stress-test.danger { border-color: #e3aaa3; background: #fff7f5; }
     .forecast-controls {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1924,6 +2297,13 @@
         transparent 5px 9px
       );
     }
+    .forecast-legend .fan-50 i,
+    .forecast-legend .fan-90 i {
+      height: 10px;
+      border-radius: 3px;
+    }
+    .forecast-legend .fan-50 i { background: rgba(79, 155, 138, .28); }
+    .forecast-legend .fan-90 i { background: rgba(123, 184, 170, .18); }
 
     @media (max-width: 760px) {
       .app {
@@ -2035,7 +2415,18 @@
       .analytics-table { display: block; overflow-x: auto; }
       .health-overview { grid-template-columns: 1fr; }
       .health-score { width: 132px; justify-self: center; }
+      .market-overview-indices {
+        grid-template-columns: repeat(6, 112px);
+        overflow-x: auto;
+        scrollbar-width: thin;
+      }
+      .market-overview-title span { max-width: 210px; }
+      .market-overview-meta { align-items: flex-start; flex-direction: column; gap: 2px; }
       .forecast-controls { grid-template-columns: 1fr; }
+      .stress-test-grid { grid-template-columns: 1fr; }
+      .cashflow-breakdown-row {
+        grid-template-columns: 88px minmax(0, 1fr) 86px;
+      }
     }
   </style>
 </head>
@@ -2293,6 +2684,23 @@
     </div>
   </dialog>
 
+  <dialog class="confirm-dialog" id="card-step-up-dialog" aria-labelledby="card-step-up-title">
+    <form class="confirm-dialog-body" id="card-step-up-form">
+      <h3 id="card-step-up-title">确认卡片安全设置</h3>
+      <p id="card-step-up-message">请输入该卡 6 位交易密码。</p>
+      <label class="step-up-field">交易密码
+        <input id="card-step-up-password" name="card_step_up_password" type="password"
+               inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+               pattern="[0-9]{6}" placeholder="••••••" required>
+      </label>
+      <p class="step-up-error" id="card-step-up-error"></p>
+      <div class="confirm-dialog-actions">
+        <button class="confirm-dialog-cancel" id="card-step-up-cancel" type="button">取消</button>
+        <button class="confirm-dialog-danger" type="submit">确认修改</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog class="detail-dialog" id="detail-dialog" aria-labelledby="detail-dialog-title">
     <div class="detail-dialog-body">
       <div class="detail-dialog-head">
@@ -2310,6 +2718,40 @@
         <button class="detail-dialog-close" id="event-center-close" type="button">关闭</button>
       </div>
       <div class="detail-dialog-content" id="event-center-list"></div>
+    </div>
+  </dialog>
+
+  <dialog class="detail-dialog market-dialog" id="market-dialog" aria-labelledby="market-dialog-title">
+    <div class="detail-dialog-body">
+      <div class="detail-dialog-head">
+        <div>
+          <h3 id="market-dialog-title">A 股市场与理财操作</h3>
+          <p class="market-dialog-note">进入理财相关操作时展示公开市场行情，不占用聊天区。</p>
+        </div>
+        <button class="detail-dialog-close" id="market-dialog-close" type="button">关闭</button>
+      </div>
+      <div class="detail-dialog-content">
+        <section class="market-overview" id="market-overview" aria-label="A股市场实时行情">
+          <div class="market-overview-head">
+            <div class="market-overview-title">
+              <strong>实时指数</strong>
+              <span id="market-overview-status">正在读取公开实时行情...</span>
+            </div>
+            <button class="market-refresh" id="market-refresh-button" type="button">刷新</button>
+          </div>
+          <div class="market-overview-indices" id="market-overview-indices"></div>
+          <div class="market-overview-meta">
+            <span id="market-overview-turnover">两市成交额读取中</span>
+            <span id="market-overview-source">数据来源与时效正在确认</span>
+          </div>
+        </section>
+        <div class="market-dialog-actions">
+          <button class="market-dialog-action" id="market-action-risk" type="button">风险测评</button>
+          <button class="market-dialog-action" id="market-action-recommend" type="button">产品推荐</button>
+          <button class="market-dialog-action" id="market-action-compare" type="button">产品对比</button>
+          <button class="market-dialog-action" id="market-action-portfolio" type="button">持仓与收益</button>
+        </div>
+      </div>
     </div>
   </dialog>
 
@@ -2346,6 +2788,12 @@
     const playbookActionMessage = document.getElementById("playbook-action-message");
     const playbookActionCancel = document.getElementById("playbook-action-cancel");
     const playbookActionConfirm = document.getElementById("playbook-action-confirm");
+    const cardStepUpDialog = document.getElementById("card-step-up-dialog");
+    const cardStepUpForm = document.getElementById("card-step-up-form");
+    const cardStepUpMessage = document.getElementById("card-step-up-message");
+    const cardStepUpPassword = document.getElementById("card-step-up-password");
+    const cardStepUpError = document.getElementById("card-step-up-error");
+    const cardStepUpCancel = document.getElementById("card-step-up-cancel");
     const carePeopleList = document.getElementById("care-people-list");
     const addCarePersonButton = document.getElementById("add-care-person");
     const newCardForm = document.getElementById("new-card-form");
@@ -2355,6 +2803,17 @@
     const customerSubtitle = document.getElementById("customer-subtitle");
     const capabilityGlobalActions = document.getElementById("capability-global-actions");
     const capabilityCategories = document.getElementById("capability-categories");
+    const marketOverviewStatus = document.getElementById("market-overview-status");
+    const marketOverviewIndices = document.getElementById("market-overview-indices");
+    const marketOverviewTurnover = document.getElementById("market-overview-turnover");
+    const marketOverviewSource = document.getElementById("market-overview-source");
+    const marketRefreshButton = document.getElementById("market-refresh-button");
+    const marketDialog = document.getElementById("market-dialog");
+    const marketDialogClose = document.getElementById("market-dialog-close");
+    const marketActionRisk = document.getElementById("market-action-risk");
+    const marketActionRecommend = document.getElementById("market-action-recommend");
+    const marketActionCompare = document.getElementById("market-action-compare");
+    const marketActionPortfolio = document.getElementById("market-action-portfolio");
     const eventCenterButton = document.getElementById("event-center-button");
     const eventBadge = document.getElementById("event-badge");
     const eventCenterDialog = document.getElementById("event-center-dialog");
@@ -2366,6 +2825,7 @@
     const detailDialogClose = document.getElementById("detail-dialog-close");
     let carePeople = [];
     let sessionId = localStorage.getItem("finagent_session_id") || "";
+    let sessionToken = localStorage.getItem("finagent_session_token") || "";
     let accessToken = sessionStorage.getItem("finagent_access_token") || "";
     let pendingGoalDelete = null;
     let pendingPlaybookAction = null;
@@ -2377,6 +2837,8 @@
     let cachedEventCounts = {};
     let pendingUploadPreview = "";
     let pendingUploadRotation = 0;
+    let marketRefreshBusy = false;
+    let cardStepUpResolver = null;
 
     function localTodayISO() {
       const now = new Date();
@@ -2392,6 +2854,7 @@
     function authHeaders(headers = {}) {
       const result = { ...headers };
       if (accessToken) result["X-Access-Token"] = accessToken;
+      if (sessionToken) result["X-Session-Token"] = sessionToken;
       return result;
     }
 
@@ -2415,6 +2878,25 @@
       detailDialogTitle.textContent = title;
       detailDialogContent.replaceChildren(...children);
       if (!detailDialog.open) detailDialog.showModal();
+    }
+
+    function requestCardStepUp(message) {
+      if (cardStepUpResolver) cardStepUpResolver(null);
+      return new Promise((resolve) => {
+        cardStepUpResolver = resolve;
+        cardStepUpMessage.textContent = message || "请输入该卡 6 位交易密码。";
+        cardStepUpPassword.value = "";
+        cardStepUpError.textContent = "";
+        cardStepUpDialog.showModal();
+        setTimeout(() => cardStepUpPassword.focus(), 0);
+      });
+    }
+
+    function settleCardStepUp(value) {
+      const resolver = cardStepUpResolver;
+      cardStepUpResolver = null;
+      if (cardStepUpDialog.open) cardStepUpDialog.close();
+      if (resolver) resolver(value);
     }
 
     function detailRow(title, detail) {
@@ -2642,6 +3124,107 @@
       });
     }
 
+    function renderMarketOverview(payload) {
+      const indices = Array.isArray(payload?.indices) ? payload.indices : [];
+      marketOverviewIndices.replaceChildren();
+      indices.forEach((item) => {
+        const node = document.createElement("div");
+        node.className = `market-index${item.available ? "" : " unavailable"}`;
+        const name = document.createElement("span");
+        name.textContent = item.name || item.symbol || "指数";
+        const price = document.createElement("strong");
+        price.textContent = item.available
+          ? Number(item.price).toLocaleString("zh-CN", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2
+            })
+          : "--";
+        const change = document.createElement("em");
+        const pct = Number(item.change_pct);
+        const direction = !item.available || !Number.isFinite(pct)
+          ? "flat"
+          : (pct > 0 ? "up" : (pct < 0 ? "down" : "flat"));
+        change.className = direction;
+        change.textContent = item.available && Number.isFinite(pct)
+          ? `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`
+          : "--";
+        const timestamp = document.createElement("small");
+        timestamp.textContent = item.timestamp
+          ? String(item.timestamp).slice(11, 19)
+          : item.symbol || "";
+        node.append(name, price, change, timestamp);
+        marketOverviewIndices.appendChild(node);
+      });
+      const state = payload?.market_state || "状态未知";
+      const observedAt = payload?.observed_at
+        ? String(payload.observed_at).replace("T", " ")
+        : "最近交易时点未知";
+      marketOverviewStatus.textContent = payload?.available
+        ? `${state} · ${observedAt} · ${payload.status === "partial" ? "部分指数可用" : "公开行情"}`
+        : "公开行情暂不可用";
+      const turnover = Number(payload?.turnover_100m_cny);
+      const turnoverText = Number.isFinite(turnover) && turnover > 0
+        ? `沪深两市成交额约 ${turnover.toLocaleString("zh-CN", {
+            maximumFractionDigits: 2
+          })} 亿元`
+        : "两市成交额暂未取到";
+      const leading = payload?.leading_index;
+      const lagging = payload?.lagging_index;
+      const breadthText = leading && lagging
+        ? ` · 领涨 ${leading.name} ${Number(leading.change_pct) >= 0 ? "+" : ""}${Number(leading.change_pct).toFixed(2)}%`
+          + ` · 落后 ${lagging.name} ${Number(lagging.change_pct) >= 0 ? "+" : ""}${Number(lagging.change_pct).toFixed(2)}%`
+        : "";
+      marketOverviewTurnover.textContent = turnoverText + breadthText;
+      const sources = Array.isArray(payload?.sources) && payload.sources.length
+        ? payload.sources.join("、")
+        : "公开行情";
+      marketOverviewSource.textContent =
+        `${sources} · 非模拟指数 · ${payload?.production_grade ? "持牌源" : "公开数据增强"}`;
+    }
+
+    function openMarketDialog() {
+      if (!marketDialog.open) marketDialog.showModal();
+      loadMarketOverview();
+    }
+
+    function runMarketDialogAction(prompt) {
+      if (marketDialog.open) marketDialog.close();
+      sendMessage(prompt);
+    }
+
+    async function loadMarketOverview() {
+      if (marketRefreshBusy) return;
+      marketRefreshBusy = true;
+      marketRefreshButton.disabled = true;
+      marketRefreshButton.textContent = "刷新中";
+      try {
+        await ensureSession();
+        let response = await fetchWithAuth(
+          `/v1/market/overview?session_id=${encodeURIComponent(sessionId)}`
+        );
+        if ([403, 404].includes(response.status)) {
+          sessionId = "";
+          sessionToken = "";
+          localStorage.removeItem("finagent_session_token");
+          await createSession();
+          response = await fetchWithAuth(
+            `/v1/market/overview?session_id=${encodeURIComponent(sessionId)}`
+          );
+        }
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || "行情读取失败");
+        renderMarketOverview(payload);
+      } catch (error) {
+        marketOverviewStatus.textContent = "公开行情暂不可用，未使用模拟指数替代";
+        marketOverviewTurnover.textContent = error.message || "请稍后刷新";
+        marketOverviewSource.textContent = "行情不可用时不会生成虚假涨跌";
+      } finally {
+        marketRefreshBusy = false;
+        marketRefreshButton.disabled = false;
+        marketRefreshButton.textContent = "刷新";
+      }
+    }
+
     async function createSession() {
       const response = await fetchWithAuth("/v1/sessions", {
         method: "POST",
@@ -2651,16 +3234,26 @@
       if (!response.ok) throw new Error("无法创建会话");
       const data = await response.json();
       sessionId = data.session_id;
+      sessionToken = data.session_token || "";
       localStorage.setItem("finagent_session_id", sessionId);
+      if (sessionToken) {
+        localStorage.setItem("finagent_session_token", sessionToken);
+      } else {
+        localStorage.removeItem("finagent_session_token");
+      }
       sessionLabel.textContent = sessionId.replace("SESSION-", "").slice(0, 12);
       return data;
     }
 
     async function ensureSession() {
-      if (sessionId) {
+      if (sessionId && sessionToken) {
         sessionLabel.textContent = sessionId.replace("SESSION-", "").slice(0, 12);
         return;
       }
+      sessionId = "";
+      sessionToken = "";
+      localStorage.removeItem("finagent_session_id");
+      localStorage.removeItem("finagent_session_token");
       await createSession();
     }
 
@@ -2675,6 +3268,8 @@
           openProfileSettings();
         } else if (action.panel_id === "upload-history-overlay") {
           openUploadHistory();
+        } else if (action.panel_id === "market-dialog") {
+          openMarketDialog();
         }
         return;
       }
@@ -2717,6 +3312,9 @@
         capabilityCategories
           .querySelector(`.capability-group[data-category-id="${category.id}"]`)
           ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+      if (!willCollapse && category.id === "wealth") {
+        openMarketDialog();
       }
     }
 
@@ -3090,6 +3688,114 @@
         : "已按风险等级生成产品清单：";
       container.appendChild(summary);
 
+      const optimizer = reply?.data?.portfolio_optimization;
+      if (optimizer) {
+        const panel = document.createElement("section");
+        panel.className = "model-audit-panel";
+        const head = document.createElement("div");
+        head.className = "model-audit-head";
+        const headCopy = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = "约束优化组合";
+        const subtitle = document.createElement("span");
+        subtitle.textContent = optimizer.status === "optimized"
+          ? `${optimizer.optimizer?.method || "约束网格搜索"} · ${
+            optimizer.optimizer?.evaluated_portfolios || 0
+          } 个组合通过评估`
+          : optimizer.reason || "当前没有可行产品组合";
+        headCopy.append(title, subtitle);
+        const badge = document.createElement("span");
+        badge.className = `model-audit-badge${
+          optimizer.status === "optimized" ? "" : " warning"
+        }`;
+        badge.textContent = optimizer.status === "optimized"
+          ? "硬约束已复核"
+          : "现金安全方案";
+        head.append(headCopy, badge);
+        panel.appendChild(head);
+
+        const metrics = document.createElement("div");
+        metrics.className = "model-audit-metrics";
+        const optimizerMetrics = optimizer.metrics || {};
+        [
+          ["预期持有期收益", `${Number(optimizerMetrics.expected_horizon_return_pct || 0).toFixed(2)}%`],
+          ["CVaR 5% 损失", `${Number(optimizerMetrics.cvar_5_loss_pct || 0).toFixed(2)}%`],
+          ["压力回撤", `${Number(optimizerMetrics.estimated_max_drawdown_pct || 0).toFixed(2)}%`],
+          ["风险厌恶系数", String(optimizer.objective?.risk_aversion ?? "-")],
+        ].forEach(([label, value]) => {
+          const item = document.createElement("div");
+          item.className = "model-audit-metric";
+          const labelNode = document.createElement("span");
+          labelNode.textContent = label;
+          const valueNode = document.createElement("strong");
+          valueNode.textContent = value;
+          item.append(labelNode, valueNode);
+          metrics.appendChild(item);
+        });
+        panel.appendChild(metrics);
+
+        if (Array.isArray(optimizer.allocations) && optimizer.allocations.length) {
+          const wrap = document.createElement("div");
+          wrap.className = "comparison-table-wrap";
+          const table = document.createElement("table");
+          table.className = "analytics-table";
+          const thead = document.createElement("thead");
+          const header = document.createElement("tr");
+          ["资产", "风险", "权重", "金额"].forEach((label) => {
+            const th = document.createElement("th");
+            th.textContent = label;
+            header.appendChild(th);
+          });
+          thead.appendChild(header);
+          table.appendChild(thead);
+          const tbody = document.createElement("tbody");
+          optimizer.allocations.forEach((allocation) => {
+            const row = document.createElement("tr");
+            [
+              allocation.name || allocation.product_id || "-",
+              `R${allocation.risk_level || "-"}`,
+              `${(Number(allocation.weight || 0) * 100).toFixed(1)}%`,
+              `¥${Number(allocation.amount || 0).toLocaleString("zh-CN", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+              })}`,
+            ].forEach((value) => {
+              const cell = document.createElement("td");
+              cell.textContent = value;
+              row.appendChild(cell);
+            });
+            tbody.appendChild(row);
+          });
+          table.appendChild(tbody);
+          wrap.appendChild(table);
+          panel.appendChild(wrap);
+        }
+
+        const note = document.createElement("p");
+        note.className = "model-audit-note";
+        note.textContent = optimizer.status === "optimized"
+          ? "0.6 是无量纲风险厌恶系数：每 1 个百分点 CVaR 损失扣 0.6 个百分点目标值。硬约束不会因无解而放宽；无可行组合时返回 100% 现金。"
+          : "没有自动放宽风险等级、期限、回撤、集中度或现金缓冲约束。";
+        panel.appendChild(note);
+        container.appendChild(panel);
+      }
+
+      const quality = reply?.data?.data_quality;
+      if (quality?.overall) {
+        const line = document.createElement("div");
+        line.className = "data-quality-line";
+        const label = document.createElement("span");
+        label.textContent = "模型数据质量（独立于账单 OCR）";
+        const value = document.createElement("strong");
+        value.textContent = `${
+          Number(quality.overall.score || 0).toFixed(2)
+        }/100 · ${quality.overall.grade || "未评级"} · ${
+          quality.overall.personalization_allowed ? "允许个性化" : "已阻断"
+        }`;
+        line.append(label, value);
+        container.appendChild(line);
+      }
+
       const grid = document.createElement("div");
       grid.className = "wealth-grid";
       products.forEach((product) => {
@@ -3104,7 +3810,16 @@
         const risk = document.createElement("span");
         risk.className = "wealth-risk";
         risk.textContent = product.risk_label || `R${product.risk_level}`;
-        head.append(title, risk);
+        const badges = document.createElement("div");
+        badges.className = "wealth-badges";
+        badges.appendChild(risk);
+        if (product.advice_score != null) {
+          const score = document.createElement("span");
+          score.className = "wealth-score";
+          score.textContent = `${product.advice_label || "适合度"} ${Number(product.advice_score).toFixed(1)}`;
+          badges.appendChild(score);
+        }
+        head.append(title, badges);
 
         const meta = document.createElement("div");
         meta.className = "wealth-meta";
@@ -3127,8 +3842,14 @@
         const analytics = product.analytics || {};
         description.textContent = [
           product.description || "",
-          analytics.estimated_annual_volatility_pct !== undefined
-            ? `情景估算：年化波动 ${analytics.estimated_annual_volatility_pct}% · 最大回撤 ${analytics.estimated_max_drawdown_pct}%`
+          Number.isFinite(Number(analytics.return_3m_pct))
+            && analytics.return_3m_pct !== null
+            ? `量化：近3月 ${Number(analytics.return_3m_pct).toFixed(2)}% · 年化波动 ${Number(analytics.estimated_annual_volatility_pct).toFixed(2)}% · 最大回撤 ${Number(analytics.estimated_max_drawdown_pct).toFixed(2)}% · Sharpe ${Number(analytics.sharpe_ratio).toFixed(2)}`
+            : analytics.estimated_annual_volatility_pct !== undefined
+              ? `情景估算：年化波动 ${analytics.estimated_annual_volatility_pct}% · 最大回撤 ${analytics.estimated_max_drawdown_pct}%`
+              : "",
+          (product.score_reasons || []).length
+            ? `匹配依据：${product.score_reasons.join("；")}`
             : ""
         ].filter(Boolean).join("\n");
 
@@ -3136,7 +3857,11 @@
         foot.className = "wealth-card-foot";
         const source = document.createElement("span");
         source.className = "wealth-source";
-        source.textContent = `${product.data_source || "演示参数"}｜${product.liquidity || ""}`;
+        source.textContent = [
+          product.data_source || "演示参数",
+          product.history_source ? `${product.history_source}历史 ${product.history_observations || 0}日` : "",
+          product.liquidity || ""
+        ].filter(Boolean).join("｜");
         const select = document.createElement("button");
         select.type = "button";
         select.className = "wealth-select";
@@ -3614,6 +4339,8 @@
     function renderForecastPanel(container, reply) {
       const forecast = reply?.data?.forecast;
       if (!forecast || !Array.isArray(forecast.series)) return false;
+      const scenario = forecast.scenario || {};
+      const scenarioActive = !scenario.is_baseline;
       const root = document.createElement("div");
       root.className = "forecast-panel";
 
@@ -3622,7 +4349,9 @@
       const copy = document.createElement("div");
       const title = document.createElement("h3");
       title.className = "forecast-title";
-      title.textContent = `未来 ${forecast.horizon_days} 天现金流`;
+      title.textContent = `未来 ${forecast.horizon_days} 天现金流${
+        scenarioActive ? " · 情景试算" : ""
+      }`;
       const subtitle = document.createElement("p");
       subtitle.className = "forecast-subtitle";
       subtitle.textContent = `${forecast.as_of} 起算 · ${forecast.data_scope}`;
@@ -3633,13 +4362,99 @@
       head.append(copy, confidence);
       root.appendChild(head);
 
+      const horizons = document.createElement("div");
+      horizons.className = "forecast-horizons";
+      horizons.setAttribute("aria-label", "预测周期");
+      [30, 60, 90].forEach((days) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `forecast-horizon${
+          Number(forecast.horizon_days) === days ? " is-active" : ""
+        }`;
+        button.textContent = `${days} 天`;
+        button.addEventListener("click", async () => {
+          if (busy || Number(forecast.horizon_days) === days) return;
+          busy = true;
+          serviceStatus.textContent = "正在重算现金周期";
+          try {
+            const response = await fetchWithAuth("/v1/forecast/simulate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                session_id: sessionId,
+                months: Math.max(1, Math.round(days / 30)),
+              }),
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.message || "预测失败");
+            appendMessage("agent", payload.reply.text, payload.reply);
+          } catch (error) {
+            serviceStatus.textContent = error.message || "预测失败";
+          } finally {
+            busy = false;
+          }
+        });
+        horizons.appendChild(button);
+      });
+      root.appendChild(horizons);
+
+      const guide = document.createElement("div");
+      guide.className = "forecast-guide";
+      const guideTitle = document.createElement("strong");
+      guideTitle.textContent = "使用顺序";
+      guide.append(
+        guideTitle,
+        document.createTextNode("① 选择 30/60/90 天"),
+        document.createTextNode("② 拖动情景滑块并点击“应用情景滑块”"),
+        document.createTextNode("③ 对比最低余额、净现金流和压力测试后再做决定"),
+      );
+      root.appendChild(guide);
+
+      if (scenarioActive) {
+        const scenarioSummary = document.createElement("div");
+        scenarioSummary.className = "scenario-summary";
+        const labels = [];
+        if (Number(scenario.purchase_amount || 0)) {
+          labels.push(`一次性消费 ¥${money(scenario.purchase_amount)}`);
+        }
+        if (Number(scenario.income_change_pct || 0)) {
+          labels.push(`收入变化 ${Number(scenario.income_change_pct) > 0 ? "+" : ""}${scenario.income_change_pct}%`);
+        }
+        if (Number(scenario.extra_monthly_expense || 0)) {
+          labels.push(`每月新增支出 ¥${money(scenario.extra_monthly_expense)}`);
+        }
+        if (Number(scenario.investment_amount || 0)) {
+          labels.push(`计划投资 ¥${money(scenario.investment_amount)}`);
+        }
+        const titleNode = document.createElement("span");
+        titleNode.textContent = "当前情景区别";
+        scenarioSummary.appendChild(titleNode);
+        labels.forEach((label) => {
+          const chip = document.createElement("span");
+          chip.textContent = label;
+          scenarioSummary.appendChild(chip);
+        });
+        root.appendChild(scenarioSummary);
+      }
+
       const metrics = document.createElement("div");
       metrics.className = "forecast-metrics";
-      [
+      const metricItems = [
         ["当前可动用", `¥${money(forecast.start_balance)}`],
         ["预计最低", `¥${money(forecast.min_balance)}`],
-        ["预测期末", `¥${money(forecast.end_balance)}`]
-      ].forEach(([label, value]) => {
+        ["预测期末", `¥${money(forecast.end_balance)}`],
+        ["可安排资金", `¥${money(forecast.safe_to_spend)}`],
+        ["建议日均预算", `¥${money(forecast.daily_safe_budget)}`],
+      ];
+      if (scenarioActive) {
+        const deltaMin = Number(forecast.scenario_delta_min || 0);
+        const deltaEnd = Number(forecast.scenario_delta_end || 0);
+        metricItems.push(
+          ["最低余额变化", `${deltaMin >= 0 ? "+" : ""}¥${money(deltaMin)}`],
+          ["期末余额变化", `${deltaEnd >= 0 ? "+" : ""}¥${money(deltaEnd)}`],
+        );
+      }
+      metricItems.forEach(([label, value]) => {
         const item = document.createElement("div");
         item.className = "forecast-metric";
         const labelNode = document.createElement("span");
@@ -3651,15 +4466,185 @@
       });
       root.appendChild(metrics);
 
+      const probability = forecast.probability || {};
+      const terminalDistribution = probability.terminal_balance || {};
+      const minimumDistribution = probability.minimum_balance || {};
+      const negativeBalance = probability.negative_balance || {};
+      const worstTail = probability.worst_tail || {};
+      const liquidityTail = probability.worst_liquidity_tail || {};
+      const probabilityDaily = Array.isArray(probability.daily_balance_quantiles)
+        ? probability.daily_balance_quantiles
+        : [];
+      if (
+        Object.keys(terminalDistribution).length
+        && Object.keys(minimumDistribution).length
+      ) {
+        const probabilityPanel = document.createElement("section");
+        probabilityPanel.className = "model-audit-panel";
+        const probabilityHead = document.createElement("div");
+        probabilityHead.className = "model-audit-head";
+        const probabilityCopy = document.createElement("div");
+        const probabilityTitle = document.createElement("strong");
+        probabilityTitle.textContent = "概率现金流区间";
+        const probabilitySubtitle = document.createElement("span");
+        probabilitySubtitle.textContent = `${Number(
+          probability.simulations || 0
+        ).toLocaleString("zh-CN")} 条固定种子路径 · ${
+          probability.quantile_method || "经验分位数"
+        }`;
+        probabilityCopy.append(probabilityTitle, probabilitySubtitle);
+        const probabilityBadge = document.createElement("span");
+        probabilityBadge.className = "model-audit-badge";
+        probabilityBadge.textContent = `种子 ${probability.random_seed ?? "-"}`;
+        probabilityHead.append(probabilityCopy, probabilityBadge);
+        probabilityPanel.appendChild(probabilityHead);
+
+        const probabilityMetrics = document.createElement("div");
+        probabilityMetrics.className = "model-audit-metrics";
+        [
+          [
+            "终点 50% 区间",
+            `¥${money(terminalDistribution.p25)}–¥${money(terminalDistribution.p75)}`
+          ],
+          [
+            "终点 90% 区间",
+            `¥${money(terminalDistribution.p05)}–¥${money(terminalDistribution.p95)}`
+          ],
+          [
+            "整周期至少一次负余额",
+            `${Number(negativeBalance.probability_any_negative_during_period || 0) * 100}%`
+          ],
+          [
+            "最低余额 P05",
+            `¥${money(minimumDistribution.p05)}`
+          ],
+          [
+            "最低余额 CVaR5",
+            `¥${money(minimumDistribution.cvar_5)}`
+          ],
+          [
+            "终点损失 CVaR5",
+            `¥${money(worstTail.cvar_5_terminal_loss)}`
+          ],
+        ].forEach(([label, value]) => {
+          const item = document.createElement("div");
+          item.className = "model-audit-metric";
+          const labelNode = document.createElement("span");
+          labelNode.textContent = label;
+          const valueNode = document.createElement("strong");
+          valueNode.textContent = value;
+          item.append(labelNode, valueNode);
+          probabilityMetrics.appendChild(item);
+        });
+        probabilityPanel.appendChild(probabilityMetrics);
+
+        const probabilityWrap = document.createElement("div");
+        probabilityWrap.className = "comparison-table-wrap";
+        const probabilityTable = document.createElement("table");
+        probabilityTable.className = "analytics-table";
+        const probabilityThead = document.createElement("thead");
+        const probabilityHeader = document.createElement("tr");
+        ["分位", "预测期末余额", "整条路径最低余额"].forEach((label) => {
+          const th = document.createElement("th");
+          th.textContent = label;
+          probabilityHeader.appendChild(th);
+        });
+        probabilityThead.appendChild(probabilityHeader);
+        probabilityTable.appendChild(probabilityThead);
+        const probabilityBody = document.createElement("tbody");
+        ["p05", "p25", "p50", "p75", "p95"].forEach((key) => {
+          const row = document.createElement("tr");
+          [
+            key.toUpperCase(),
+            `¥${money(terminalDistribution[key])}`,
+            `¥${money(minimumDistribution[key])}`,
+          ].forEach((value) => {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            row.appendChild(cell);
+          });
+          probabilityBody.appendChild(row);
+        });
+        probabilityTable.appendChild(probabilityBody);
+        probabilityWrap.appendChild(probabilityTable);
+        probabilityPanel.appendChild(probabilityWrap);
+
+        const probabilityNote = document.createElement("p");
+        probabilityNote.className = "model-audit-note";
+        probabilityNote.textContent = `期末分位只看最后一天；最低余额分位先取每条路径全周期最低点，两者不可混用。流动性最差 5% 的平均最低余额为 ¥${
+          money(liquidityTail.mean_min_balance)
+        }；终点损失 CVaR5 另按终点损失筛选，不混用路径。负余额同时展示终点、整条路径和逐日三种口径。`;
+        probabilityPanel.appendChild(probabilityNote);
+        root.appendChild(probabilityPanel);
+      }
+
+      const modelQuality = forecast.data_quality;
+      if (modelQuality?.overall) {
+        const qualityLine = document.createElement("div");
+        qualityLine.className = "data-quality-line";
+        const qualityLabel = document.createElement("span");
+        qualityLabel.textContent = "模型数据质量（独立于账单 OCR）";
+        const qualityValue = document.createElement("strong");
+        qualityValue.textContent = `${
+          Number(modelQuality.overall.score || 0).toFixed(2)
+        }/100 · ${modelQuality.overall.grade || "未评级"} · ${
+          modelQuality.overall.personalization_allowed ? "允许个性化" : "已阻断"
+        }`;
+        qualityLine.append(qualityLabel, qualityValue);
+        root.appendChild(qualityLine);
+      }
+
+      const breakdown = forecast.cashflow_breakdown || {};
+      const breakdownItems = [
+        ["预计收入", Number(breakdown.income || 0), "income"],
+        ["日常变动支出", -Number(breakdown.variable_expenses || 0), "expense"],
+        ["订阅续费", -Number(breakdown.subscriptions || 0), "expense"],
+        ["信用卡还款", -Number(breakdown.credit_repayment || 0), "expense"],
+        ["定时/礼物", -Number(breakdown.scheduled_tasks || 0), "expense"],
+        ["计划大额支出", -Number(breakdown.planned_outflows || 0), "expense"],
+      ];
+      const maxBreakdown = Math.max(
+        ...breakdownItems.map((item) => Math.abs(item[1])),
+        1
+      );
+      const breakdownPanel = document.createElement("div");
+      breakdownPanel.className = "cashflow-breakdown";
+      const breakdownTitle = document.createElement("strong");
+      breakdownTitle.textContent = `未来 ${forecast.horizon_days} 天现金流构成`;
+      breakdownPanel.appendChild(breakdownTitle);
+      breakdownItems.forEach(([label, value, tone]) => {
+        const row = document.createElement("div");
+        row.className = `cashflow-breakdown-row ${tone}`;
+        const name = document.createElement("span");
+        name.textContent = label;
+        const track = document.createElement("div");
+        track.className = "cashflow-breakdown-track";
+        const bar = document.createElement("i");
+        bar.style.width = `${Math.max(2, Math.abs(value) / maxBreakdown * 100)}%`;
+        track.appendChild(bar);
+        const amount = document.createElement("span");
+        amount.className = "cashflow-breakdown-value";
+        amount.textContent = `${value >= 0 ? "+" : "-"}¥${money(Math.abs(value))}`;
+        row.append(name, track, amount);
+        breakdownPanel.appendChild(row);
+      });
+      const net = document.createElement("div");
+      net.className = "insight-note";
+      net.textContent = `预测期净现金流 ${
+        Number(breakdown.net_cashflow || 0) >= 0 ? "+" : "-"
+      }¥${money(Math.abs(Number(breakdown.net_cashflow || 0)))}`;
+      breakdownPanel.appendChild(net);
+      root.appendChild(breakdownPanel);
+
       const controls = document.createElement("div");
       controls.className = "forecast-controls";
       const controlValues = {};
       [
-        ["purchase", "一次性消费", 0, 50000, 1000, 0, "元"],
-        ["incomeDrop", "收入下降", 0, 60, 5, 0, "%"],
-        ["extraMonthly", "每月新增支出", 0, 10000, 500, 0, "元"],
-        ["investment", "计划投资", 0, 100000, 1000, 0, "元"],
-        ["investmentReturn", "投资预期年化", 0, 20, 1, 3, "%"],
+        ["purchase", "一次性消费", 0, 50000, 1000, Number(scenario.purchase_amount || 0), "元"],
+        ["incomeDrop", "收入下降", 0, 60, 5, Math.abs(Math.min(Number(scenario.income_change_pct || 0), 0)), "%"],
+        ["extraMonthly", "每月新增支出", 0, 10000, 500, Number(scenario.extra_monthly_expense || 0), "元"],
+        ["investment", "计划投资", 0, 100000, 1000, Number(scenario.investment_amount || 0), "元"],
+        ["investmentReturn", "投资预期年化", 0, 20, 1, Number(scenario.investment_return_pct || 3), "%"],
       ].forEach(([key, label, min, max, step, value, unit]) => {
         const control = document.createElement("label");
         control.className = "forecast-control";
@@ -3689,7 +4674,11 @@
       chart.setAttribute("role", "img");
       chart.setAttribute(
         "aria-label",
-        `未来${forecast.horizon_days}天余额折线图，最低余额${money(forecast.min_balance)}元`
+        `未来${forecast.horizon_days}天余额折线图，最低余额${
+          money(forecast.min_balance)
+        }元，概率50%区间${
+          money(terminalDistribution.p25)
+        }至${money(terminalDistribution.p75)}元`
       );
       const width = 760;
       const height = 225;
@@ -3700,7 +4689,14 @@
       const baselineValues = Array.isArray(forecast.baseline_series)
         ? forecast.baseline_series.map((item) => Number(item.balance))
         : [];
-      const allValues = values.concat(baselineValues);
+      const probabilityValues = probabilityDaily.flatMap((item) => [
+        Number(item.p05),
+        Number(item.p25),
+        Number(item.p50),
+        Number(item.p75),
+        Number(item.p95),
+      ]);
+      const allValues = values.concat(baselineValues, probabilityValues);
       const rawMin = Math.min(...allValues, 0);
       const rawMax = Math.max(...allValues, 0);
       const padding = Math.max((rawMax - rawMin) * 0.08, 1);
@@ -3712,6 +4708,17 @@
       const baselinePath = baselineValues.length
         ? baselineValues.map((value, index) => `${index ? "L" : "M"}${x(index).toFixed(2)},${y(value).toFixed(2)}`).join(" ")
         : "";
+      const bandPath = (topKey, bottomKey) => {
+        if (!probabilityDaily.length) return "";
+        const top = probabilityDaily.map((item, index) => (
+          `${index ? "L" : "M"}${x(index).toFixed(2)},${y(Number(item[topKey])).toFixed(2)}`
+        ));
+        const bottom = probabilityDaily.slice().reverse().map((item, reverseIndex) => {
+          const index = probabilityDaily.length - reverseIndex - 1;
+          return `L${x(index).toFixed(2)},${y(Number(item[bottomKey])).toFixed(2)}`;
+        });
+        return top.concat(bottom).join(" ") + " Z";
+      };
       const areaPath = `${linePath} L${x(values.length - 1).toFixed(2)},${(margin.top + plotHeight).toFixed(2)} L${x(0).toFixed(2)},${(margin.top + plotHeight).toFixed(2)} Z`;
       const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -3742,6 +4749,20 @@
         zero.setAttribute("y2", y(0));
         zero.setAttribute("class", "zero-line");
         svg.appendChild(zero);
+      }
+      const fan90Path = bandPath("p95", "p05");
+      const fan50Path = bandPath("p75", "p25");
+      if (fan90Path) {
+        const fan90 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        fan90.setAttribute("d", fan90Path);
+        fan90.setAttribute("class", "fan-90");
+        svg.appendChild(fan90);
+      }
+      if (fan50Path) {
+        const fan50 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        fan50.setAttribute("d", fan50Path);
+        fan50.setAttribute("class", "fan-50");
+        svg.appendChild(fan50);
       }
       const area = document.createElementNS("http://www.w3.org/2000/svg", "path");
       area.setAttribute("d", areaPath);
@@ -3777,18 +4798,125 @@
         });
       chart.appendChild(svg);
       root.appendChild(chart);
-      if (baselinePath) {
+      if (baselinePath || probabilityDaily.length) {
         const legend = document.createElement("div");
         legend.className = "forecast-legend";
         const current = document.createElement("span");
         const currentLine = document.createElement("i");
-        current.append(currentLine, "当前情景");
-        const baseline = document.createElement("span");
-        baseline.className = "baseline";
-        const baselineLine = document.createElement("i");
-        baseline.append(baselineLine, "基准预测");
-        legend.append(current, baseline);
+        current.append(currentLine, "确定性路径");
+        legend.appendChild(current);
+        if (probabilityDaily.length) {
+          const fan50 = document.createElement("span");
+          fan50.className = "fan-50";
+          const fan50Swatch = document.createElement("i");
+          fan50.append(fan50Swatch, "50% 区间（P25–P75）");
+          const fan90 = document.createElement("span");
+          fan90.className = "fan-90";
+          const fan90Swatch = document.createElement("i");
+          fan90.append(fan90Swatch, "90% 区间（P05–P95）");
+          legend.append(fan50, fan90);
+        }
+        if (baselinePath) {
+          const baseline = document.createElement("span");
+          baseline.className = "baseline";
+          const baselineLine = document.createElement("i");
+          baseline.append(baselineLine, "基准预测");
+          legend.appendChild(baseline);
+        }
         root.appendChild(legend);
+      }
+
+      if (Array.isArray(forecast.stress_tests) && forecast.stress_tests.length) {
+        const stressSection = document.createElement("section");
+        stressSection.className = "stress-test-grid";
+        const stressTitle = document.createElement("strong");
+        stressTitle.textContent = "压力测试";
+        stressTitle.style.gridColumn = "1 / -1";
+        stressSection.appendChild(stressTitle);
+        forecast.stress_tests.forEach((scenario) => {
+          const item = document.createElement("div");
+          item.className = `stress-test${
+            Number(scenario.min_balance) < 0 ? " danger" : ""
+          }`;
+          const name = document.createElement("span");
+          name.textContent = scenario.name || "压力情景";
+          const minimum = document.createElement("strong");
+          minimum.textContent = `最低 ¥${money(scenario.min_balance)}`;
+          const ending = document.createElement("span");
+          ending.textContent = `期末 ¥${money(scenario.end_balance)} · 缺口 ${
+            Number(scenario.negative_days || 0)
+          } 天`;
+          item.append(name, minimum, ending);
+          stressSection.appendChild(item);
+        });
+        root.appendChild(stressSection);
+      }
+
+      if (Array.isArray(forecast.action_plan) && forecast.action_plan.length) {
+        const plan = document.createElement("div");
+        plan.className = "action-plan-list";
+        const planTitle = document.createElement("strong");
+        planTitle.textContent = "可执行建议";
+        plan.appendChild(planTitle);
+        forecast.action_plan.forEach((action) => {
+          const item = document.createElement("div");
+          item.className = `action-plan-item ${action.priority || "low"}`;
+          const priority = document.createElement("span");
+          priority.className = "action-plan-priority";
+          priority.textContent = {
+            high: "优先",
+            medium: "重要",
+            low: "可选",
+          }[action.priority] || action.priority || "建议";
+          const copy = document.createElement("div");
+          const titleNode = document.createElement("strong");
+          titleNode.textContent = action.title || "现金流建议";
+          const detail = document.createElement("p");
+          detail.textContent = action.detail || "";
+          const next = document.createElement("p");
+          next.textContent = action.action || "";
+          copy.append(titleNode, detail, next);
+          item.append(priority, copy);
+          plan.appendChild(item);
+        });
+        root.appendChild(plan);
+      }
+
+      if (Array.isArray(forecast.events) && forecast.events.length) {
+        const eventSection = document.createElement("details");
+        eventSection.className = "trace";
+        const summary = document.createElement("summary");
+        summary.textContent = `未来事件日历（${forecast.events.length} 项）`;
+        eventSection.appendChild(summary);
+        const table = document.createElement("table");
+        table.className = "insight-table";
+        const thead = document.createElement("thead");
+        const headRow = document.createElement("tr");
+        ["日期", "事件", "金额", "依据"].forEach((label) => {
+          const th = document.createElement("th");
+          th.textContent = label;
+          headRow.appendChild(th);
+        });
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+        const tbody = document.createElement("tbody");
+        forecast.events.slice(0, 20).forEach((event) => {
+          const row = document.createElement("tr");
+          [
+            event.date,
+            event.label,
+            `${Number(event.amount) >= 0 ? "+" : "-"}¥${money(Math.abs(Number(event.amount || 0)))}`,
+            event.source,
+          ].forEach((value) => {
+            const td = document.createElement("td");
+            td.textContent = value;
+            row.appendChild(td);
+          });
+          tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        eventSection.appendChild(table);
+        root.appendChild(eventSection);
       }
 
       if (Array.isArray(forecast.warnings) && forecast.warnings.length) {
@@ -3966,6 +5094,22 @@
       });
       overview.append(score, dimensions);
       root.appendChild(overview);
+
+      const healthQuality = health.data_quality?.overall;
+      if (healthQuality) {
+        const qualityLine = document.createElement("div");
+        qualityLine.className = "data-quality-line";
+        const label = document.createElement("span");
+        label.textContent = "模型数据质量（独立于账单 OCR）";
+        const value = document.createElement("strong");
+        value.textContent = `${
+          Number(healthQuality.score || 0).toFixed(2)
+        }/100 · ${healthQuality.grade || "未评级"} · ${
+          healthQuality.personalization_allowed ? "允许个性化" : "已阻断"
+        }`;
+        qualityLine.append(label, value);
+        root.appendChild(qualityLine);
+      }
 
       const recommendations = document.createElement("div");
       recommendations.className = "forecast-warnings";
@@ -4696,6 +5840,15 @@
           request_id: newRequestId()
         })
       });
+      if ([403, 404].includes(response.status)) {
+        const payload = await response.json().catch(() => ({}));
+        return {
+          reply: null,
+          error: payload.message || (response.status === 403
+            ? "会话令牌缺失或无效，请重新创建会话"
+            : "会话不存在，请重新创建会话")
+        };
+      }
       if (!response.ok || !response.body) throw new Error(`请求失败：${response.status}`);
 
       const reader = response.body.getReader();
@@ -4735,9 +5888,17 @@
       try {
         await ensureSession();
         let result = await streamAgentReply(content);
-        if (result.error && result.error.includes("会话不存在")) {
+        if (
+          result.error
+          && (
+            result.error.includes("会话不存在")
+            || result.error.includes("会话令牌")
+          )
+        ) {
           localStorage.removeItem("finagent_session_id");
+          localStorage.removeItem("finagent_session_token");
           sessionId = "";
+          sessionToken = "";
           await createSession();
           result = await streamAgentReply(content);
         }
@@ -4830,6 +5991,10 @@
           });
         } else {
           sessionId = payload.session_id || sessionId;
+          if (payload.session_token) {
+            sessionToken = payload.session_token;
+            localStorage.setItem("finagent_session_token", sessionToken);
+          }
           localStorage.setItem("finagent_session_id", sessionId);
           appendMessage("agent", payload.reply.text, payload.reply);
         }
@@ -4886,9 +6051,11 @@
       try {
         await ensureSession();
         let response = await fetchWithAuth(`/v1/uploads?session_id=${encodeURIComponent(sessionId)}`);
-        if (response.status === 404) {
+        if ([403, 404].includes(response.status)) {
           localStorage.removeItem("finagent_session_id");
+          localStorage.removeItem("finagent_session_token");
           sessionId = "";
+          sessionToken = "";
           await createSession();
           response = await fetchWithAuth(`/v1/uploads?session_id=${encodeURIComponent(sessionId)}`);
         }
@@ -5027,6 +6194,7 @@
         alipay: row.querySelector('[data-field="alipay"]')?.value || "",
         bank_name: row.querySelector('[data-field="bank_name"]')?.value || "",
         bank_card: row.querySelector('[data-field="bank_card"]')?.value || "",
+        bank_card_tail: row.dataset.bankCardTail || "",
         favorite_gift: row.querySelector('[data-field="favorite_gift"]')?.value || "",
         avoid: row.querySelector('[data-field="avoid"]')?.value || "",
       }));
@@ -5045,6 +6213,7 @@
         const row = document.createElement("div");
         row.className = "card-editor care-person";
         row.dataset.personId = person.person_id || "";
+        row.dataset.bankCardTail = person.bank_card_tail || "";
         const head = document.createElement("div");
         head.className = "card-editor-head";
         const title = document.createElement("strong");
@@ -5090,12 +6259,14 @@
         bankCard.dataset.field = "bank_card";
         bankCard.inputMode = "numeric";
         bankCard.maxLength = 23;
-        bankCard.placeholder = "请输入完整 16-19 位银行卡号";
+        bankCard.placeholder = person.bank_card_tail
+          ? `已保存尾号 ${person.bank_card_tail}；可输入完整新卡号替换，留空保持不变`
+          : "请输入完整 16-19 位银行卡号";
         const bankCardField = makeSettingsField("银行卡号（完整卡号）", bankCard);
         bankCardField.classList.add("wide");
         const bankCardHint = document.createElement("small");
         bankCardHint.className = "settings-hint bank-card-hint";
-        bankCardHint.textContent = "请输入完整卡号（16-19 位，通常以 62 开头），保存后仅展示后四位。";
+        bankCardHint.textContent = "请输入完整卡号（16-19 位）；为保护信息，完整卡号不会保存在本地，只保留后四位。";
         bankCardField.appendChild(bankCardHint);
         const gifts = makeInput("text", (person.favorite_gift || []).join(","));
         gifts.dataset.field = "favorite_gift";
@@ -5268,7 +6439,9 @@
         const title = document.createElement("strong");
         title.textContent = `${card.brand || "演示银行"} · 尾号${card.tail || "----"}`;
         const source = document.createElement("span");
-        source.textContent = card.is_demo ? "预设演示" : "用户修改";
+        source.textContent = card.source === "user:profile:test"
+          ? "手工添加（演示）"
+          : (card.is_demo ? "预设演示" : "用户修改");
         head.append(title, source);
 
         const grid = document.createElement("div");
@@ -5280,10 +6453,14 @@
         const balance = makeInput("number", card.kind === "credit" ? card.used : card.balance);
         balance.readOnly = true;
         const available = makeInput("number", Math.max(
-          card.kind === "credit" ? Number(card.credit_limit || 0) - Number(card.used || 0) : Number(card.balance || 0),
+          card.kind === "credit"
+            ? Number(card.credit_limit || 0) - Number(card.used || 0)
+            : Number(card.balance || 0) - Number(card.locked || 0),
           0
         ));
         available.readOnly = true;
+        const locked = makeInput("number", card.locked || 0);
+        locked.readOnly = true;
         const daily = makeInput("number", card.daily_limit);
         const single = makeInput("number", card.single_limit);
         const note = makeInput("text", card.note);
@@ -5310,10 +6487,13 @@
           makeSettingsField("发卡行", brand),
           makeSettingsField("尾号（不可修改）", tail),
           makeSettingsField(card.kind === "credit" ? "已用额度（只读）" : "卡余额（只读）", balance),
+          makeSettingsField("目标锁定（只读）", locked),
           makeSettingsField("可用（只读）", available),
           makeSettingsField("状态", status),
-          makeSettingsField("日限额", daily),
-          makeSettingsField("单笔限额", single),
+          ...(card.kind === "credit" ? [] : [
+            makeSettingsField("日限额", daily),
+            makeSettingsField("单笔限额", single),
+          ]),
           makeSettingsField("备注", note),
         );
         if (card.kind === "credit") {
@@ -5382,23 +6562,39 @@
           save.disabled = true;
           localStatus.textContent = "保存中...";
           try {
-            const response = await fetchWithAuth(`/v1/cards/${encodeURIComponent(card.card_id)}`, {
+            const requestBody = {
+              session_id: sessionId,
+              brand: brand.value,
+              tail: tail.value,
+              status: status.value,
+              note: note.value,
+              online_enabled: switchInputs.online_enabled.checked,
+              overseas_enabled: switchInputs.overseas_enabled.checked,
+              contactless_enabled: switchInputs.contactless_enabled.checked,
+            };
+            if (card.kind !== "credit") {
+              requestBody.daily_limit = Number(daily.value || 0);
+              requestBody.single_limit = Number(single.value || 0);
+            }
+            const cardUrl = `/v1/cards/${encodeURIComponent(card.card_id)}`;
+            let response = await fetchWithAuth(cardUrl, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                session_id: sessionId,
-                brand: brand.value,
-                tail: tail.value,
-                status: status.value,
-                daily_limit: Number(daily.value || 0),
-                single_limit: Number(single.value || 0),
-                note: note.value,
-                online_enabled: switchInputs.online_enabled.checked,
-                overseas_enabled: switchInputs.overseas_enabled.checked,
-                contactless_enabled: switchInputs.contactless_enabled.checked,
-              })
+              body: JSON.stringify(requestBody)
             });
-            const payload = await response.json();
+            let payload = await response.json();
+            if (response.status === 428 && payload.error === "step_up_required") {
+              const password = await requestCardStepUp(payload.message);
+              if (!password) throw new Error("已取消敏感设置修改");
+              requestBody.confirmation_token = payload.confirmation_token;
+              requestBody.payment_password = password;
+              response = await fetchWithAuth(cardUrl, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(requestBody)
+              });
+              payload = await response.json();
+            }
             if (!response.ok) throw new Error(payload.message || "保存失败");
             cardStatus.textContent = "银行卡已保存。";
             await loadProfileSettings();
@@ -5435,9 +6631,11 @@
       try {
         await ensureSession();
         let response = await fetchWithAuth(`/v1/profile?session_id=${encodeURIComponent(sessionId)}`);
-        if (response.status === 404) {
+        if ([403, 404].includes(response.status)) {
           localStorage.removeItem("finagent_session_id");
+          localStorage.removeItem("finagent_session_token");
           sessionId = "";
+          sessionToken = "";
           await createSession();
           response = await fetchWithAuth(`/v1/profile?session_id=${encodeURIComponent(sessionId)}`);
         }
@@ -5479,6 +6677,21 @@
     profileClose.addEventListener("click", closeProfileSettings);
     profileOverlay.addEventListener("click", (event) => {
       if (event.target === profileOverlay) closeProfileSettings();
+    });
+    cardStepUpForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const password = cardStepUpPassword.value.trim();
+      if (!/^\d{6}$/.test(password)) {
+        cardStepUpError.textContent = "请输入 6 位数字交易密码";
+        cardStepUpPassword.focus();
+        return;
+      }
+      settleCardStepUp(password);
+    });
+    cardStepUpCancel.addEventListener("click", () => settleCardStepUp(null));
+    cardStepUpDialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      settleCardStepUp(null);
     });
 
     profileForm.addEventListener("submit", async (event) => {
@@ -5687,6 +6900,26 @@
       }
     });
 
+    marketRefreshButton.addEventListener("click", () => {
+      loadMarketOverview();
+    });
+    marketDialogClose.addEventListener("click", () => marketDialog.close());
+    marketDialog.addEventListener("click", (event) => {
+      if (event.target === marketDialog) marketDialog.close();
+    });
+    marketActionRisk.addEventListener("click", () => {
+      runMarketDialogAction("帮我做风险测评");
+    });
+    marketActionRecommend.addEventListener("click", () => {
+      runMarketDialogAction("推荐几个理财产品");
+    });
+    marketActionCompare.addEventListener("click", () => {
+      runMarketDialogAction("比较一下稳健型理财产品");
+    });
+    marketActionPortfolio.addEventListener("click", () => {
+      runMarketDialogAction("我的理财持仓");
+    });
+
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const text = input.value;
@@ -5721,6 +6954,9 @@
       serviceStatus.textContent = "接口不可用";
       appendMessage("agent", "无法连接 Agent 服务，请确认 API 已启动。", { kind: "error", intent: "network" });
     });
+    window.setInterval(() => {
+      if (!document.hidden && marketDialog.open) loadMarketOverview();
+    }, 60_000);
   </script>
 </body>
 </html>

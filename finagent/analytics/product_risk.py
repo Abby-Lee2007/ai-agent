@@ -5,7 +5,8 @@ not historical realized performance. They are labelled as such by callers.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
+import math
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 
 RISK_VOLATILITY = {1: 0.01, 2: 0.04, 3: 0.09, 4: 0.18, 5: 0.30}
@@ -66,27 +67,62 @@ def estimate_product_analytics(product: Any) -> Dict[str, Any]:
 
 
 def _correlation(left: str, right: str) -> float:
+    if left == right:
+        return 1.0
     key = tuple(sorted((left, right)))
     return ASSET_CORRELATION.get(key, 0.3)
 
 
-def portfolio_risk_summary(products: Iterable[Any]) -> Dict[str, Any]:
+def portfolio_risk_summary(
+    products: Iterable[Any],
+    weights: Optional[Sequence[float]] = None,
+) -> Dict[str, Any]:
     items = list(products)
     analytics = [estimate_product_analytics(product) for product in items]
     if not analytics:
         return {
             "product_count": 0,
             "average_volatility_pct": 0.0,
+            "weighted_volatility_pct": 0.0,
+            "weighted_drawdown_pct": 0.0,
             "worst_drawdown_pct": 0.0,
             "diversification": "无产品",
             "correlation_matrix": [],
         }
+    if weights is None or len(weights) != len(analytics):
+        normalized_weights = [1.0 / len(analytics)] * len(analytics)
+    else:
+        raw_weights = [max(float(weight), 0.0) for weight in weights]
+        total_weight = sum(raw_weights)
+        normalized_weights = (
+            [weight / total_weight for weight in raw_weights]
+            if total_weight > 0
+            else [1.0 / len(analytics)] * len(analytics)
+        )
     classes = [item["asset_class"] for item in analytics]
     average_volatility = sum(
         float(item["estimated_annual_volatility_pct"]) for item in analytics
     ) / len(analytics)
     worst_drawdown = max(
         float(item["estimated_max_drawdown_pct"]) for item in analytics
+    )
+    variance = 0.0
+    for left, left_analytics in enumerate(analytics):
+        for right, right_analytics in enumerate(analytics):
+            variance += (
+                normalized_weights[left]
+                * normalized_weights[right]
+                * float(left_analytics["estimated_annual_volatility_pct"])
+                * float(right_analytics["estimated_annual_volatility_pct"])
+                * _correlation(
+                    left_analytics["asset_class"],
+                    right_analytics["asset_class"],
+                )
+            )
+    weighted_volatility = math.sqrt(max(variance, 0.0))
+    weighted_drawdown = sum(
+        weight * float(item["estimated_max_drawdown_pct"])
+        for weight, item in zip(normalized_weights, analytics)
     )
     unique_classes = sorted(set(classes))
     matrix: List[List[Any]] = [[""] + unique_classes]
@@ -104,6 +140,9 @@ def portfolio_risk_summary(products: Iterable[Any]) -> Dict[str, Any]:
         "product_count": len(analytics),
         "average_volatility_pct": round(average_volatility, 2),
         "worst_drawdown_pct": round(worst_drawdown, 2),
+        "weighted_volatility_pct": round(weighted_volatility, 2),
+        "weighted_drawdown_pct": round(weighted_drawdown, 2),
+        "weights": [round(weight, 6) for weight in normalized_weights],
         "diversification": diversification,
         "asset_classes": unique_classes,
         "correlation_matrix": matrix,

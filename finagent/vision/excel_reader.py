@@ -8,7 +8,7 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 from xml.etree import ElementTree as ET
 
 from finagent.utils import parse_date
@@ -23,6 +23,9 @@ from finagent.vision.receipt_parser import (
 
 MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+MAX_ARCHIVE_ENTRIES = 300
+MAX_ARCHIVE_UNCOMPRESSED_BYTES = 32 * 1024 * 1024
+MAX_ARCHIVE_ENTRY_BYTES = 12 * 1024 * 1024
 DOC_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 CELL_REF_RE = re.compile(r"^([A-Z]+)(\d+)$")
 NUMBER_RE = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
@@ -79,8 +82,25 @@ def _column_index(reference: str) -> int:
 def _shared_strings(archive: zipfile.ZipFile) -> List[str]:
     if "xl/sharedStrings.xml" not in archive.namelist():
         return []
-    root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+    root = ET.fromstring(_safe_archive_read(archive, "xl/sharedStrings.xml"))
     return [_text(item) for item in _children(root, "si")]
+
+
+def _validate_archive_limits(archive: zipfile.ZipFile) -> None:
+    infos = archive.infolist()
+    if len(infos) > MAX_ARCHIVE_ENTRIES:
+        raise ExcelReadError("Excel 文件包含过多条目，已拒绝解析")
+    if any(info.file_size > MAX_ARCHIVE_ENTRY_BYTES for info in infos):
+        raise ExcelReadError("Excel 文件单个条目解压后过大，已拒绝解析")
+    if sum(max(info.file_size, 0) for info in infos) > MAX_ARCHIVE_UNCOMPRESSED_BYTES:
+        raise ExcelReadError("Excel 文件解压后超过 32MB 安全上限，已拒绝解析")
+
+
+def _safe_archive_read(archive: zipfile.ZipFile, name: str) -> bytes:
+    info = archive.getinfo(name)
+    if info.file_size > MAX_ARCHIVE_ENTRY_BYTES:
+        raise ExcelReadError("Excel 条目超过安全上限，已拒绝解析")
+    return archive.read(name)
 
 
 def _cell_value(cell: ET.Element, shared: List[str]) -> Any:
@@ -125,12 +145,17 @@ def _read_sheet(xml: bytes, shared: List[str]) -> List[List[Any]]:
     return rows
 
 
-def read_xlsx_sheets(path: Path | str) -> List[ExcelSheet]:
+def read_xlsx_sheets(path: Union[Path, str]) -> List[ExcelSheet]:
     target = Path(path)
     try:
         with zipfile.ZipFile(target) as archive:
-            workbook = ET.fromstring(archive.read("xl/workbook.xml"))
-            rels_root = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+            _validate_archive_limits(archive)
+            workbook = ET.fromstring(
+                _safe_archive_read(archive, "xl/workbook.xml")
+            )
+            rels_root = ET.fromstring(
+                _safe_archive_read(archive, "xl/_rels/workbook.xml.rels")
+            )
             relationships = {
                 item.attrib.get("Id", ""): item.attrib.get("Target", "")
                 for item in rels_root
@@ -157,7 +182,10 @@ def read_xlsx_sheets(path: Path | str) -> List[ExcelSheet]:
                     sheet_path = "xl/" + target_name.lstrip("./")
                 if sheet_path not in archive.namelist():
                     continue
-                sheets.append(ExcelSheet(name, _read_sheet(archive.read(sheet_path), shared)))
+                sheets.append(ExcelSheet(
+                    name,
+                    _read_sheet(_safe_archive_read(archive, sheet_path), shared),
+                ))
             return sheets
     except (KeyError, zipfile.BadZipFile, ET.ParseError) as exc:
         raise ExcelReadError(f"无法读取 Excel 文件：{exc}") from exc
@@ -392,7 +420,7 @@ def _summary_from_sheet(sheet: ExcelSheet, today: date) -> Optional[BillSummary]
     )
 
 
-def read_excel(path: Path | str, today: Optional[date] = None) -> ExcelReadResult:
+def read_excel(path: Union[Path, str], today: Optional[date] = None) -> ExcelReadResult:
     sheets = read_xlsx_sheets(path)
     today = today or date.today()
     all_records: List[ParsedTransaction] = []
@@ -412,7 +440,7 @@ def read_excel(path: Path | str, today: Optional[date] = None) -> ExcelReadResul
     return ExcelReadResult(records=all_records, summary=summary, sheets=sheets, raw_text=raw_text)
 
 
-def read_csv(path: Path | str, today: Optional[date] = None) -> ExcelReadResult:
+def read_csv(path: Union[Path, str], today: Optional[date] = None) -> ExcelReadResult:
     """Parse a CSV export with the same header mapping as XLSX."""
     target = Path(path)
     raw = decode_text_bytes(target.read_bytes())

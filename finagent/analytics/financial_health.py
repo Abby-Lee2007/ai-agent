@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from typing import Any, Dict, List
 
 from finagent.analytics.cashflow import build_cashflow_forecast
+from finagent.analytics.data_quality import build_data_quality
 from finagent.data.store import Clock, DataStore
 
 
@@ -270,6 +271,7 @@ def build_financial_health(
             "priority": "高" if item["score"] < 55 else "中",
             "expected_score_gain": expected_gain,
         })
+    quality = build_data_quality(store, providers, clock, user_id)
     return {
         "score": score,
         "grade": grade,
@@ -300,6 +302,7 @@ def build_financial_health(
             ),
         },
         "data_quality": {
+            **quality,
             "transaction_days": 180,
             "forecast_months": 3,
             "cards": len(cards),

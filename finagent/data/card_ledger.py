@@ -82,10 +82,12 @@ def sync_card_from_account(store: DataStore, card: Card) -> Account | None:
         return None
     if card.kind == "credit":
         card.used = round(max(account.balance, 0.0), 2)
+        card.locked = 0.0
         if card.credit_limit <= 0:
             card.credit_limit = account.credit_limit
     else:
         card.balance = round(account.balance, 2)
+        card.locked = round(max(account.locked, 0.0), 2)
     return account
 
 
@@ -100,6 +102,7 @@ def update_card_balance(
     account = linked_account(store, card)
     if account is not None:
         account.balance = value
+        card.locked = round(max(account.locked, 0.0), 2)
         store.touch(account)
     store.touch(card)
 
@@ -111,6 +114,7 @@ def update_credit_usage(store: DataStore, card: Card, new_used: float) -> None:
     if account is not None:
         account.balance = value
         account.credit_limit = card.credit_limit
+        card.locked = 0.0
         store.touch(account)
     store.touch(card)
 
@@ -122,8 +126,10 @@ def sync_cards_for_account(store: DataStore, account: Account) -> None:
             continue
         if card.kind == "credit":
             card.used = round(max(account.balance, 0.0), 2)
+            card.locked = 0.0
         else:
             card.balance = round(account.balance, 2)
+            card.locked = round(max(account.locked, 0.0), 2)
         store.touch(card)
 
 
@@ -133,8 +139,14 @@ def ensure_card_account(
     *,
     account_kind: str = "",
     account_name: str = "",
+    allow_fallback_link: bool = True,
 ) -> Account:
-    account = linked_account(store, card)
+    if allow_fallback_link:
+        account = linked_account(store, card)
+    else:
+        account = store.accounts.get(card.account_id) if card.account_id else None
+        if account is not None and account.user_id != card.user_id:
+            account = None
     if account is not None:
         return account
     kind = account_kind or ("credit" if card.kind == "credit" else "current")
@@ -146,6 +158,7 @@ def ensure_card_account(
         tail=card.tail,
         balance=card.used if card.kind == "credit" else card.balance,
         credit_limit=card.credit_limit if card.kind == "credit" else 0.0,
+        locked=card.locked if card.kind != "credit" else 0.0,
         source=card.source,
         is_demo=card.is_demo,
     )
@@ -177,6 +190,7 @@ def repair_card_ledger(store: DataStore) -> None:
         card.kind = SEED_CARD_KINDS[card_id]
         card.tail = SEED_CARD_TAILS[card_id]
         card.balance = 0.0 if card.kind == "credit" else account.balance
+        card.locked = 0.0 if card.kind == "credit" else account.locked
         card.credit_limit = account.credit_limit if card.kind == "credit" else 0.0
         card.used = account.balance if card.kind == "credit" else 0.0
         if card.status == "pending":
@@ -203,6 +217,7 @@ def repair_card_ledger(store: DataStore) -> None:
             tail=account.tail,
             status="active" if account.status == "active" else account.status,
             balance=account.balance,
+            locked=account.locked,
             payment_password_hash=hash_card_password(DEMO_CARD_PASSWORD),
             issued_at=store.clock.iso(),
             note=account.name,

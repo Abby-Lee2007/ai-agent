@@ -80,6 +80,53 @@ class TestCrossScene(unittest.TestCase):
         )
         self.assertEqual({t.run_date for t in tasks}, {"2026-11-18"})
 
+    def test_gift_lock_and_purchase_sync_card_goal_and_ledger(self):
+        recommendation = begin_birthday_recommendation(self.agent)
+        selected = recommendation.data["options"][0]
+        run_to_completion(
+            self.agent,
+            choose_first_gift(self.agent, recommendation),
+        )
+        account = self.agent.store.primary_account("u_001")
+        card = self.agent.store.find_card("u_001", "工资卡")
+        birthday_goal = next(
+            goal for goal in self.agent.store.goals_of("u_001", status="active")
+            if goal.scenario == "birthday"
+        )
+        selected_total = round(float(selected["total"]), 2)
+        balance_after_lock = account.balance
+
+        self.assertAlmostEqual(birthday_goal.locked_amount, selected_total, places=2)
+        self.assertAlmostEqual(account.locked, selected_total, places=2)
+        self.assertAlmostEqual(card.locked, selected_total, places=2)
+        self.assertAlmostEqual(card.available, card.balance - selected_total, places=2)
+
+        self.agent.clock.advance(days=40)
+        gift_tasks = [
+            task for task in self.agent.scheduler.due("u_001")
+            if task.kind == "gift_order"
+        ]
+        messages = [
+            self.agent.scheduler._execute(self.agent.context(), task)
+            for task in gift_tasks
+        ]
+        executed_tasks = [
+            task for task in gift_tasks if task.status == "done"
+        ]
+
+        self.assertGreaterEqual(len(messages), len(selected["items"]))
+        self.assertAlmostEqual(account.balance, balance_after_lock - selected_total, places=2)
+        self.assertAlmostEqual(card.balance, account.balance, places=2)
+        self.assertEqual(account.locked, 0.0)
+        self.assertEqual(card.locked, 0.0)
+        self.assertEqual(birthday_goal.status, "achieved")
+        self.assertEqual(birthday_goal.locked_amount, 0.0)
+        self.assertTrue(all(task.payload.get("payment_txn_id") for task in executed_tasks))
+        self.assertTrue(all(
+            self.agent.store.transactions[task.payload["payment_txn_id"]].category == "跨场景"
+            for task in executed_tasks
+        ))
+
     def test_birthday_plan_with_custom_budget(self):
         reply = begin_birthday_recommendation(
             self.agent,

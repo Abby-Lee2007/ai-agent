@@ -5,12 +5,42 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from finagent.api.service import AgentSessionService
+from finagent.api.service import AgentSessionService, StepUpRequired
 from finagent.data.sqlite import SQLiteRepository
 from tests.support import make_store
 
 
+def confirm_card_update(service, session_id, card_id, values):
+    try:
+        return service.update_card_settings(session_id, card_id, values)
+    except StepUpRequired as exc:
+        return service.update_card_settings(
+            session_id,
+            card_id,
+            {
+                **values,
+                "confirmation_token": exc.challenge["confirmation_token"],
+                "payment_password": "246810",
+            },
+        )
+
+
 class TestProfileSettings(unittest.TestCase):
+    def test_profile_phone_must_be_an_11_digit_mainland_mobile_number(self):
+        service = AgentSessionService(make_store(), llm_mode="off")
+        session_id = service.create_session(user_id="u_001", channel="h5")["session_id"]
+
+        for value in ("1380013800", "138001380000", "23800138000", "1380013800a"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    service.update_profile_settings(session_id, {"phone": value})
+
+        profile = service.update_profile_settings(
+            session_id,
+            {"phone": "138 0013 8000"},
+        )
+        self.assertEqual(profile["user"]["phone"], "13800138000")
+
     def test_birthdays_cannot_be_in_the_future(self):
         service = AgentSessionService(make_store(), llm_mode="off")
         session_id = service.create_session(user_id="u_001", channel="h5")["session_id"]
@@ -180,9 +210,14 @@ class TestProfileSettings(unittest.TestCase):
             )
             session_id = first.create_session(user_id="u_001", channel="h5")["session_id"]
             profile = first.get_profile_settings(session_id)
-            card_id = profile["cards"][0]["card_id"]
+            editable_card = next(
+                card for card in profile["cards"]
+                if card["kind"] == "debit"
+            )
+            card_id = editable_card["card_id"]
 
-            updated = first.update_card_settings(
+            updated = confirm_card_update(
+                first,
                 session_id,
                 card_id,
                 {
@@ -196,8 +231,8 @@ class TestProfileSettings(unittest.TestCase):
             )
             self.assertEqual(updated["daily_limit"], 30000)
             self.assertFalse(updated["online_enabled"])
-            self.assertEqual(updated["kind"], profile["cards"][0]["kind"])
-            self.assertEqual(updated["tail"], profile["cards"][0]["tail"])
+            self.assertEqual(updated["kind"], editable_card["kind"])
+            self.assertEqual(updated["tail"], editable_card["tail"])
 
             created = first.create_card_settings(
                 session_id,

@@ -11,9 +11,12 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from typing import Optional
+from unittest.mock import patch
 
 from finagent.api.server import create_server
 from finagent.api.service import AgentSessionService
+from finagent.data.sqlite import SQLiteRepository
 from tests.support import make_store
 from tests.test_vision import make_xlsx
 
@@ -38,7 +41,7 @@ class ApiServerTestCase(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=3)
 
-    def post_json(self, path: str, payload: dict, headers: dict | None = None):
+    def post_json(self, path: str, payload: dict, headers: Optional[dict] = None):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             self.base_url + path,
@@ -48,7 +51,7 @@ class ApiServerTestCase(unittest.TestCase):
         )
         return urllib.request.urlopen(request, timeout=5)
 
-    def get_json(self, path: str, headers: dict | None = None):
+    def get_json(self, path: str, headers: Optional[dict] = None):
         request = urllib.request.Request(
             self.base_url + path,
             headers=headers or {},
@@ -56,7 +59,7 @@ class ApiServerTestCase(unittest.TestCase):
         )
         return urllib.request.urlopen(request, timeout=5)
 
-    def delete_json(self, path: str, headers: dict | None = None):
+    def delete_json(self, path: str, headers: Optional[dict] = None):
         request = urllib.request.Request(
             self.base_url + path,
             headers=headers or {},
@@ -64,7 +67,7 @@ class ApiServerTestCase(unittest.TestCase):
         )
         return urllib.request.urlopen(request, timeout=5)
 
-    def patch_json(self, path: str, payload: dict, headers: dict | None = None):
+    def patch_json(self, path: str, payload: dict, headers: Optional[dict] = None):
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             self.base_url + path,
@@ -104,6 +107,16 @@ class ApiServerTestCase(unittest.TestCase):
         self.assertTrue(workflow["workflow_id"].startswith("WF-"))
         self.assertEqual(workflow["status"], "completed")
 
+    def test_official_macro_endpoint_returns_sources_and_indicators(self):
+        with self.get_json("/v1/official-data") as response:
+            body = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(body["data_class"], "official_public_data")
+        self.assertIn("government_bond_10y_yield_pct", body["indicators"])
+        self.assertGreaterEqual(len(body["sources"]), 3)
+        self.assertTrue(all(source.get("url") for source in body["sources"]))
+
     def test_stream_endpoint_returns_sse_events(self):
         with self.post_json("/v1/sessions", {"user_id": "u_001", "channel": "h5"}) as response:
             session_id = json.loads(response.read().decode("utf-8"))["session_id"]
@@ -120,6 +133,21 @@ class ApiServerTestCase(unittest.TestCase):
         self.assertIn("event: message", stream_text)
         self.assertIn('"intent": "account.balance"', stream_text)
         self.assertIn("event: done", stream_text)
+
+    def test_json_api_rejects_non_finite_numbers(self):
+        request = urllib.request.Request(
+            self.base_url + "/v1/forecast/simulate",
+            data=b'{"session_id":"SESSION-test","months":NaN}',
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request, timeout=5)
+        body = json.loads(raised.exception.read().decode("utf-8"))
+
+        self.assertEqual(raised.exception.code, 400)
+        self.assertIn("JSON", body["message"])
 
     def test_forecast_simulation_and_event_center_endpoints(self):
         with self.post_json("/v1/sessions", {"user_id": "u_001", "channel": "h5"}) as response:
@@ -147,6 +175,43 @@ class ApiServerTestCase(unittest.TestCase):
             events = json.loads(response.read().decode("utf-8"))
         self.assertEqual(response.status, 200)
         self.assertGreaterEqual(len(events["events"]), 1)
+
+    def test_market_overview_endpoint_returns_realtime_index_payload(self):
+        session_id = self.service.create_session(
+            user_id="u_001",
+            channel="h5",
+        )["session_id"]
+        overview = {
+            "available": True,
+            "status": "live",
+            "market_state": "已收盘",
+            "observed_at": "2026-10-28 15:00:00",
+            "indices": [{
+                "symbol": "SH000001",
+                "name": "上证指数",
+                "price": 3681.47,
+                "change": 33.17,
+                "change_pct": 0.91,
+                "timestamp": "2026-10-28 15:00:00",
+                "source": "腾讯财经",
+                "available": True,
+            }],
+            "turnover_100m_cny": 16284.87,
+            "sources": ["腾讯财经"],
+            "is_simulated": False,
+        }
+        with patch(
+            "finagent.api.service.build_market_overview",
+            return_value=overview,
+        ):
+            with self.get_json(
+                f"/v1/market/overview?session_id={session_id}"
+            ) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(body["market_state"], "已收盘")
+        self.assertEqual(body["indices"][0]["name"], "上证指数")
+        self.assertFalse(body["is_simulated"])
 
     def test_transaction_detail_endpoint_returns_lifecycle(self):
         session_id = self.service.create_session(user_id="u_001", channel="h5")["session_id"]
@@ -230,6 +295,11 @@ class ApiServerTestCase(unittest.TestCase):
 
         self.assertEqual(response.status, 200)
         self.assertIn("text/html", response.headers.get("Content-Type", ""))
+        self.assertIn(
+            "default-src 'self'",
+            response.headers.get("Content-Security-Policy", ""),
+        )
+        self.assertEqual(response.headers.get("X-Frame-Options"), "DENY")
         self.assertIn("<title>AI Banking Agent</title>", html)
         self.assertIn("/v1/messages/stream", html)
 
@@ -291,6 +361,19 @@ class ApiServerTestCase(unittest.TestCase):
         self.assertEqual(body["reply"]["intent"], "bill.scan_receipt")
         self.assertEqual(body["reply"]["kind"], "confirm")
         self.assertEqual(body["reply"]["data"]["count"], 2)
+
+    def test_upload_rejects_content_that_contradicts_extension(self):
+        payload = {
+            "filename": "fake.png",
+            "data": base64.b64encode(b"not-a-real-image").decode("ascii"),
+        }
+
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            self.post_json("/v1/uploads", payload)
+        body = json.loads(raised.exception.read().decode("utf-8"))
+
+        self.assertEqual(raised.exception.code, 400)
+        self.assertEqual(body["error"], "file_type_mismatch")
 
     def test_upload_with_stale_session_recreates_session(self):
         raw = (Path(__file__).resolve().parents[1] / "samples" / "bill_sample.txt").read_bytes()
@@ -401,7 +484,11 @@ class ApiServerTestCase(unittest.TestCase):
         with self.get_json(f"/v1/profile?session_id={session_id}") as response:
             profile = json.loads(response.read().decode("utf-8"))
         self.assertEqual(profile["user"]["name"], "陈晓明")
-        card_id = profile["cards"][0]["card_id"]
+        card_id = next(
+            card["card_id"]
+            for card in profile["cards"]
+            if card["kind"] == "debit" and card["status"] == "active"
+        )
 
         with self.patch_json("/v1/profile", {
             "session_id": session_id,
@@ -413,13 +500,24 @@ class ApiServerTestCase(unittest.TestCase):
         self.assertEqual(updated["user"]["name"], "新名字")
         self.assertEqual(updated["preferences"]["spouse_name"], "新爱人")
 
-        with self.patch_json(f"/v1/cards/{card_id}", {
+        card_values = {
             "session_id": session_id,
-            "daily_limit": 12345,
+            "daily_limit": 60000,
             "online_enabled": False,
-        }) as response:
+        }
+        try:
+            response = self.patch_json(f"/v1/cards/{card_id}", card_values)
+        except urllib.error.HTTPError as exc:
+            self.assertEqual(exc.code, 428)
+            challenge = json.loads(exc.read().decode("utf-8"))
+            response = self.patch_json(f"/v1/cards/{card_id}", {
+                **card_values,
+                "confirmation_token": challenge["confirmation_token"],
+                "payment_password": "246810",
+            })
+        with response:
             card = json.loads(response.read().decode("utf-8"))
-        self.assertEqual(card["daily_limit"], 12345)
+        self.assertEqual(card["daily_limit"], 60000)
         self.assertFalse(card["online_enabled"])
 
         with self.post_json("/v1/cards", {
@@ -520,6 +618,281 @@ class ApiServerTestCase(unittest.TestCase):
             request = urllib.request.Request(
                 base_url + "/v1/sessions",
                 data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(request, timeout=5)
+            self.assertEqual(raised.exception.code, 401)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def test_api_rate_limit_returns_429_but_health_remains_available(self):
+        service = AgentSessionService(make_store(), llm_mode="off")
+        server = create_server(
+            service,
+            host="127.0.0.1",
+            port=0,
+            rate_limit_per_minute=2,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address
+        base_url = f"http://{host}:{port}"
+        try:
+            for _ in range(2):
+                with urllib.request.urlopen(base_url + "/v1/capabilities", timeout=5):
+                    pass
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                urllib.request.urlopen(base_url + "/v1/capabilities", timeout=5)
+            self.assertEqual(raised.exception.code, 429)
+            with urllib.request.urlopen(base_url + "/health", timeout=5) as response:
+                self.assertEqual(response.status, 200)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+
+class SessionTokenApiTests(unittest.TestCase):
+    def setUp(self):
+        self.webhook_secret = "token-test-secret"
+        self.servers = []
+
+    def tearDown(self):
+        for server, thread in reversed(self.servers):
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+    def start_server(
+        self,
+        service: AgentSessionService,
+        access_password: str = "",
+    ) -> str:
+        server = create_server(
+            service,
+            host="127.0.0.1",
+            port=0,
+            webhook_secret=self.webhook_secret,
+            access_password=access_password,
+            enforce_session_tokens=True,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.servers.append((server, thread))
+        host, port = server.server_address
+        return f"http://{host}:{port}"
+
+    @staticmethod
+    def request_json(
+        base_url: str,
+        path: str,
+        payload: Optional[dict] = None,
+        headers: Optional[dict] = None,
+        method: str = "GET",
+    ):
+        data = None
+        request_headers = dict(headers or {})
+        if payload is not None:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            request_headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(
+            base_url + path,
+            data=data,
+            headers=request_headers,
+            method=method,
+        )
+        return urllib.request.urlopen(request, timeout=5)
+
+    def create_session(self, base_url: str) -> dict:
+        with self.request_json(
+            base_url,
+            "/v1/sessions",
+            {"user_id": "u_001", "channel": "h5"},
+            method="POST",
+        ) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def test_session_token_is_required_for_profile_access(self):
+        base_url = self.start_server(
+            AgentSessionService(make_store(), llm_mode="off")
+        )
+        created = self.create_session(base_url)
+        session_id = created["session_id"]
+        token = created["session_token"]
+        path = f"/v1/profile?session_id={session_id}"
+
+        with self.assertRaises(urllib.error.HTTPError) as missing:
+            self.request_json(base_url, path)
+        self.assertEqual(missing.exception.code, 403)
+
+        with self.assertRaises(urllib.error.HTTPError) as wrong:
+            self.request_json(
+                base_url,
+                path,
+                headers={"X-Session-Token": "not-the-token"},
+            )
+        self.assertEqual(wrong.exception.code, 403)
+
+        with self.request_json(
+            base_url,
+            path,
+            headers={"X-Session-Token": token},
+        ) as response:
+            profile = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(profile["user"]["user_id"], "u_001")
+
+    def test_upload_without_session_returns_new_session_token(self):
+        base_url = self.start_server(
+            AgentSessionService(make_store(), llm_mode="off")
+        )
+        bill = "2026-10-12 10:05 星巴克咖啡 -38.00"
+        payload = {
+            "filename": "bill.txt",
+            "data": base64.b64encode(bill.encode("utf-8")).decode("ascii"),
+        }
+
+        with self.request_json(
+            base_url,
+            "/v1/uploads",
+            payload,
+            method="POST",
+        ) as response:
+            body = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(response.status, 200)
+        self.assertTrue(body["session_id"].startswith("SESSION-"))
+        self.assertTrue(body["session_token"])
+        self.assertEqual(body["reply"]["intent"], "bill.scan_receipt")
+
+    def test_signed_sandbox_callback_uses_webhook_auth_not_session_token(self):
+        service = AgentSessionService(make_store(), llm_mode="off")
+        base_url = self.start_server(service)
+        created = self.create_session(base_url)
+        session_id = created["session_id"]
+        token_header = {"X-Session-Token": created["session_token"]}
+        for request_id, message in (
+            ("token-transfer-1", "给王强转1块，用微信"),
+            ("token-transfer-2", "确认"),
+            ("token-transfer-3", "246810"),
+        ):
+            with self.request_json(
+                base_url,
+                "/v1/messages",
+                {
+                    "session_id": session_id,
+                    "message": message,
+                    "request_id": request_id,
+                },
+                headers=token_header,
+                method="POST",
+            ) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        execution_id = result["reply"]["data"]["sandbox_execution_id"]
+        payload = {
+            "session_id": session_id,
+            "execution_id": execution_id,
+            "status": "returned",
+        }
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        signature = hmac.new(
+            self.webhook_secret.encode("utf-8"),
+            raw,
+            hashlib.sha256,
+        ).hexdigest()
+        request = urllib.request.Request(
+            base_url + "/v1/sandbox/callbacks",
+            data=raw,
+            headers={
+                "Content-Type": "application/json",
+                "X-FinAgent-Signature": f"sha256={signature}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            callback = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(callback["execution"]["status"], "returned")
+
+    def test_session_token_hash_survives_server_restart(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "agent.db"
+            repository = SQLiteRepository(db_path)
+            first = AgentSessionService(
+                make_store(),
+                llm_mode="off",
+                store_factory=make_store,
+                repository=repository,
+            )
+            base_url = self.start_server(first)
+            created = self.create_session(base_url)
+
+            second = AgentSessionService(
+                make_store(),
+                llm_mode="off",
+                store_factory=make_store,
+                repository=SQLiteRepository(db_path),
+            )
+            restarted_url = self.start_server(second)
+            with self.request_json(
+                restarted_url,
+                f"/v1/profile?session_id={created['session_id']}",
+                headers={"X-Session-Token": created["session_token"]},
+            ) as response:
+                profile = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(profile["user"]["user_id"], "u_001")
+
+    def test_webhook_signature_works_without_web_access_password(self):
+        service = AgentSessionService(make_store(), llm_mode="off")
+        base_url = self.start_server(service, access_password="web-password")
+        payload = {
+            "from_user": "wecom-access-password-test",
+            "content": "我有哪些卡",
+            "msg_id": "wecom-access-password-msg",
+        }
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        signature = hmac.new(
+            self.webhook_secret.encode("utf-8"),
+            raw,
+            hashlib.sha256,
+        ).hexdigest()
+        request = urllib.request.Request(
+            base_url + "/v1/channels/wecom/events",
+            data=raw,
+            headers={
+                "Content-Type": "application/json",
+                "X-FinAgent-Signature": f"sha256={signature}",
+            },
+            method="POST",
+        )
+
+        with urllib.request.urlopen(request, timeout=5) as response:
+            body = json.loads(response.read().decode("utf-8"))
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(body["channel"], "wecom")
+
+    def test_webhooks_fail_closed_when_no_secret_is_configured(self):
+        server = create_server(
+            AgentSessionService(make_store(), llm_mode="off"),
+            host="127.0.0.1",
+            port=0,
+            enforce_session_tokens=True,
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address
+        try:
+            request = urllib.request.Request(
+                f"http://{host}:{port}/v1/sandbox/callbacks",
+                data=b"{}",
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )

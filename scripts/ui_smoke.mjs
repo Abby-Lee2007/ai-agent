@@ -176,6 +176,8 @@ try {
       globalActions: [...document.querySelectorAll(".capability-global-action")].map(
         (button) => button.textContent.trim()
       ),
+      marketDialogOpen: document.querySelector("#market-dialog")?.open === true,
+      marketStripInChat: Boolean(document.querySelector(".chat > #market-overview")),
       expandedCategories: [...document.querySelectorAll(".capability-category")]
         .filter((button) => button.getAttribute("aria-expanded") === "true")
         .map((button) => button.textContent.trim()),
@@ -188,6 +190,8 @@ try {
   assert(desktop.capabilityLabels[0].includes("智能转账"), "缺少智能转账分类");
   assert(desktop.capabilityLabels[5].includes("人际礼物"), "缺少人际礼物分类");
   assert(desktop.globalActions.includes("每日简报"), "缺少全局每日简报入口");
+  assert(!desktop.marketDialogOpen, "默认界面不应自动打开市场弹窗");
+  assert(!desktop.marketStripInChat, "市场行情不应占用聊天区");
   assert(desktop.expandedCategories.length === 0, "默认界面不应展开任何业务分类");
   const shortcutPrompts = await evaluate(cdp, `(async () => {
     const response = await fetchWithAuth("/v1/capabilities");
@@ -208,6 +212,41 @@ try {
     shortcutPrompts.every((action) => action.prompt === action.label),
     "快捷指令仍带有具体人、金额或平台示例",
   );
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-category")]
+      .find((item) => item.textContent.includes("理财操作"));
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    cdp,
+    `document.querySelector("#market-dialog")?.open === true
+      && document.querySelectorAll("#market-overview-indices .market-index").length === 6`,
+    15_000,
+  );
+  const marketDialog = await evaluate(cdp, `(() => {
+    const dialog = document.querySelector("#market-dialog");
+    const rect = dialog.getBoundingClientRect();
+    return {
+      indices: dialog.querySelectorAll(".market-index").length,
+      available: dialog.querySelectorAll(".market-index:not(.unavailable)").length,
+      actions: dialog.querySelectorAll(".market-dialog-action").length,
+      status: dialog.querySelector("#market-overview-status")?.textContent || "",
+      turnover: dialog.querySelector("#market-overview-turnover")?.textContent || "",
+      source: dialog.querySelector("#market-overview-source")?.textContent || "",
+      insideViewport: rect.left >= 0 && rect.right <= innerWidth
+        && rect.top >= 0 && rect.bottom <= innerHeight,
+    };
+  })()`);
+  assert(marketDialog.indices === 6, "市场弹窗指数数量不足");
+  assert(marketDialog.available >= 4, "市场弹窗公开指数可用数量不足");
+  assert(marketDialog.actions === 4, "市场弹窗缺少理财快捷入口");
+  assert(marketDialog.status.includes("公开行情"), "市场弹窗缺少行情状态");
+  assert(marketDialog.turnover.includes("成交额"), "市场弹窗缺少两市成交额");
+  assert(marketDialog.source.includes("非模拟"), "市场弹窗缺少真实数据说明");
+  assert(marketDialog.insideViewport, "桌面市场弹窗超出视口");
+  await evaluate(cdp, `document.querySelector("#market-dialog-close").click()`);
+  await waitFor(cdp, `document.querySelector("#market-dialog")?.open === false`);
   await evaluate(cdp, `(() => {
     const button = [...document.querySelectorAll(".capability-category")]
       .find((item) => item.textContent.includes("智能转账"));
@@ -879,6 +918,57 @@ try {
   assert(savedContacts.alipay === "ui_smoke@example.com", "联系人支付宝没有保存");
   assert(savedContacts.bank_name === "工商银行", "联系人开户银行没有保存");
   assert(savedContacts.bank_card_masked === "**** **** **** 0007", "联系人银行卡号没有保存");
+  const cardBeforeStepUp = await evaluate(cdp, `(async () => {
+    const response = await fetchWithAuth(
+      \`/v1/profile?session_id=\${encodeURIComponent(sessionId)}\`
+    );
+    const payload = await response.json();
+    return payload.cards?.[0] || {};
+  })()`);
+  const requestedOnlineState = !Boolean(cardBeforeStepUp.online_enabled);
+  await evaluate(cdp, `(() => {
+    const editor = document.querySelector(".cards-settings-section .card-editor");
+    const online = editor?.querySelector('.card-switches input');
+    if (!editor || !online) return false;
+    online.checked = ${JSON.stringify(requestedOnlineState)};
+    editor.querySelector(".settings-save")?.click();
+    return true;
+  })()`);
+  await waitFor(cdp, `document.querySelector("#card-step-up-dialog")?.open === true`);
+  const stepUpDialog = await evaluate(cdp, `(() => ({
+    title: document.querySelector("#card-step-up-title")?.textContent || "",
+    passwordType: document.querySelector("#card-step-up-password")?.type || "",
+    maxLength: document.querySelector("#card-step-up-password")?.maxLength || 0,
+    message: document.querySelector("#card-step-up-message")?.textContent || ""
+  }))()`);
+  assert(stepUpDialog.title.includes("确认卡片安全设置"), "卡片敏感修改没有二次确认弹窗");
+  assert(stepUpDialog.passwordType === "password", "卡片二次确认没有使用密码输入框");
+  assert(stepUpDialog.maxLength === 6, "卡片交易密码输入框长度不正确");
+  assert(stepUpDialog.message.includes("交易密码"), "卡片二次确认没有说明验证方式");
+  await screenshot(cdp, "desktop-card-step-up.png");
+  await evaluate(cdp, `(() => {
+    document.querySelector("#card-step-up-password").value = "246810";
+    document.querySelector("#card-step-up-form").requestSubmit();
+    return true;
+  })()`);
+  await waitFor(cdp, `document.querySelector("#card-step-up-dialog")?.open === false`);
+  await waitFor(
+    cdp,
+    `document.querySelector("#card-settings-status")?.textContent.includes("银行卡已保存")`,
+  );
+  const cardAfterStepUp = await evaluate(cdp, `(async () => {
+    const response = await fetchWithAuth(
+      \`/v1/profile?session_id=\${encodeURIComponent(sessionId)}\`
+    );
+    const payload = await response.json();
+    return payload.cards?.find(
+      (card) => card.card_id === ${JSON.stringify(cardBeforeStepUp.card_id)}
+    ) || {};
+  })()`);
+  assert(
+    cardAfterStepUp.online_enabled === requestedOnlineState,
+    "通过交易密码确认后卡片设置没有同步",
+  );
   await evaluate(cdp, `document.querySelector("#profile-settings-close").click()`);
   await sendPrompt(cdp, "分析我这个月的账单", "消费分类排行");
   const tableLayout = await evaluate(cdp, `(() => {
@@ -954,6 +1044,9 @@ try {
     const chart = panel?.querySelector(".forecast-chart svg");
     const line = chart?.querySelector(".line-balance");
     const baseline = chart?.querySelector(".line-baseline");
+    const fan50 = chart?.querySelector(".fan-50");
+    const fan90 = chart?.querySelector(".fan-90");
+    const probabilityPanel = panel?.querySelector(".model-audit-panel");
     const workflow = bubble?.querySelector(".workflow-strip");
     const rect = bubble?.getBoundingClientRect();
     return {
@@ -961,7 +1054,19 @@ try {
       chart: Boolean(chart),
       hasLine: Boolean(line?.getAttribute("d")),
       hasBaseline: Boolean(baseline?.getAttribute("d")),
+      hasFan50: Boolean(fan50?.getAttribute("d")),
+      hasFan90: Boolean(fan90?.getAttribute("d")),
+      probabilityPanel: Boolean(probabilityPanel),
+      probabilityRows: probabilityPanel?.querySelectorAll(".analytics-table tbody tr").length || 0,
+      probabilityTitle: probabilityPanel?.querySelector(".model-audit-head strong")?.textContent || "",
+      probabilityLegend: panel?.querySelector(".forecast-legend")?.textContent || "",
+      modelQuality: panel?.querySelector(".data-quality-line")?.textContent || "",
       controls: panel?.querySelectorAll(".forecast-control").length || 0,
+      horizons: panel?.querySelectorAll(".forecast-horizon").length || 0,
+      metrics: panel?.querySelectorAll(".forecast-metric").length || 0,
+      breakdownRows: panel?.querySelectorAll(".cashflow-breakdown-row").length || 0,
+      actionPlanItems: panel?.querySelectorAll(".action-plan-item").length || 0,
+      stressTests: panel?.querySelectorAll(".stress-test").length || 0,
       workflow: workflow?.textContent || "",
       insideViewport: rect ? rect.left >= 0 && rect.right <= innerWidth + 1 : false,
       pageFits: document.documentElement.scrollWidth <= innerWidth
@@ -970,10 +1075,62 @@ try {
   assert(forecastLayout.panel, "现金流预测没有生成数字孪生面板");
   assert(forecastLayout.chart && forecastLayout.hasLine, "现金流预测图没有生成折线");
   assert(forecastLayout.hasBaseline, "现金流预测图没有生成基准对比线");
+  assert(forecastLayout.hasFan50 && forecastLayout.hasFan90, "现金流概率图缺少 50%/90% 区间");
+  assert(forecastLayout.probabilityPanel, "现金流面板缺少概率分位模块");
+  assert(forecastLayout.probabilityRows === 5, "现金流概率分位表不完整");
+  assert(forecastLayout.probabilityTitle.includes("概率现金流区间"), "现金流概率模块标题错误");
+  assert(
+    forecastLayout.probabilityLegend.includes("P25–P75")
+      && forecastLayout.probabilityLegend.includes("P05–P95"),
+    "现金流概率图例没有标出 50%/90% 区间",
+  );
+  assert(
+    forecastLayout.modelQuality.includes("独立于账单 OCR"),
+    "现金流模型质量与 OCR 质量没有明确分开",
+  );
   assert(forecastLayout.controls >= 5, "现金流预测缺少交互情景滑块");
+  assert(forecastLayout.horizons === 3, "财务数字孪生缺少 30/60/90 天切换");
+  assert(forecastLayout.metrics >= 5, "财务数字孪生缺少可安排资金/日均预算指标");
+  assert(forecastLayout.breakdownRows >= 6, "财务数字孪生缺少现金流构成");
+  assert(forecastLayout.actionPlanItems >= 1, "财务数字孪生缺少可执行建议");
+  assert(forecastLayout.stressTests === 3, "财务数字孪生缺少三项压力测试");
   assert(forecastLayout.workflow.includes("顾问 Agent"), "工作流没有显示多 Agent 角色");
   assert(forecastLayout.insideViewport, "现金流预测面板超出视口");
   assert(forecastLayout.pageFits, "现金流预测面板导致页面横向滚动");
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".forecast-action")]
+      .find((item) => item.textContent.trim() === "试算收入下降20%");
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    cdp,
+    `[...document.querySelectorAll(".message.agent .bubble")].at(-1)
+      ?.querySelector(".scenario-summary")?.textContent.includes("收入变化 -20%")`,
+    15_000,
+  );
+  const scenarioLayout = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const incomeSlider = [...bubble.querySelectorAll(".forecast-control")]
+      .find((item) => item.querySelector("strong")?.textContent === "收入下降")
+      ?.querySelector('input[type="range"]');
+    const metrics = [...bubble.querySelectorAll(".forecast-metric")]
+      .map((item) => item.textContent);
+    return {
+      scenarioText: bubble.querySelector(".scenario-summary")?.textContent || "",
+      incomeSlider: incomeSlider?.value || "",
+      metricCount: metrics.length,
+      hasDeltaMetric: metrics.some((text) => text.includes("余额变化")),
+      hasBaseline: Boolean(bubble.querySelector(".line-baseline")?.getAttribute("d")),
+      guidance: bubble.querySelector(".forecast-guide")?.textContent || ""
+    };
+  })()`);
+  assert(scenarioLayout.scenarioText.includes("收入变化 -20%"), "收入下降情景没有显示情景摘要");
+  assert(scenarioLayout.incomeSlider === "20", "收入下降情景没有同步回填滑块");
+  assert(scenarioLayout.metricCount >= 7, "情景结果缺少基准差值指标");
+  assert(scenarioLayout.hasDeltaMetric, "情景结果没有显示余额变化");
+  assert(scenarioLayout.hasBaseline, "情景图缺少基准对比线");
+  assert(scenarioLayout.guidance.includes("使用顺序"), "数字孪生缺少使用说明");
   await evaluate(cdp, `(() => {
     const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
     bubble?.querySelector(".workflow-open")?.click();
@@ -1143,7 +1300,41 @@ try {
   assert(playbookDirectAction.text.includes("已冻结"), "确认按钮没有直接完成冻结动作");
   await screenshot(cdp, "desktop.png");
 
-  await openChat(cdp, 390, 844, true);
+  await openChat(cdp, 319, 844, true);
+  await evaluate(cdp, `(() => {
+    const button = [...document.querySelectorAll(".capability-category")]
+      .find((item) => item.textContent.includes("理财操作"));
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    cdp,
+    `document.querySelector("#market-dialog")?.open === true
+      && document.querySelectorAll("#market-overview-indices .market-index").length === 6`,
+    15_000,
+  );
+  const mobileMarketDialog = await evaluate(cdp, `(() => {
+    const dialog = document.querySelector("#market-dialog");
+    const rect = dialog.getBoundingClientRect();
+    const indexStrip = dialog.querySelector("#market-overview-indices");
+    const actions = [...dialog.querySelectorAll(".market-dialog-action")];
+    return {
+      insideViewport: rect.left >= 0 && rect.right <= innerWidth
+        && rect.top >= 0 && rect.bottom <= innerHeight + 1,
+      pageFits: document.documentElement.scrollWidth <= innerWidth,
+      indexStripScrolls: indexStrip.scrollWidth > indexStrip.clientWidth,
+      actionsInside: actions.every((button) => {
+        const item = button.getBoundingClientRect();
+        return item.left >= rect.left && item.right <= rect.right;
+      }),
+    };
+  })()`);
+  assert(mobileMarketDialog.insideViewport, "移动端市场弹窗超出视口");
+  assert(mobileMarketDialog.pageFits, "移动端市场弹窗导致页面横向滚动");
+  assert(mobileMarketDialog.indexStripScrolls, "移动端指数栏无法横向查看完整行情");
+  assert(mobileMarketDialog.actionsInside, "移动端理财快捷入口超出弹窗");
+  await evaluate(cdp, `document.querySelector("#market-dialog-close").click()`);
+  await waitFor(cdp, `document.querySelector("#market-dialog")?.open === false`);
   await sendPrompt(cdp, "帮我看看有哪些自动续费", "到期时间");
   const mobileSubscription = await evaluate(cdp, `(() => {
     const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
@@ -1204,11 +1395,13 @@ try {
     return {
       formatted: Boolean(content),
       insideViewport: rect ? rect.left >= 0 && rect.right <= innerWidth + 1 : false,
-      canScroll: content ? content.scrollWidth >= content.clientWidth : false
+      canScroll: content ? content.scrollWidth >= content.clientWidth : false,
+      hasOfficialMacro: content?.textContent.includes("官方数据参照") || false
     };
   })()`);
   assert(mobileBill.formatted, "移动端账单分析没有使用表格排版");
   assert(mobileBill.insideViewport, "移动端账单分析气泡超出视口");
+  assert(mobileBill.hasOfficialMacro, "账单分析回答没有引用官方宏观数据");
   const mobile = await evaluate(cdp, `(() => {
     const bubbles = [...document.querySelectorAll(".bubble")].map((node) => node.getBoundingClientRect());
     const composer = document.querySelector(".composer-area").getBoundingClientRect();
@@ -1236,6 +1429,38 @@ try {
   await waitFor(cdp, `document.readyState === "complete"`);
   await waitFor(cdp, `document.querySelector("#session-id")?.textContent !== "正在创建"`);
   await sendPrompt(cdp, "产品推荐", "第 1/7 题");
+  for (let question = 2; question <= 7; question += 1) {
+    await sendPrompt(cdp, "b", `第 ${question}/7 题`);
+  }
+  await sendPrompt(cdp, "b", "评估完成");
+  await sendPrompt(cdp, "我有5万块，稳健一点怎么配置", "约束优化组合");
+  const optimizerUi = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const panel = bubble?.querySelector(".model-audit-panel");
+    const quality = bubble?.querySelector(".data-quality-line");
+    const rows = panel?.querySelectorAll(".analytics-table tbody tr") || [];
+    const rect = panel?.getBoundingClientRect();
+    return {
+      panel: Boolean(panel),
+      rows: rows.length,
+      badge: panel?.querySelector(".model-audit-badge")?.textContent || "",
+      quality: quality?.textContent || "",
+      insideViewport: rect ? rect.left >= 0 && rect.right <= innerWidth + 1 : false,
+      pageFits: document.documentElement.scrollWidth <= innerWidth
+    };
+  })()`);
+  assert(optimizerUi.panel, "约束优化组合没有生成可视化模块");
+  assert(optimizerUi.rows >= 1, "约束优化组合没有显示资产权重");
+  assert(
+    optimizerUi.badge.includes("硬约束") || optimizerUi.badge.includes("现金"),
+    "约束优化模块没有说明硬约束或现金安全方案",
+  );
+  assert(
+    optimizerUi.quality.includes("独立于账单 OCR"),
+    "理财数据质量与 OCR 质量没有明确分开",
+  );
+  assert(optimizerUi.insideViewport && optimizerUi.pageFits, "移动端约束优化模块溢出");
+  await screenshot(cdp, "mobile-optimizer.png");
 
   // A new session should also expose the drag/upload channel.
   await evaluate(cdp, `localStorage.removeItem("finagent_session_id"); location.reload()`);
@@ -1276,8 +1501,13 @@ try {
     desktop,
     mobile,
     mobileBill,
+    mobileMarketDialog,
     profileSettings: profilePanel,
     savedContacts,
+    cardStepUp: {
+      verified: cardAfterStepUp.online_enabled === requestedOnlineState,
+      dialogTitle: stepUpDialog.title,
+    },
     billTable: tableLayout,
     anomalyTable: anomalyLayout,
     forecastLayout,
@@ -1285,6 +1515,7 @@ try {
     dailyIntake,
     playbook,
     playbookDirectAction,
+    optimizerUi,
     health,
     wealthCompare,
     reconcilePanel,
@@ -1298,6 +1529,15 @@ try {
   await cdp.send("Browser.close");
 } finally {
   if (browser.exitCode === null) browser.kill();
-  await sleep(200);
-  rmSync(profileDir, { recursive: true, force: true });
+  await sleep(800);
+  try {
+    rmSync(profileDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 200,
+    });
+  } catch {
+    // Chrome can hold the profile directory briefly on Windows.
+  }
 }

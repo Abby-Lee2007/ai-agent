@@ -3,9 +3,15 @@ from __future__ import annotations
 
 import os
 import unittest
+from datetime import datetime
 
-from tests.support import make_agent
-from finagent.data.market import FundNav, MarketDataProvider, Quote
+from tests.support import make_agent, run_to_completion
+from finagent.data.market import (
+    FundNav,
+    MarketDataProvider,
+    Quote,
+    build_market_overview,
+)
 
 SAMPLE_QUOTE = (
     'v_sh600036="1~招商银行~600036~42.75~43.05~42.95~160110~78737~81371~42.69~293~'
@@ -13,6 +19,36 @@ SAMPLE_QUOTE = (
     '42.74~103~~20261020100354~-0.30~-0.70~43.13~42.56~42.75/160110/69297~160110~'
     '69297~0.08~7.11~~43.13~42.56~1.32~8818.87~10781.48~0.94~47.36~38.75~1.02~'
     '-1~-0.72~~";'
+)
+
+SAMPLE_HISTORY = (
+    '{"code":0,"data":{"sh600036":{"qfqday":['
+    '["2026-09-01","40.00","40.20","40.50","39.80","1000"],'
+    '["2026-09-02","40.20","40.50","40.80","40.00","1200"],'
+    '["2026-09-03","40.50","40.30","40.90","40.10","900"],'
+    '["2026-09-04","40.30","40.90","41.00","40.20","1300"],'
+    '["2026-09-05","40.90","41.20","41.30","40.70","1100"],'
+    '["2026-09-06","41.20","41.00","41.40","40.90","1000"],'
+    '["2026-09-07","41.00","41.50","41.60","40.80","1500"],'
+    '["2026-09-08","41.50","41.30","41.70","41.10","950"],'
+    '["2026-09-09","41.30","41.80","41.90","41.20","1400"],'
+    '["2026-09-10","41.80","42.00","42.10","41.60","1250"]'
+    '],"qt":{"sh600036":["1","招商银行","600036"]}}}}'
+)
+
+SAMPLE_FUND_HISTORY = (
+    '{"Data":{"LSJZList":['
+    '{"FSRQ":"2026-09-01","DWJZ":"2.0000","JZZZL":"0.10"},'
+    '{"FSRQ":"2026-09-02","DWJZ":"2.0100","JZZZL":"0.50"},'
+    '{"FSRQ":"2026-09-03","DWJZ":"2.0050","JZZZL":"-0.25"},'
+    '{"FSRQ":"2026-09-04","DWJZ":"2.0200","JZZZL":"0.75"},'
+    '{"FSRQ":"2026-09-05","DWJZ":"2.0300","JZZZL":"0.50"},'
+    '{"FSRQ":"2026-09-06","DWJZ":"2.0250","JZZZL":"-0.25"},'
+    '{"FSRQ":"2026-09-07","DWJZ":"2.0400","JZZZL":"0.74"},'
+    '{"FSRQ":"2026-09-08","DWJZ":"2.0500","JZZZL":"0.49"},'
+    '{"FSRQ":"2026-09-09","DWJZ":"2.0450","JZZZL":"-0.24"},'
+    '{"FSRQ":"2026-09-10","DWJZ":"2.0600","JZZZL":"0.73"}'
+    ']}}'
 )
 
 
@@ -49,6 +85,22 @@ class TestQuoteParsing(unittest.TestCase):
         provider = _StubProvider("not a quote")
         self.assertEqual(provider.quotes(["sh600036"]), {})
 
+    def test_parses_public_daily_history(self):
+        provider = _StubProvider(SAMPLE_HISTORY)
+        history = provider.history("sh600036", 30)
+        self.assertIsNotNone(history)
+        self.assertEqual(history["source"], "腾讯财经")
+        self.assertEqual(len(history["points"]), 10)
+        self.assertAlmostEqual(history["points"][-1]["close"], 42.0)
+
+    def test_parses_fund_nav_history_in_date_order(self):
+        provider = _StubProvider(SAMPLE_FUND_HISTORY)
+        history = provider.fund_nav_history("000171", 30)
+        self.assertIsNotNone(history)
+        self.assertEqual(history["points"][0]["date"], "2026-09-01")
+        self.assertEqual(history["points"][-1]["date"], "2026-09-10")
+        self.assertAlmostEqual(history["points"][-1]["close"], 2.06)
+
 
 class _FakeMarket:
     enabled = True
@@ -64,6 +116,7 @@ class _FakeMarket:
             "sh600036": ("招商银行", 42.77, -0.65, 7.1),
             "sh600900": ("长江电力", 29.48, -0.20, 19.9),
             "sh601318": ("中国平安", 51.25, -0.81, 8.2),
+            "sh601398": ("工商银行", 7.12, 0.28, 6.5),
             "sh019547": ("16国债19", 120.85, 0.21, None),
             "sh113050": ("南银转债", 144.967, 0.0, None),
         }
@@ -84,6 +137,48 @@ class _FakeMarket:
         if code == "000171":
             return FundNav(code=code, nav=2.0016, change_pct=-0.29, date="2026-10-19")
         return None
+
+    def history(self, symbol, limit=250):
+        base = {
+            "sh512890": 1.227,
+            "sh510300": 4.217,
+            "sh600036": 42.77,
+            "sh600900": 29.48,
+            "sh601318": 51.25,
+            "sh601398": 7.12,
+        }.get(symbol, 10.0)
+        points = []
+        for index in range(max(130, min(int(limit), 250))):
+            close = base * (1 + index * 0.0002)
+            points.append({
+                "date": f"2026-{index // 28 % 12 + 1:02d}-{index % 28 + 1:02d}",
+                "close": round(close, 4),
+                "adjusted_close": round(close, 4),
+            })
+        return {
+            "symbol": symbol.upper(),
+            "source": "腾讯财经",
+            "points": points,
+            "is_demo": False,
+        }
+
+    def fund_nav_history(self, code, limit=250):
+        if code != "000171":
+            return None
+        points = []
+        for index in range(140):
+            nav = 1.9 * (1 + index * 0.0003)
+            points.append({
+                "date": f"2026-{index // 28 % 12 + 1:02d}-{index % 28 + 1:02d}",
+                "close": round(nav, 4),
+                "adjusted_close": round(nav * 1.2, 4),
+            })
+        return {
+            "symbol": code,
+            "source": "东方财富",
+            "points": points,
+            "is_demo": False,
+        }
 
 
 class TestStockRecommendation(unittest.TestCase):
@@ -111,6 +206,11 @@ class TestStockRecommendation(unittest.TestCase):
         self.assertIn("按实时价格估算", reply.text)
         self.assertIn("股", reply.text)
         self.assertGreater(reply.data["live_count"], 0)
+        self.assertGreater(reply.data["live_quant_count"], 0)
+        self.assertTrue(all(
+            item["advice_score"] is not None
+            for item in reply.data["product_details"]
+        ))
 
     def test_stock_request_is_not_treated_as_subscribe(self):
         reply = self.agent.handle("我想买点股票")
@@ -157,6 +257,93 @@ class TestStockRecommendation(unittest.TestCase):
         reply = agent.handle("我有5万闲钱，想买点股票")
         self.assertIn("演示", reply.text)
         self.assertNotIn("实时", reply.text)
+
+    def test_direct_symbol_purchase_uses_fresh_quote_and_whole_lots(self):
+        before = self.agent.providers.cards.find(
+            self.agent.user_id,
+            "工资卡",
+        ).balance
+        reply = self.agent.handle("买601398，金额1000元，用工资卡")
+        self.assertEqual(reply.intent, "wealth.subscribe")
+        if reply.kind == "question":
+            reply = self.agent.handle("工资卡")
+        self.assertIn("最新价 7.120 元", reply.text)
+        self.assertIn("预计买入 100股", reply.text)
+        completed = run_to_completion(self.agent, reply)
+        self.assertTrue(completed.ok, completed.text)
+        self.assertIn("模拟买入数量：100 股", completed.text)
+        self.assertAlmostEqual(completed.data["execution_price"], 7.12)
+        self.assertEqual(completed.data["quantity"], 100)
+        self.assertAlmostEqual(completed.data["amount"], 717.0)
+        after = self.agent.providers.cards.find(
+            self.agent.user_id,
+            "工资卡",
+        ).balance
+        self.assertAlmostEqual(before - after, 717.0)
+
+    def test_direct_fund_code_uses_latest_disclosed_nav(self):
+        reply = self.agent.handle("买000171，金额2000元，用工资卡")
+        self.assertEqual(reply.intent, "wealth.subscribe")
+        if reply.kind == "question":
+            reply = self.agent.handle("工资卡")
+        self.assertIn("最新净值 2.0016 元", reply.text)
+        completed = run_to_completion(self.agent, reply)
+        self.assertTrue(completed.ok, completed.text)
+        self.assertIn("估算确认份额", completed.text)
+        self.assertEqual(completed.data["execution_price"], 2.0016)
+        product = self.agent.store.find_product("000171")
+        expected_fee = round(2000 * product.fee_rate, 2)
+        self.assertAlmostEqual(
+            completed.data["quantity"],
+            round((2000 - expected_fee) / 2.0016, 4),
+        )
+
+
+class TestMarketOverview(unittest.TestCase):
+    def test_overview_includes_major_indices_turnover_and_breadth_roles(self):
+        market = _FakeMarket()
+        market.quotes = lambda symbols: {
+            symbol: Quote(
+                symbol=symbol,
+                name={
+                    "sh000001": "上证指数",
+                    "sz399001": "深证成指",
+                    "sh000300": "沪深300",
+                    "sz399006": "创业板指",
+                    "sh000688": "科创50",
+                    "bj899050": "北证50",
+                }[symbol],
+                price=100 + float(symbol[-1]),
+                prev_close=100,
+                change=1,
+                change_pct=({"sz399006": 2.5, "bj899050": -0.8}).get(symbol, 0.5),
+                timestamp="2026-10-28 15:00:00",
+                source="腾讯财经",
+                turnover_100m_cny=(
+                    7510.19 if symbol == "sh000001"
+                    else 8774.68 if symbol == "sz399001"
+                    else None
+                ),
+            )
+            for symbol in symbols
+        }
+        overview = build_market_overview(
+            market,
+            now=datetime(2026, 10, 28, 16, 0, 0),
+        )
+        self.assertTrue(overview["available"])
+        self.assertEqual(len(overview["indices"]), 6)
+        self.assertEqual(overview["market_state"], "已收盘")
+        self.assertAlmostEqual(overview["turnover_100m_cny"], 16284.87)
+        self.assertEqual(overview["leading_index"]["name"], "创业板指")
+        self.assertEqual(overview["lagging_index"]["name"], "北证50")
+        agent = make_agent()
+        agent.market = market
+        reply = agent.handle("今天大盘怎么样")
+        self.assertEqual(reply.intent, "market.overview")
+        self.assertIn("A股市场行情", reply.text)
+        self.assertIn("沪深两市成交额", reply.text)
+        self.assertIn("盘面温度", reply.text)
 
 
 class TestLiveMarketOptional(unittest.TestCase):

@@ -467,6 +467,7 @@ class CardBindTool(Tool):
             card,
             account_kind="current",
             account_name=f"{bank_name}储蓄卡账户",
+            allow_fallback_link=False,
         )
         ctx.store.log("card.bind", card_id=card.card_id, bank=bank_name, tail=tail)
         lines = [
@@ -621,6 +622,7 @@ class CardApplyTool(Tool):
             card,
             account_kind="current" if kind == "virtual" else "credit",
             account_name=f"{bank_name}{KIND_LABEL[kind]}账户",
+            allow_fallback_link=False,
         )
         task = ctx.store.add_task(
             user_id=user.user_id,
@@ -726,6 +728,7 @@ class CardApplyTool(Tool):
             card,
             account_kind="current",
             account_name=f"{bank_name}{account_class}账户",
+            allow_fallback_link=False,
         )
         ctx.store.log(
             "card.open_debit",
@@ -879,6 +882,7 @@ class CardApplyTool(Tool):
                 card,
                 account_kind="credit",
                 account_name=f"{bank_name}信用卡账户",
+                allow_fallback_link=False,
             )
             task = ctx.store.add_task(
                 user_id=ctx.user_id,

@@ -6,7 +6,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 
 PROJECTION_TABLES = {
@@ -28,10 +28,14 @@ PROJECTION_TABLES = {
 }
 
 
+class OptimisticConcurrencyError(RuntimeError):
+    """Raised when another service instance changed the session first."""
+
+
 class SQLiteRepository:
     """Small durable repository using only Python's standard-library sqlite3."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Union[Path, str]) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -61,10 +65,20 @@ class SQLiteRepository:
                     channel TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    version INTEGER NOT NULL DEFAULT 0,
                     payload TEXT NOT NULL
                 )
                 """
             )
+            columns = {
+                row[1] for row in connection.execute(
+                    "PRAGMA table_info(sessions)"
+                ).fetchall()
+            }
+            if "version" not in columns:
+                connection.execute(
+                    "ALTER TABLE sessions ADD COLUMN version INTEGER NOT NULL DEFAULT 0"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS idempotency (
@@ -114,29 +128,65 @@ class SQLiteRepository:
         channel: str,
         created_at: str,
         payload: Dict[str, Any],
-    ) -> None:
+        expected_version: Optional[int] = None,
+    ) -> int:
         serialized = json.dumps(payload, ensure_ascii=False)
         with self._lock, self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO sessions(session_id, user_id, channel, created_at, updated_at, payload)
-                VALUES (?, ?, ?, ?, datetime('now'), ?)
-                ON CONFLICT(session_id) DO UPDATE SET
-                    user_id=excluded.user_id,
-                    channel=excluded.channel,
-                    updated_at=datetime('now'),
-                    payload=excluded.payload
-                """,
-                (session_id, user_id, channel, created_at, serialized),
-            )
+            row = connection.execute(
+                "SELECT version FROM sessions WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    """
+                    INSERT INTO sessions(
+                        session_id, user_id, channel, created_at,
+                        updated_at, version, payload
+                    )
+                    VALUES (?, ?, ?, ?, datetime('now'), 1, ?)
+                    """,
+                    (session_id, user_id, channel, created_at, serialized),
+                )
+                version = 1
+            else:
+                current_version = int(row[0])
+                if (
+                    expected_version is not None
+                    and current_version != int(expected_version)
+                ):
+                    raise OptimisticConcurrencyError(
+                        "会话已被其他请求更新，请刷新后重试"
+                    )
+                cursor = connection.execute(
+                    """
+                    UPDATE sessions
+                    SET user_id=?, channel=?, updated_at=datetime('now'),
+                        version=version+1, payload=?
+                    WHERE session_id=? AND version=?
+                    """,
+                    (
+                        user_id,
+                        channel,
+                        serialized,
+                        session_id,
+                        current_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise OptimisticConcurrencyError(
+                        "会话已被其他请求更新，请刷新后重试"
+                    )
+                version = current_version + 1
             snapshot = payload.get("store")
             if isinstance(snapshot, dict):
                 self._sync_store_projection(connection, session_id, snapshot)
+        return version
 
     def load_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         with self._lock, self._connection() as connection:
             row = connection.execute(
-                "SELECT user_id, channel, created_at, payload FROM sessions WHERE session_id=?",
+                "SELECT user_id, channel, created_at, version, payload "
+                "FROM sessions WHERE session_id=?",
                 (session_id,),
             ).fetchone()
         if row is None:
@@ -146,8 +196,25 @@ class SQLiteRepository:
             "user_id": row[0],
             "channel": row[1],
             "created_at": row[2],
-            **json.loads(row[3]),
+            "version": int(row[3]),
+            **json.loads(row[4]),
         }
+
+    def list_session_ids_with_tasks(self) -> list[str]:
+        """Return sessions that still have pending scheduled work."""
+        with self._lock, self._connection() as connection:
+            rows = connection.execute(
+                "SELECT session_id, payload FROM tasks ORDER BY session_id"
+            ).fetchall()
+        session_ids: set[str] = set()
+        for session_id, payload in rows:
+            try:
+                task = json.loads(payload)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(task, dict) and task.get("status") == "pending":
+                session_ids.add(str(session_id))
+        return sorted(session_ids)
 
     def save_idempotency(
         self,

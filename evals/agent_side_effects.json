@@ -1,0 +1,61 @@
+[
+  {
+    "id": "transfer-executes-and-updates-balance",
+    "text": "给王强转500块，用微信",
+    "steps": ["给王强转500块，用微信", "确认", "246810"],
+    "expected_intent": "transfer.send",
+    "expected_kind": "executed",
+    "assertions": {
+      "step_kinds": ["confirm", "question", "executed"],
+      "card_deltas": {"工资卡": -500},
+      "asset_delta": -500,
+      "new_transactions": [{"merchant_contains": "王强", "amount": -500}],
+      "workflow_status": "completed"
+    }
+  },
+  {
+    "id": "internal-transfer-preserves-total-assets",
+    "text": "从工资卡尾号6222转20到尾号6688借记卡",
+    "steps": ["从工资卡尾号6222转20到尾号6688借记卡", "确认", "246810"],
+    "expected_intent": "transfer.internal",
+    "expected_kind": "executed",
+    "assertions": {
+      "step_kinds": ["confirm", "question", "executed"],
+      "card_deltas": {"工资卡": -20, "6688": 20},
+      "asset_delta": 0,
+      "new_transactions": [
+        {"amount": -20},
+        {"amount": 20}
+      ],
+      "workflow_status": "completed"
+    }
+  },
+  {
+    "id": "freeze-changes-card-without-ledger-entry",
+    "text": "冻结信用卡",
+    "steps": ["冻结信用卡", "确认"],
+    "expected_intent": "card.freeze",
+    "expected_kind": "executed",
+    "assertions": {
+      "step_kinds": ["confirm", "executed"],
+      "card_statuses": {"信用卡": "frozen"},
+      "no_new_transactions": true,
+      "asset_delta": 0,
+      "workflow_status": "completed"
+    }
+  },
+  {
+    "id": "credit-limit-requires-and-applies-verification",
+    "text": "把信用卡额度提到30000",
+    "steps": ["把信用卡额度提到30000", "确认", "123456"],
+    "expected_intent": "card.limit_adjust",
+    "expected_kind": "executed",
+    "assertions": {
+      "step_kinds": ["confirm", "verify", "executed"],
+      "card_fields": {"信用卡": {"credit_limit": 30000}},
+      "no_new_transactions": true,
+      "asset_delta": 0,
+      "workflow_status": "completed"
+    }
+  }
+]

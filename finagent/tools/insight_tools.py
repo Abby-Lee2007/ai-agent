@@ -17,6 +17,13 @@ from finagent.data.card_ledger import (
     update_card_balance,
     update_credit_usage,
 )
+from finagent.data.official_sources import (
+    OfficialDataError,
+    load_official_data,
+    official_macro_answer_line,
+    official_macro_context,
+)
+from finagent.data.market import build_market_overview
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, render_table
 
 
@@ -86,6 +93,56 @@ class CashflowForecastTool(Tool):
             forecast["end_balance"] - baseline["end_balance"],
             2,
         )
+        forecast["scenario_delta_min"] = round(
+            forecast["min_balance"] - baseline["min_balance"],
+            2,
+        )
+        stress_tests = []
+        stress_specs = [
+            (
+                "收入下降 20%",
+                {
+                    "income_change_pct": -20,
+                },
+            ),
+            (
+                "突发支出 8,000 元",
+                {
+                    "purchase_amount": 8000,
+                    "purchase_date": ctx.clock.today() + timedelta(days=7),
+                },
+            ),
+            (
+                "日常支出增加 20%",
+                {
+                    "extra_monthly_expense": round(
+                        baseline["variable_daily_expense"] * 30 * 0.2,
+                        2,
+                    ),
+                },
+            ),
+        ]
+        for label, overrides in stress_specs:
+            scenario = build_cashflow_forecast(
+                ctx.store,
+                ctx.providers,
+                ctx.clock,
+                ctx.user_id,
+                months=int(months or 3),
+                **overrides,
+            )
+            stress_tests.append({
+                "name": label,
+                "min_balance": scenario["min_balance"],
+                "end_balance": scenario["end_balance"],
+                "negative_days": scenario["negative_days"],
+                "safe_to_spend": scenario["safe_to_spend"],
+                "delta_end": round(
+                    scenario["end_balance"] - baseline["end_balance"],
+                    2,
+                ),
+            })
+        forecast["stress_tests"] = stress_tests
 
         lines = [
             f"财务数字孪生（未来 {forecast['horizon_days']} 天）",
@@ -95,8 +152,99 @@ class CashflowForecastTool(Tool):
             f"（{forecast['min_balance_date']}）",
             f"  建议保留：{forecast['essential_monthly']:,.2f} 元/月必要支出",
             f"  可安排资金：{forecast['safe_to_spend']:,.2f} 元",
+            f"  建议日均非必要支出上限：{forecast['daily_safe_budget']:,.2f} 元",
             f"  模型数据：{forecast['data_scope']}；置信度约 {forecast['confidence'] * 100:.0f}%",
         ]
+        probability = forecast.get("probability") or {}
+        terminal_distribution = probability.get("terminal_balance") or {}
+        minimum_distribution = probability.get("minimum_balance") or {}
+        negative = probability.get("negative_balance") or {}
+        worst_tail = probability.get("worst_tail") or {}
+        liquidity_tail = probability.get("worst_liquidity_tail") or {}
+        if terminal_distribution:
+            lines.extend([
+                (
+                    f"  概率路径：{probability.get('simulations', 0):,} 次模拟，"
+                    f"固定种子 {probability.get('random_seed', '-')}"
+                ),
+                (
+                    f"  期末余额分位：P05 {terminal_distribution.get('p05', 0):,.2f} / "
+                    f"P50 {terminal_distribution.get('p50', 0):,.2f} / "
+                    f"P95 {terminal_distribution.get('p95', 0):,.2f} 元"
+                ),
+                (
+                    f"  全周期最低余额分位：P05 {minimum_distribution.get('p05', 0):,.2f} / "
+                    f"P50 {minimum_distribution.get('p50', 0):,.2f} / "
+                    f"P95 {minimum_distribution.get('p95', 0):,.2f} 元"
+                ),
+                (
+                    "  负余额概率：终点 "
+                    f"{float(negative.get('probability_negative_end', 0)) * 100:.1f}%，"
+                    "整条路径至少一次 "
+                    f"{float(negative.get('probability_any_negative_during_period', 0)) * 100:.1f}%"
+                ),
+                (
+                    f"  最低余额最差 5%：平均最低余额 "
+                    f"{liquidity_tail.get('mean_min_balance', 0):,.2f} 元"
+                ),
+                (
+                    f"  终点损失最差 5%：CVaR5 终点损失 "
+                    f"{worst_tail.get('cvar_5_terminal_loss', 0):,.2f} 元"
+                ),
+            ])
+        quality = forecast.get("data_quality") or {}
+        quality_overall = quality.get("overall") or {}
+        if quality_overall:
+            lines.append(
+                f"  数据质量（独立于 OCR）：{quality_overall.get('score', 0):.2f}/100，"
+                f"{quality_overall.get('grade', '未评级')}；"
+                f"个性化执行{'允许' if quality_overall.get('personalization_allowed') else '已阻断'}"
+            )
+        official = forecast.get("official_macro") or {}
+        official_line = official_macro_answer_line(official)
+        if official_line:
+            lines.append(f"  {official_line}")
+        scenario_data = forecast.get("scenario") or {}
+        if not scenario_data.get("is_baseline"):
+            scenario_bits = []
+            if scenario_data.get("income_change_pct"):
+                scenario_bits.append(
+                    f"收入变化 {scenario_data['income_change_pct']:+.0f}%"
+                )
+            if scenario_data.get("purchase_amount"):
+                scenario_bits.append(
+                    f"一次性消费 {scenario_data['purchase_amount']:,.2f} 元"
+                )
+            if scenario_data.get("extra_monthly_expense"):
+                scenario_bits.append(
+                    f"每月新增支出 {scenario_data['extra_monthly_expense']:,.2f} 元"
+                )
+            if scenario_data.get("investment_amount"):
+                scenario_bits.append(
+                    f"计划投资 {scenario_data['investment_amount']:,.2f} 元"
+                )
+            lines.append(
+                "  当前情景：" + "；".join(scenario_bits)
+                + f"；期末较基准 {forecast.get('scenario_delta_end', 0):+,.2f} 元，"
+                + f"最低余额较基准 {forecast.get('scenario_delta_min', 0):+,.2f} 元"
+            )
+        breakdown = forecast["cashflow_breakdown"]
+        lines.extend([
+            "",
+            "现金流构成：",
+            render_table(
+                ["项目", "预测期金额"],
+                [
+                    ["预计收入", f"+{breakdown['income']:,.2f}"],
+                    ["日常变动支出", f"-{breakdown['variable_expenses']:,.2f}"],
+                    ["订阅续费", f"-{breakdown['subscriptions']:,.2f}"],
+                    ["信用卡还款预留", f"-{breakdown['credit_repayment']:,.2f}"],
+                    ["定时/礼物任务", f"-{breakdown['scheduled_tasks']:,.2f}"],
+                    ["计划大额支出", f"-{breakdown['planned_outflows']:,.2f}"],
+                    ["净现金流", f"{breakdown['net_cashflow']:+,.2f}"],
+                ],
+            ),
+        ])
         if forecast["warnings"]:
             lines.append("")
             lines.append("重点预警：")
@@ -116,10 +264,25 @@ class CashflowForecastTool(Tool):
             lines.append("主要未来事件：")
             lines.append(render_table(["日期", "事件", "金额", "依据"], rows))
         lines.append("")
-        lines.append(f"建议：{forecast['recommendation']}")
+        lines.append("优先行动：")
+        for index, action in enumerate(forecast["action_plan"], start=1):
+            lines.append(
+                f"  {index}. [{action['priority']}] {action['title']}："
+                f"{action['detail']}"
+            )
+            lines.append(f"     {action['action']}")
+        lines.append("")
+        lines.append("压力测试：")
+        for scenario in forecast["stress_tests"]:
+            lines.append(
+                f"  · {scenario['name']}：最低余额 {scenario['min_balance']:,.2f} 元，"
+                f"期末 {scenario['end_balance']:,.2f} 元"
+            )
+        lines.append("")
+        lines.append(f"综合建议：{forecast['recommendation']}")
         lines.append(
-            "以上是基于演示账户、历史流水和当前订阅/任务的确定性情景测算，"
-            "不是实际银行余额承诺。"
+            "以上将订阅、还款和任务视为确定性事件，对日常支出和工资做固定种子概率抽样；"
+            "结果不是实际银行余额承诺。"
         )
         return ToolResult(
             True,
@@ -129,6 +292,191 @@ class CashflowForecastTool(Tool):
                 f"{forecast['horizon_days']}天预测最低余额 "
                 f"{forecast['min_balance']:,.2f} 元"
             ),
+        )
+
+
+class OfficialMacroTool(Tool):
+    """Display attributable official public macro data."""
+
+    name = "macro.official"
+    category = "智能财务"
+    description = "读取人民银行公开市场、国债收益率与中国CPI官方公开数据"
+    risk_level = "low"
+    params = [
+        ToolParam(
+            "refresh",
+            "boolean",
+            False,
+            "是否立即刷新公开数据；默认读取有效缓存",
+            default=False,
+        ),
+    ]
+    examples = ["查看官方宏观数据", "最新国债收益率和央行逆回购", "刷新官方宏观数据"]
+
+    def run(self, ctx: ToolContext, refresh: Any = False) -> ToolResult:  # type: ignore[override]
+        should_refresh = refresh is True or str(refresh).strip().lower() in {
+            "1", "true", "yes", "on", "刷新",
+        }
+        try:
+            payload = load_official_data(refresh=should_refresh)
+        except (OfficialDataError, OSError, ValueError) as exc:
+            return ToolResult(
+                False,
+                f"官方公开数据暂不可用：{exc}\n"
+                "系统没有用模拟宏观值替代，请稍后刷新。",
+                data={"official": {}, "error": str(exc)},
+                summary="官方宏观数据不可用",
+            )
+        indicators = dict(payload.get("indicators") or {})
+        def pct(key: str) -> str:
+            value = indicators.get(key)
+            return f"{float(value):.2f}%" if isinstance(value, (int, float)) else "-"
+
+        def amount(key: str) -> str:
+            value = indicators.get(key)
+            return f"{float(value):,.0f} 亿元" if isinstance(value, (int, float)) else "-"
+
+        rows = [
+            ["7天期逆回购操作", amount("reverse_repo_7d_amount_100m_cny"), pct("reverse_repo_7d_rate_pct")],
+            ["隔夜逆回购操作", amount("reverse_repo_overnight_amount_100m_cny"), "-"],
+            ["中国国债 2年期收益率", "-", pct("government_bond_2y_yield_pct")],
+            ["中国国债 10年期收益率", "-", pct("government_bond_10y_yield_pct")],
+            [
+                f"中国CPI（{indicators.get('cpi_period_year') or '年度'}）",
+                "-",
+                pct("cpi_yoy_pct"),
+            ],
+        ]
+        status_labels = {
+            "ok": "成功",
+            "partial": "部分字段",
+            "stale_cache": "沿用上次成功数据",
+            "snapshot": "官方数据快照",
+            "error": "失败",
+        }
+        source_rows = [
+            [
+                str(source.get("name") or "-"),
+                str(source.get("published_at") or "-"),
+                status_labels.get(str(source.get("status")), str(source.get("status") or "-")),
+                str(source.get("title") or "-"),
+            ]
+            for source in payload.get("sources") or []
+        ]
+        freshness = payload.get("freshness") or {}
+        lines = [
+            "官方宏观数据（公开来源，非模拟）",
+            f"  数据状态：{payload.get('status', '-')}；"
+            f"数据时点：{payload.get('as_of') or '-'}；获取时间：{payload.get('fetched_at') or '-'}",
+            f"  时效说明：{freshness.get('label') or '-'}",
+            render_table(["指标", "操作量", "利率/同比"], rows),
+            "",
+            "来源核验：",
+            render_table(["机构", "发布日", "解析状态", "页面"], source_rows),
+        ]
+        warnings = list(payload.get("warnings") or [])
+        if payload.get("warning"):
+            warnings.insert(0, str(payload["warning"]))
+        warnings.extend([
+            "国债收益率是市场利率指标，不是理财产品预期收益率。",
+            "世界银行 CPI 为年度指标，不能当作当月实时通胀。",
+        ])
+        seen = set()
+        lines.append("")
+        lines.append("口径提示：")
+        for warning in warnings:
+            if warning and warning not in seen:
+                seen.add(warning)
+                lines.append(f"  · {warning}")
+        lines.append("")
+        lines.append("公开来源：")
+        for source in payload.get("sources") or []:
+            if source.get("url"):
+                lines.append(
+                    f"  · {source.get('name')}：{source.get('url')}"
+                )
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            data={"official": payload},
+            summary=(
+                f"官方宏观数据 {payload.get('as_of') or '时间未知'}，"
+                f"{status_labels.get(str(payload.get('status')), payload.get('status'))}"
+            ),
+        )
+
+
+class MarketOverviewTool(Tool):
+    """Explain the current A-share market using public index quotes."""
+
+    name = "market.overview"
+    category = "智能财务"
+    description = "读取上证、深证、沪深300、创业板、科创50和北证50的公开行情"
+    risk_level = "low"
+    params = []
+    examples = ["今天大盘怎么样", "A股市场行情", "上证指数和创业板现在多少"]
+
+    def run(self, ctx: ToolContext) -> ToolResult:  # type: ignore[override]
+        market = ctx.session.get("market")
+        if market is None:
+            return ToolResult(False, "行情提供器未初始化。")
+        overview = build_market_overview(market)
+        if not overview.get("available"):
+            return ToolResult(
+                False,
+                "公开指数行情暂不可用，系统没有用模拟指数替代。",
+                data={"market": overview},
+                summary="A股公开行情不可用",
+            )
+        rows = [
+            [
+                item["name"],
+                item["symbol"],
+                f"{float(item['price']):,.2f}",
+                f"{float(item['change_pct']):+.2f}%",
+                item.get("timestamp") or "-",
+            ]
+            for item in overview["indices"]
+            if item.get("available")
+        ]
+        changes = [float(item["change_pct"]) for item in overview["indices"] if item.get("available")]
+        average_change = sum(changes) / len(changes) if changes else 0.0
+        if average_change >= 1.0:
+            temperature = "风险偏好较强，主要指数普涨"
+        elif average_change <= -1.0:
+            temperature = "风险偏好偏弱，主要指数普跌"
+        else:
+            temperature = "指数分化或震荡，需看成交额与领涨方向"
+        turnover = overview.get("turnover_100m_cny")
+        turnover_text = (
+            f"{float(turnover):,.2f} 亿元"
+            if isinstance(turnover, (int, float)) else "暂未取到"
+        )
+        lines = [
+            f"A股市场行情（{overview.get('market_state')}，行情时点 {overview.get('observed_at') or '-'}）",
+            render_table(["指数", "代码", "最新点位", "涨跌幅", "行情时间"], rows),
+            f"  沪深两市成交额：{turnover_text}",
+            f"  盘面温度：{temperature}",
+        ]
+        leading = overview.get("leading_index")
+        lagging = overview.get("lagging_index")
+        if leading and lagging:
+            lines.append(
+                f"  相对强弱：{leading['name']} {float(leading['change_pct']):+.2f}% 领先；"
+                f"{lagging['name']} {float(lagging['change_pct']):+.2f}% 落后。"
+            )
+        lines.extend([
+            "",
+            "解读提示：",
+            "  · 上证和沪深300看权重与大盘方向，创业板和科创50看成长风格，北证50看小盘与专精特新风险偏好。",
+            "  · 两市成交额用于观察参与度；仅凭单日涨跌不能判断趋势，也不能替代个股基本面与估值分析。",
+            "  · 收盘后展示最近交易时点价格；数据来自公开行情，不构成投资建议。",
+        ])
+        return ToolResult(
+            True,
+            "\n".join(lines),
+            data={"market": overview},
+            summary=f"{overview.get('market_state')}，主要指数平均 {average_change:+.2f}%",
         )
 
 
@@ -206,6 +554,11 @@ class ProactiveBriefTool(Tool):
             f"未来30天预计最低余额 {forecast['min_balance']:,.2f} 元，"
             f"保留必要支出后可安排 {forecast['safe_to_spend']:,.2f} 元。"
         )
+        official_line = official_macro_answer_line(
+            forecast.get("official_macro") or {}
+        )
+        if official_line:
+            lines.append(official_line)
         return ToolResult(
             True,
             "\n".join(lines),
@@ -266,10 +619,22 @@ class FinancialHealthTool(Tool):
             "评分基于当前演示账户、近180天流水、近3个月现金流预测、持仓、订阅和目标，"
             "用于解释财务结构，不构成投资建议。"
         )
+        try:
+            official_macro = official_macro_context()
+        except (OfficialDataError, OSError, ValueError):
+            official_macro = {}
+        official_line = official_macro_answer_line(official_macro)
+        if official_line:
+            lines.append("")
+            lines.append(official_line)
+            lines.append(
+                "  物价与利率环境会影响现金缓冲的实际购买力和再投资回报，"
+                "但不会替代个人收支、负债和流动性数据。"
+            )
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"health": health},
+            data={"health": health, "official_macro": official_macro},
             summary=f"财务健康分 {health['score']:.1f}/100",
         )
 
@@ -865,6 +1230,14 @@ class WealthAnalyticsTool(Tool):
     examples = ["分析这些理财产品的风险", "最大回撤是多少", "帮我做组合风险分析"]
 
     def run(self, ctx: ToolContext, product: str = "") -> ToolResult:  # type: ignore[override]
+        try:
+            official_macro = official_macro_context()
+        except (OfficialDataError, OSError, ValueError):
+            official_macro = {
+                "status": "unavailable",
+                "delivery": "unavailable",
+                "warnings": ["官方宏观快照不可用，未用模拟宏观值替代。"],
+            }
         selected = []
         if product:
             item = ctx.providers.wealth.find(product)
@@ -900,8 +1273,9 @@ class WealthAnalyticsTool(Tool):
                 ["产品", "风险", "估算年化波动", "情景最大回撤", "年度费率拖累", "流动性"],
                 rows,
             ),
-            f"  组合平均估算波动：{summary['average_volatility_pct']:.2f}%",
-            f"  组合最坏情景回撤：{summary['worst_drawdown_pct']:.2f}%",
+            f"  等权组合估算波动：{summary['weighted_volatility_pct']:.2f}%",
+            f"  等权组合压力回撤：{summary['weighted_drawdown_pct']:.2f}%",
+            f"  单产品最高情景回撤：{summary['worst_drawdown_pct']:.2f}%",
             f"  分散程度：{summary['diversification']}",
         ]
         if len(summary["correlation_matrix"]) > 1:
@@ -915,6 +1289,10 @@ class WealthAnalyticsTool(Tool):
                 ],
             ))
         lines.append("")
+        official_line = official_macro_answer_line(official_macro)
+        if official_line:
+            lines.append(official_line)
+        lines.append("")
         lines.append(
             "波动、回撤与相关性为基于风险等级和资产类别的透明情景估计，"
             "不是历史业绩，也不代表未来收益。"
@@ -922,7 +1300,11 @@ class WealthAnalyticsTool(Tool):
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"analytics": summary, "products": [item.product_id for item in selected]},
+            data={
+                "analytics": summary,
+                "products": [item.product_id for item in selected],
+                "official_macro": official_macro,
+            },
             summary=f"已分析 {len(selected)} 只产品的风险与相关性",
         )
 

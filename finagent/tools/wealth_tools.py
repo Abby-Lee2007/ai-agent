@@ -8,16 +8,29 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 from finagent.analytics.product_risk import estimate_product_analytics
+from finagent.analytics.data_quality import build_data_quality
+from finagent.analytics.portfolio_optimizer import optimize_within_constraints
+from finagent.analytics.live_wealth import (
+    calculate_live_metrics,
+    diversified_selection,
+    score_live_product,
+)
 from finagent.data.card_ledger import (
     card_asset_total,
     sync_cards_for_account,
     update_card_balance,
     verify_card_password,
 )
-from finagent.data.models import Holding
+from finagent.data.models import Holding, WealthProduct
+from finagent.data.market import build_market_overview
+from finagent.data.official_sources import (
+    OfficialDataError,
+    official_macro_answer_line,
+    official_macro_context,
+)
 from finagent.data.provenance import source_badge
 from finagent.data.transaction_lifecycle import enrich_transaction
 from finagent.risk.scorecard import assess_risk_profile
@@ -181,6 +194,39 @@ def _is_bond_fund(product: Any) -> bool:
     return "债券" in category or "纯债" in tags or "固收" in tags
 
 
+def _market_context_for_answer(ctx: ToolContext) -> Dict[str, Any]:
+    market = ctx.session.get("market")
+    if market is None:
+        return {}
+    return build_market_overview(market)
+
+
+def _market_context_line(overview: Dict[str, Any]) -> str:
+    if not overview.get("available"):
+        return ""
+    indices = {
+        str(item.get("name")): item
+        for item in overview.get("indices") or []
+        if item.get("available")
+    }
+    wanted = ["上证指数", "深证成指", "创业板指", "科创50"]
+    bits = [
+        f"{name} {float(indices[name]['change_pct']):+.2f}%"
+        for name in wanted
+        if name in indices
+    ]
+    turnover = overview.get("turnover_100m_cny")
+    turnover_text = (
+        f"；两市成交额约 {float(turnover):,.2f} 亿元"
+        if isinstance(turnover, (int, float)) and turnover > 0 else ""
+    )
+    return (
+        f"市场环境（{overview.get('market_state') or '状态未知'}，"
+        f"{overview.get('observed_at') or '行情时点未知'}）："
+        f"{'、'.join(bits)}{turnover_text}。"
+    )
+
+
 class ProductRecommendTool(Tool):
     """产品推荐与对比。
 
@@ -219,6 +265,15 @@ class ProductRecommendTool(Tool):
         assessment = assess_user_risk(ctx)
         profile = assessment["profile"]
         user_level = assessment["score"]
+        try:
+            official_macro = official_macro_context()
+        except (OfficialDataError, OSError, ValueError):
+            official_macro = {
+                "status": "unavailable",
+                "delivery": "unavailable",
+                "warnings": ["官方宏观快照不可用，未用模拟宏观值替代。"],
+            }
+        market_context = _market_context_for_answer(ctx)
         requested = str(asset_class).lower().strip()
         wants_stock = requested in {"stock", "equity"}
         wants_bond = requested == "bond"
@@ -258,6 +313,39 @@ class ProductRecommendTool(Tool):
             invest if invest > 0 else liquid,
             liquid,
         )
+        data_quality = build_data_quality(
+            ctx.store,
+            ctx.providers,
+            ctx.clock,
+            ctx.user_id,
+        )
+        quality_overall = data_quality["overall"]
+        if not quality_overall["personalization_allowed"]:
+            cash_amount = max(
+                min(liquid, emergency_need if emergency_need > 0 else liquid),
+                0.0,
+            )
+            return ToolResult(
+                False,
+                "数据质量不足，未生成个性化理财配置。\n"
+                f"  综合数据质量：{quality_overall['score']:.2f}/100；"
+                "执行层已阻断个性化推荐。\n"
+                f"  原因：{'；'.join(data_quality['block_reasons']) or '质量分低于门槛'}\n"
+                f"  现金安全方案：保留约 {cash_amount:,.2f} 元活期现金，不自动买入任何产品。\n"
+                "  请先补齐交易、卡片或产品数据后再试；系统不会放宽硬约束。",
+                data={
+                    "blocked_by_data_quality": True,
+                    "data_quality": data_quality,
+                    "cash_safe_plan": {
+                        "product_id": "CASH",
+                        "amount": round(cash_amount, 2),
+                        "weight": 1.0,
+                    },
+                    "products": [],
+                    "display_count": 0,
+                },
+                summary="数据质量不足，个性化配置已阻断并返回现金安全方案",
+            )
 
         market = ctx.session.get("market")
         if market is None:
@@ -366,6 +454,13 @@ class ProductRecommendTool(Tool):
                 },
                 summary="当前资金不足，未展示买不起的产品",
             )
+        if market.enabled:
+            live_affordable = [
+                product for product in affordable
+                if product.has_live_data
+            ]
+            if live_affordable:
+                affordable = live_affordable
         pool = affordable
         filter_key = requested or "mixed"
         previous_filter = str(ctx.session.get("wealth_recommend_filter") or "")
@@ -384,9 +479,93 @@ class ProductRecommendTool(Tool):
             seen_set = set()
             unseen = list(pool)
             cycle_reset = True
-        pool = unseen[:5]
-        if not pool:
+        analysis_pool = unseen[:10]
+        if not analysis_pool:
             return ToolResult(False, "当前没有匹配您风险等级的产品。")
+
+        # ---------------- 取真实行情 / 历史序列 / 净值 ----------------
+        stock_symbols = [p.symbol for p in analysis_pool if p.symbol_type == "stock"]
+        fund_codes = [p.symbol for p in analysis_pool if p.symbol_type == "fund"]
+        quotes = market.quotes(stock_symbols) if stock_symbols else {}
+        navs = {}
+        for code in fund_codes:
+            nav = market.fund_nav(code)
+            if nav is not None:
+                navs[code] = nav
+
+        risk_free = official_macro.get("reverse_repo_7d_rate_pct") or 0.0
+        held_ids = {
+            holding.product_id for holding in _holdings(ctx, status="holding")
+        }
+        ranked_candidates: List[Dict[str, Any]] = []
+        quant_by_product: Dict[str, Dict[str, Any]] = {}
+        if market.enabled:
+            for product in analysis_pool:
+                history_fetcher = getattr(
+                    market,
+                    "fund_nav_history" if product.symbol_type == "fund" else "history",
+                    None,
+                )
+                history = (
+                    history_fetcher(product.symbol, 250)
+                    if callable(history_fetcher) else None
+                )
+                metrics = (
+                    calculate_live_metrics(
+                        history,
+                        risk_free_rate_pct=float(risk_free or 0.0),
+                    )
+                    if history is not None
+                    else {
+                        "available": False,
+                        "reason": "公开历史行情暂不可用",
+                        "observations": 0,
+                    }
+                )
+                score = score_live_product(
+                    product,
+                    metrics,
+                    user_risk_level=user_level,
+                    drawdown_tolerance_pct=profile.drawdown_tolerance * 100,
+                    horizon=horizon,
+                    quote=quotes.get(product.symbol),
+                    already_held=product.product_id in held_ids,
+                )
+                quant_by_product[product.product_id] = {
+                    "metrics": metrics,
+                    "score": score,
+                }
+                ranked_candidates.append({
+                    "product": product,
+                    "product_id": product.product_id,
+                    "category": product.category,
+                    "score": score["score"],
+                })
+            ranked_candidates.sort(
+                key=lambda item: (
+                    item["score"],
+                    quant_by_product[item["product_id"]]["metrics"].get(
+                        "sharpe_ratio", -999,
+                    ),
+                ),
+                reverse=True,
+            )
+            ranked_with_history = [
+                item for item in ranked_candidates
+                if quant_by_product[item["product_id"]]["metrics"].get("available")
+            ]
+            if ranked_with_history:
+                chosen_rows = diversified_selection(ranked_with_history, limit=5)
+                pool = [item["product"] for item in chosen_rows]
+            else:
+                # Keep live current-price products visible, but do not invent
+                # historical metrics when the public history source is down.
+                pool = analysis_pool[:5]
+        else:
+            pool = analysis_pool[:5]
+
+        if not pool:
+            return ToolResult(False, "当前没有可形成有效推荐的公开行情标的。")
         ctx.session["wealth_recommend_filter"] = filter_key
         ctx.session["wealth_recommend_seen"] = list(
             seen_set | {product.product_id for product in pool}
@@ -404,16 +583,16 @@ class ProductRecommendTool(Tool):
                 "  当前筛选条件下没有更多未展示过的新产品，"
                 "因此重新从完整候选集开始，不冒充新品。"
             )
-
-        # ---------------- 取真实行情 / 净值 ----------------
-        stock_symbols = [p.symbol for p in pool if p.symbol_type == "stock"]
-        fund_codes = [p.symbol for p in pool if p.symbol_type == "fund"]
-        quotes = market.quotes(stock_symbols) if stock_symbols else {}
-        navs = {}
-        for code in fund_codes:
-            nav = market.fund_nav(code)
-            if nav is not None:
-                navs[code] = nav
+        if market.enabled:
+            lines.append(
+                "  量化筛选：适当性25 + 历史回撤20 + Sharpe20 + 趋势/估值20"
+                " + 流动性10 + 数据质量5；按用户风险画像、投资期限和已持仓综合排序。"
+            )
+            lines.append(
+                "  股票/ETF/债券历史来自腾讯财经公开日线，场外基金来自东方财富净值序列；"
+                "只用于风险收益特征，不保证未来收益。"
+            )
+            lines.append("")
 
         combined_rows: List[List[str]] = []
         product_details: List[Dict[str, Any]] = []
@@ -454,10 +633,41 @@ class ProductRecommendTool(Tool):
             risk_text = f"R{product.risk_level}"
             if product.risk_level > user_level:
                 risk_text += " 需确认"
+            quant = quant_by_product.get(product.product_id) or {}
+            quant_metrics = dict(quant.get("metrics") or {})
+            quant_score = dict(quant.get("score") or {})
+            score_text = (
+                f"{float(quant_score['score']):.1f} · {quant_score['label']}"
+                if quant_score.get("score") is not None else "-"
+            )
+            analytics = estimate_product_analytics(product)
+            if quant_metrics.get("available"):
+                analytics.update({
+                    "estimated_annual_volatility_pct": quant_metrics[
+                        "annualized_volatility_pct"
+                    ],
+                    "estimated_max_drawdown_pct": quant_metrics["max_drawdown_pct"],
+                    "annualized_return_pct": quant_metrics["annualized_return_pct"],
+                    "return_1m_pct": quant_metrics["return_1m_pct"],
+                    "return_3m_pct": quant_metrics["return_3m_pct"],
+                    "return_6m_pct": quant_metrics["return_6m_pct"],
+                    "sharpe_ratio": quant_metrics["sharpe_ratio"],
+                    "observations": quant_metrics["observations"],
+                    "history_start": quant_metrics["start_date"],
+                    "history_end": quant_metrics["end_date"],
+                    "trend": (
+                        "价格在20日均线上方"
+                        if quant_metrics.get("above_ma20")
+                        else "价格低于20日均线"
+                    ),
+                    "risk_method": quant_metrics["method"],
+                    "is_estimate": False,
+                })
             combined_rows.append([
                 str(index),
                 f"{product.name} {product.symbol.upper() if product.symbol else product.product_id}",
                 f"{product.category} / {risk_text}",
+                score_text,
                 f"{metric} {movement}".strip(),
                 flow_text,
                 data_label,
@@ -470,6 +680,10 @@ class ProductRecommendTool(Tool):
                 "category": product.category,
                 "risk_level": product.risk_level,
                 "risk_label": risk_text,
+                "advice_score": quant_score.get("score"),
+                "advice_label": quant_score.get("label"),
+                "score_components": quant_score.get("components") or {},
+                "score_reasons": quant_score.get("reasons") or [],
                 "requires_risk_confirmation": product.risk_level > user_level,
                 "metric": metric,
                 "change": movement,
@@ -477,14 +691,30 @@ class ProductRecommendTool(Tool):
                 "min_amount": product.min_amount,
                 "fee_rate": product.fee_rate,
                 "data_source": data_label,
+                "history_source": quant_metrics.get("source", ""),
+                "history_observations": quant_metrics.get("observations", 0),
                 "description": self._plain_product_description(product),
-                "analytics": estimate_product_analytics(product),
+                "analytics": analytics,
+                "expected_return_pct": (
+                    float(analytics["annualized_return_pct"])
+                    if analytics.get("annualized_return_pct") is not None
+                    else float(product.expected_return or 0.0) * 100
+                ),
+                "volatility_pct": float(
+                    analytics.get("estimated_annual_volatility_pct") or 0.0
+                ),
+                "max_drawdown_pct": float(
+                    analytics.get("estimated_max_drawdown_pct") or 0.0
+                ),
+                "fee_rate_pct": float(analytics.get("fee_drag_1y_pct") or 0.0),
+                "term_days": int(product.term_days or 0),
+                "asset_class": product.asset_class,
             })
 
         lines.append("")
         lines.append("统一产品清单：")
         lines.append(render_table(
-            ["#", "产品/代码", "类型/风险", "价格或收益参考", "起投与流动性", "数据"],
+            ["#", "产品/代码", "类型/风险", "适合度", "价格或收益参考", "起投与流动性", "数据"],
             combined_rows,
         ))
         if live_count:
@@ -519,6 +749,37 @@ class ProductRecommendTool(Tool):
         lines.append("产品说明（用大白话解释）：")
         for item in product_details:
             lines.append(f"  {item['index']}. {item['name']}：{item['description']}")
+        if market.enabled:
+            lines.append("")
+            lines.append("量化依据与风险画像匹配：")
+            for item in product_details:
+                analytics = item.get("analytics") or {}
+                if (
+                    analytics.get("return_3m_pct") is None
+                    and analytics.get("is_estimate", True)
+                ):
+                    continue
+                return_3m = analytics.get("return_3m_pct")
+                return_3m_text = (
+                    f"{float(return_3m):+.2f}%"
+                    if isinstance(return_3m, (int, float)) else "样本不足"
+                )
+                lines.append(
+                    f"  · {item['name']}：适合度 {item.get('advice_score') or 0:.1f}/100"
+                    f"（{item.get('advice_label') or '数据不足'}）；"
+                    f"近3月 {return_3m_text} · "
+                    f"年化波动 {float(analytics.get('estimated_annual_volatility_pct') or 0):.2f}% · "
+                    f"最大回撤 {float(analytics.get('estimated_max_drawdown_pct') or 0):.2f}% · "
+                    f"Sharpe {float(analytics.get('sharpe_ratio') or 0):.2f}。"
+                )
+                if item.get("score_reasons"):
+                    lines.append("    理由：" + "；".join(item["score_reasons"]))
+                if item.get("history_observations"):
+                    lines.append(
+                        f"    样本：{item['history_observations']} 个公开交易日"
+                        f"（{analytics.get('history_start') or '-'} 至 "
+                        f"{analytics.get('history_end') or '-'}）。"
+                    )
 
         # ---------------- 生活费检查 ----------------
         if is_living:
@@ -540,9 +801,100 @@ class ProductRecommendTool(Tool):
 
         # ---------------- 组合建议 ----------------
         allow_allocation = not (is_living and investable <= 0)
+        quant_plan: List[Dict[str, Any]] = []
+        portfolio_optimization: Optional[Dict[str, Any]] = None
+        horizon_days = {"short": 90, "mid": 365, "long": 1095}.get(
+            horizon,
+            365,
+        )
+        cash_buffer_weight = {
+            "short": 0.20,
+            "mid": 0.10,
+            "long": 0.05,
+        }.get(horizon, 0.10)
+        if invest > 0:
+            portfolio_optimization = optimize_within_constraints(
+                product_details,
+                invest,
+                max_risk_level=user_level,
+                horizon_days=horizon_days,
+                drawdown_tolerance_pct=profile.drawdown_tolerance * 100,
+                cash_buffer_weight=cash_buffer_weight,
+                risk_aversion=0.6,
+                max_single_weight=0.35,
+                max_portfolio_cvar_5_pct=max(
+                    1.0,
+                    profile.drawdown_tolerance * 100 * 0.25,
+                ),
+                simulations=0,
+                seed=20261029,
+            )
+            if portfolio_optimization["status"] == "optimized":
+                allocation_rows = [
+                    [
+                        allocation["name"],
+                        f"R{allocation['risk_level']}",
+                        f"{allocation['weight'] * 100:.1f}%",
+                        f"{allocation['amount']:,.2f}",
+                    ]
+                    for allocation in portfolio_optimization["allocations"]
+                ]
+                optimizer_metrics = portfolio_optimization["metrics"]
+                lines.append("")
+                lines.append(
+                    f"约束优化组合（投入 {invest:,.2f} 元，"
+                    f"风险厌恶系数 0.6，期限 {horizon_days} 天）："
+                )
+                lines.append(render_table(
+                    ["资产", "风险", "权重", "金额"],
+                    allocation_rows,
+                ))
+                lines.append(
+                    f"  预期持有期收益 {optimizer_metrics['expected_horizon_return_pct']:.2f}%，"
+                    f"年化波动 {optimizer_metrics['annual_volatility_pct']:.2f}%，"
+                    f"CVaR5 损失 {optimizer_metrics['cvar_5_loss_pct']:.2f}%，"
+                    f"压力回撤 {optimizer_metrics['estimated_max_drawdown_pct']:.2f}%"
+                )
+                lines.append(
+                    "  0.6 是无量纲风险厌恶系数：每 1 个百分点 CVaR 损失"
+                    "扣 0.6 个百分点目标值，不是 60% 仓位或 0.6 个百分点。"
+                )
+                lines.append(
+                    "  独立约束复核："
+                    f"{'通过' if portfolio_optimization['independent_verification']['passed'] else '未通过'}；"
+                    "硬约束未被自动放宽。"
+                )
+            elif allow_allocation:
+                lines.append("")
+                lines.append(
+                    f"约束优化结果：{portfolio_optimization['reason']}。"
+                    "安全方案为 100% 现金/活期缓冲，不自动买入任何产品。"
+                )
         if invest > 0 and allow_allocation:
             if wants_stock and quotes:
                 lines.extend(self._live_plan(pool, quotes, invest))
+            elif market.enabled and any(
+                item.get("advice_score") for item in product_details
+            ):
+                plan_rows, plan_items = self._quantitative_plan(
+                    product_details,
+                    invest,
+                    user_level,
+                )
+                if plan_rows:
+                    quant_plan = plan_items
+                    lines.append("")
+                    lines.append(
+                        f"基于适合度的风险预算参考（投入上限 {invest:,.2f} 元）："
+                    )
+                    lines.append(render_table(
+                        ["产品", "适合度", "风险预算", "参考金额"],
+                        plan_rows,
+                    ))
+                    lines.append(
+                        "  这不是收益预测或自动下单指令；执行时仍需选择具体产品、"
+                        "确认实时价格并完成身份验证。"
+                    )
             elif any(p.expected_return > 0 for p in pool):
                 plan_pool = [p for p in pool if p.risk_level <= user_level] or pool
                 plan_rows, expected_return = self._build_plan(
@@ -570,6 +922,18 @@ class ProductRecommendTool(Tool):
                          f"R{best.risk_level}）；最稳的是「{lowest.name}」（R{lowest.risk_level}）。")
 
         lines.append("")
+        official_line = official_macro_answer_line(official_macro)
+        if official_line:
+            lines.append(official_line)
+            lines.append(
+                "  这些是利率和物价环境指标，不是基金、债券或存款的预期收益。"
+            )
+            lines.append("")
+        market_line = _market_context_line(market_context)
+        if market_line:
+            lines.append(market_line)
+            lines.append("  指数涨跌只描述本次行情时点，不是买入建议，也不保证后续走势。")
+            lines.append("")
         if live_count:
             lines.append("（真实行情来自公开接口，仅供演示；不构成投资建议，投资有风险）")
         if demo_count:
@@ -613,6 +977,20 @@ class ProductRecommendTool(Tool):
                 "batch_reset": cycle_reset,
                 "seen_count": len(ctx.session["wealth_recommend_seen"]),
                 "filter_options": ["存款", "债券", "基金", "换一批"],
+                "official_macro": official_macro,
+                "market_overview": market_context,
+                "recommendation_method": (
+                    "数据质量闸门 + 公开行情量化排序 + 约束优化 + "
+                    "投资者适当性 + CVaR/回撤/期限/现金缓冲/集中度硬约束"
+                    if market.enabled else "离线演示参数匹配"
+                ),
+                "live_quant_count": sum(
+                    1 for item in product_details
+                    if not (item.get("analytics") or {}).get("is_estimate", True)
+                ),
+                "risk_budget_plan": quant_plan,
+                "portfolio_optimization": portfolio_optimization,
+                "data_quality": data_quality,
             },
             summary=(f"已按{class_label}推荐 {len(pool)} 只产品"
                      + ("；生活费不足应急金，不建议买入" if is_living and investable <= 0 else "")),
@@ -772,6 +1150,36 @@ class ProductRecommendTool(Tool):
             expected_return += chosen.expected_return * normalized
         return plan_rows, expected_return
 
+    @staticmethod
+    def _quantitative_plan(
+        details: List[Dict[str, Any]],
+        invest: float,
+        user_level: int,
+    ) -> tuple[List[List[str]], List[Dict[str, Any]]]:
+        eligible = [
+            item for item in details
+            if item.get("advice_score") is not None
+            and float(item["advice_score"]) >= 45
+            and int(item["risk_level"]) <= user_level + 1
+            and float(item["min_amount"]) <= invest
+        ][:3]
+        if not eligible:
+            return [], []
+        score_sum = sum(max(float(item["advice_score"]), 0.1) for item in eligible)
+        rows = []
+        for item in eligible:
+            weight = max(float(item["advice_score"]), 0.1) / score_sum
+            amount = round(invest * weight, 2)
+            if amount < float(item["min_amount"]):
+                continue
+            rows.append([
+                item["name"],
+                f"{float(item['advice_score']):.1f}",
+                f"{weight * 100:.1f}%",
+                f"{amount:,.2f} 元",
+            ])
+        return rows, eligible
+
 
 class ProductCompareTool(Tool):
     """Compare 2-3 products without issuing a purchase recommendation."""
@@ -800,6 +1208,14 @@ class ProductCompareTool(Tool):
     ) -> ToolResult:
         assessment = assess_user_risk(ctx)
         user_level = int(assessment["score"])
+        try:
+            official_macro = official_macro_context()
+        except (OfficialDataError, OSError, ValueError):
+            official_macro = {
+                "status": "unavailable",
+                "delivery": "unavailable",
+            }
+        market_context = _market_context_for_answer(ctx)
         requested = str(asset_class or "").lower().strip()
         names = [
             item.strip()
@@ -964,6 +1380,19 @@ class ProductCompareTool(Tool):
         ]
         lines.extend(f"  · {item['name']}：{item['description']}" for item in compared)
         lines.append("")
+        official_line = official_macro_answer_line(official_macro)
+        if official_line:
+            lines.append(official_line)
+            lines.append(
+                "  宏观利率只用于理解当前利率环境，不能替代产品净值、"
+                "信用风险和流动性分析。"
+            )
+            lines.append("")
+        market_line = _market_context_line(market_context)
+        if market_line:
+            lines.append(market_line)
+            lines.append("  市场指数用于解释当时的风险偏好，不改变产品条款。")
+            lines.append("")
         if any(item["is_live"] for item in compared):
             lines.append(
                 "真实价格或净值只代表当前公开数据，不代表未来收益；"
@@ -984,9 +1413,177 @@ class ProductCompareTool(Tool):
                     "purchase_prompt": False,
                 },
                 "user_level": user_level,
+                "official_macro": official_macro,
+                "market_overview": market_context,
             },
             summary=f"已横向对比 {len(compared)} 个产品",
         )
+
+
+def _market_symbol_from_query(query: str) -> str:
+    text = re.sub(r"\s+", "", str(query or "")).lower()
+    match = re.fullmatch(r"(?:(sh|sz|bj))?(\d{6})", text)
+    if not match:
+        return ""
+    prefix, code = match.groups()
+    if prefix:
+        return prefix + code
+    if code.startswith(("5", "6", "9")):
+        return "sh" + code
+    if code.startswith(("0", "1", "2", "3")):
+        return "sz" + code
+    if code.startswith(("4", "8")):
+        return "bj" + code
+    return ""
+
+
+def resolve_live_product(
+    ctx: ToolContext,
+    query: str,
+) -> Optional[WealthProduct]:
+    """Resolve a real listed instrument by six-digit code through live quotes."""
+    symbol = _market_symbol_from_query(query)
+    if not symbol:
+        return None
+    market = ctx.session.get("market")
+    if market is None or not market.enabled:
+        return None
+    quote = market.quote(symbol)
+    if quote is None or quote.price <= 0:
+        return None
+    code = symbol[-6:]
+    if code.startswith("11") or code.startswith("12"):
+        category, asset_class, risk_level = "可转债", "bond", 4
+    elif code.startswith("01"):
+        category, asset_class, risk_level = "国债", "bond", 2
+    elif code.startswith("511"):
+        category, asset_class, risk_level = "货币基金", "fund", 1
+    elif code.startswith(("5", "15", "16", "18")):
+        category, asset_class, risk_level = "场内ETF", "fund", 4
+    else:
+        category, asset_class, risk_level = "股票", "stock", 4
+    product_id = f"LIVE-{symbol.upper()}"
+    existing = ctx.store.products.get(product_id)
+    if existing is not None:
+        return existing
+    product = WealthProduct(
+        product_id=product_id,
+        name=quote.name or symbol.upper(),
+        category=category,
+        risk_level=risk_level,
+        expected_return=0.0,
+        min_amount=100.0,
+        term_days=0,
+        liquidity="T+1",
+        issuer="证券交易所",
+        tags=["公开行情", "真实标的", "模拟交易"],
+        description=(
+            f"{quote.name or symbol.upper()}为公开市场真实上市标的。"
+            "本项目只模拟下单和持仓，不接入真实证券账户。"
+        ),
+        symbol=symbol,
+        symbol_type="stock",
+        asset_class=asset_class,
+        fee_rate=0.00025,
+        redemption_rule="T+1 可用；实际以上市规则与券商为准",
+        risk_disclosure="证券价格会波动，模拟成交不代表真实成交。",
+        source=f"public-market:{quote.source}",
+        is_live=True,
+        is_demo=False,
+    )
+    ctx.store.products[product_id] = product
+    ctx.store.touch(product)
+    return product
+
+
+def _live_price_snapshot(
+    ctx: ToolContext,
+    product: WealthProduct,
+) -> Optional[Dict[str, Any]]:
+    market = ctx.session.get("market")
+    if market is None or not market.enabled or not product.has_live_data:
+        return None
+    if product.symbol_type == "fund":
+        nav = market.fund_nav(product.symbol)
+        if nav is None:
+            return None
+        return {
+            "kind": "fund_nav",
+            "price": float(nav.nav),
+            "source": nav.source,
+            "as_of": nav.date,
+            "symbol": product.symbol.upper(),
+            "change_pct": nav.change_pct,
+        }
+    quote = market.quote(product.symbol)
+    if quote is None or quote.price <= 0:
+        return None
+    return {
+        "kind": "quote",
+        "price": float(quote.price),
+        "source": quote.source,
+        "as_of": quote.timestamp,
+        "symbol": quote.symbol.upper(),
+        "change_pct": quote.change_pct,
+    }
+
+
+def build_subscription_order(
+    ctx: ToolContext,
+    product: WealthProduct,
+    requested_amount: float,
+) -> Tuple[Optional[Dict[str, Any]], str]:
+    """Price a simulated order from a fresh public quote or latest fund NAV."""
+    snapshot = _live_price_snapshot(ctx, product)
+    if snapshot is None:
+        return None, "公开行情当前不可用，模拟申购未执行，未用演示价格替代。"
+    price = float(snapshot["price"])
+    if price <= 0:
+        return None, "公开行情价格无效，模拟申购未执行。"
+    if snapshot["kind"] == "fund_nav":
+        fee = round(requested_amount * max(product.fee_rate, 0.0), 2)
+        net = round(requested_amount - fee, 2)
+        quantity = round(net / price, 4)
+        return {
+            **snapshot,
+            "quantity": quantity,
+            "unit": "份",
+            "gross_amount": round(requested_amount, 2),
+            "fee": fee,
+            "total_debit": round(requested_amount, 2),
+            "market_value": net,
+            "lot_size": 0,
+        }, ""
+
+    is_bond = product.asset_class == "bond" or "债" in product.category
+    lot_size = 10 if is_bond else 100
+    unit = "张" if is_bond else "股"
+    lot_cost = price * lot_size
+    if requested_amount < lot_cost:
+        return None, (
+            f"按最新价 {price:,.3f} 元和最小交易单位 {lot_size}{unit} 计算，"
+            f"至少需要约 {lot_cost:,.2f} 元。"
+        )
+    lots = int(requested_amount // lot_cost)
+    quantity = lots * lot_size
+    while quantity > 0:
+        gross = round(price * quantity, 2)
+        # A-share/ETF/交易所债券买方的模拟佣金；卖出印花税不在本函数中估算。
+        fee = round(max(5.0, gross * 0.00025), 2)
+        total = round(gross + fee, 2)
+        if total <= requested_amount:
+            return {
+                **snapshot,
+                "quantity": quantity,
+                "unit": unit,
+                "gross_amount": gross,
+                "fee": fee,
+                "total_debit": total,
+                "market_value": gross,
+                "lot_size": lot_size,
+            }, ""
+        quantity -= lot_size
+    return None, "申购金额不足以覆盖一手证券及模拟佣金。"
 
 
 class SubscribeTool(Tool):
@@ -1019,12 +1616,30 @@ class SubscribeTool(Tool):
             value = round(float(amount), 2)
         except (TypeError, ValueError):
             return ToolResult(False, f"金额「{amount}」无法识别。")
+        requested_value = value
 
         target = _find_product(ctx, product)
         if target is None:
-            return ToolResult(False, f"没有找到产品「{product}」，可以说「推荐理财产品」看看可选清单。")
+            target = resolve_live_product(ctx, str(product))
+        if target is None:
+            return ToolResult(
+                False,
+                f"没有找到产品「{product}」。如果申购真实上市标的，"
+                "请输入 6 位证券代码，例如「600519」「510300」或以 sh/sz/bj 开头；"
+                "也可以说「推荐理财产品」查看已接入的公开行情标的。",
+            )
         if value < target.min_amount:
             return ToolResult(False, f"「{target.name}」起投金额为 {target.min_amount:,.2f} 元。")
+        live_order: Optional[Dict[str, Any]] = None
+        if target.has_live_data:
+            live_order, order_error = build_subscription_order(ctx, target, value)
+            if live_order is None:
+                return ToolResult(
+                    False,
+                    order_error,
+                    data={"blocked": True, "reason": "live_quote_unavailable"},
+                )
+            value = float(live_order["total_debit"])
 
         # 投资者适当性管理：产品风险高于客户承受能力时给出明确提示
         assessment = assess_user_risk(ctx)
@@ -1072,6 +1687,18 @@ class SubscribeTool(Tool):
                 "product_id": target.product_id,
                 "product_name": target.name,
                 "amount": value,
+                **(
+                    {
+                        "execution_price": live_order["price"],
+                        "price_source": live_order["source"],
+                        "price_as_of": live_order["as_of"],
+                        "quantity": live_order["quantity"],
+                        "unit": live_order["unit"],
+                        "estimated_fee": live_order["fee"],
+                        "gross_amount": live_order["gross_amount"],
+                    }
+                    if live_order is not None else {}
+                ),
             },
         )
         asset_total_after = card_asset_total(ctx.store, user.user_id)
@@ -1082,19 +1709,63 @@ class SubscribeTool(Tool):
             None,
         )
         if holding is None:
+            price = float(live_order["price"]) if live_order is not None else 0.0
+            quantity = float(live_order["quantity"]) if live_order is not None else 0.0
             holding = Holding(
                 holding_id=store.next_id("holdings"),
                 user_id=user.user_id,
                 product_id=target.product_id,
                 principal=value,
-                market_value=value,
+                market_value=(
+                    float(live_order["market_value"])
+                    if live_order is not None else value
+                ),
                 purchase_date=ctx.clock.iso(),
+                source=(
+                    f"public-market:{live_order['source']}"
+                    if live_order is not None
+                    else "agent:simulation"
+                ),
+                is_live=live_order is not None,
+                is_demo=live_order is None,
+                quantity=quantity,
+                average_cost=(
+                    round(value / quantity, 6)
+                    if quantity > 0 else 0.0
+                ),
+                last_price=price,
+                price_source=(
+                    str(live_order["source"]) if live_order is not None else ""
+                ),
+                price_as_of=(
+                    str(live_order["as_of"]) if live_order is not None else ""
+                ),
             )
             ctx.store.touch(holding)
             store.holdings[holding.holding_id] = holding
         else:
             holding.principal = round(holding.principal + value, 2)
-            holding.market_value = round(holding.market_value + value, 2)
+            holding.market_value = round(
+                holding.market_value
+                + (
+                    float(live_order["market_value"])
+                    if live_order is not None else value
+                ),
+                2,
+            )
+            if live_order is not None:
+                added_quantity = float(live_order["quantity"])
+                holding.quantity = round(holding.quantity + added_quantity, 4)
+                holding.average_cost = (
+                    round(holding.principal / holding.quantity, 6)
+                    if holding.quantity > 0 else 0.0
+                )
+                holding.last_price = float(live_order["price"])
+                holding.price_source = str(live_order["source"])
+                holding.price_as_of = str(live_order["as_of"])
+                holding.source = f"public-market:{live_order['source']}"
+                holding.is_live = True
+                holding.is_demo = False
             ctx.store.touch(holding)
 
         sandbox = ctx.session.get("sandbox")
@@ -1106,6 +1777,18 @@ class SubscribeTool(Tool):
                 product_id=target.product_id,
                 amount=value,
                 symbol=target.symbol,
+                limit_price=(
+                    float(live_order["price"])
+                    if live_order is not None else None
+                ),
+                quantity=(
+                    float(live_order["quantity"])
+                    if live_order is not None else 0.0
+                ),
+                fees=(
+                    float(live_order["fee"])
+                    if live_order is not None else 0.0
+                ),
             )
             sandbox.gateway.complete_immediately(
                 execution,
@@ -1113,10 +1796,6 @@ class SubscribeTool(Tool):
             )
             sandbox_execution_id = execution.execution_id
 
-        market = ctx.session.get("market")
-        quote = None
-        if target.has_live_data and market is not None:
-            quote = market.quote(target.symbol)
         annual = value * target.expected_return
         annual_label = "演示年化" if target.is_demo else "参数年化(非实时)"
         lines = [
@@ -1129,16 +1808,36 @@ class SubscribeTool(Tool):
             f"  持仓编号：{holding.holding_id}   流水号：{txn.txn_id}",
             f"  风险揭示：{target.risk_disclosure}",
         ]
-        if quote is not None:
-            shares = int(value // (quote.price * 100)) * 100 if quote.price > 0 else 0
+        if live_order is not None and live_order["kind"] == "quote":
             lines = [
-                f"申购成功：「{target.name}」（{quote.symbol.upper()}）{value:,.2f} 元",
-                f"  成交价参考：{quote.price:,.3f} 元（腾讯财经实时行情，{quote.timestamp}）",
-                f"  约可买 {shares:,} 股（按 100 股整数倍估算，实际以券商成交为准）",
-                f"  产品风险等级：R{target.risk_level}",
+                f"模拟申购成交：「{target.name}」（{live_order['symbol']}）",
+                f"  行情价格：{float(live_order['price']):,.3f} 元"
+                f"（{live_order['source']}，{live_order['as_of']}）",
+                f"  模拟买入数量：{float(live_order['quantity']):,.0f} {live_order['unit']}"
+                f"（按最小交易单位 {live_order['lot_size']}{live_order['unit']} 取整）",
+                f"  证券成交额：{float(live_order['gross_amount']):,.2f} 元；"
+                f"模拟佣金：{float(live_order['fee']):,.2f} 元",
+                f"  本次实际扣款：{value:,.2f} 元；"
+                f"申请预算 {requested_value:,.2f} 元，余款未扣。",
+                f"  产品风险等级：R{target.risk_level} | 持仓成本已按模拟佣金调整",
                 f"  付款银行卡：{payer.brand}（尾号 {payer.tail}）  剩余可用 {payer.available:,.2f} 元",
                 f"  银行卡资产总额：{asset_total_after:,.2f} 元",
                 f"  持仓编号：{holding.holding_id}   流水号：{txn.txn_id}",
+                "  本系统未连接券商，不会向真实交易所提交委托；价格来自公开行情，成交为沙箱模拟。",
+            ]
+        elif live_order is not None and live_order["kind"] == "fund_nav":
+            lines = [
+                f"模拟基金申购成交：「{target.name}」（{live_order['symbol']}）",
+                f"  最新公开净值：{float(live_order['price']):,.4f} 元"
+                f"（{live_order['source']}，净值日期 {live_order['as_of']}）",
+                f"  申购金额：{float(live_order['gross_amount']):,.2f} 元；"
+                f"模拟申购费：{float(live_order['fee']):,.2f} 元",
+                f"  估算确认份额：{float(live_order['quantity']):,.4f} 份",
+                f"  产品风险等级：R{target.risk_level} | 场外基金净值通常为 T-1 披露",
+                f"  付款银行卡：{payer.brand}（尾号 {payer.tail}）  剩余可用 {payer.available:,.2f} 元",
+                f"  银行卡资产总额：{asset_total_after:,.2f} 元",
+                f"  持仓编号：{holding.holding_id}   流水号：{txn.txn_id}",
+                "  本系统未连接基金销售机构，份额和费用为沙箱模拟。",
             ]
         elif target.expected_return <= 0:
             lines = [
@@ -1154,10 +1853,25 @@ class SubscribeTool(Tool):
             True,
             "\n".join(lines),
             data={"holding_id": holding.holding_id, "product": target.name, "amount": value,
+                  "requested_amount": requested_value,
                   "risk_level": target.risk_level, "payment_card_id": payer.card_id,
                   "payment_card_balance_after": payer.balance,
                   "asset_total_after": asset_total_after, "txn_id": txn.txn_id,
-                  "sandbox_execution_id": sandbox_execution_id},
+                  "sandbox_execution_id": sandbox_execution_id,
+                  "execution_price": (
+                      live_order["price"] if live_order is not None else None
+                  ),
+                  "quantity": (
+                      live_order["quantity"] if live_order is not None else None
+                  ),
+                  "unit": live_order["unit"] if live_order is not None else "",
+                  "fees": live_order["fee"] if live_order is not None else 0.0,
+                  "price_source": (
+                      live_order["source"] if live_order is not None else ""
+                  ),
+                  "price_as_of": (
+                      live_order["as_of"] if live_order is not None else ""
+                  )},
             summary=f"已申购「{target.name}」{value:,.2f} 元",
         )
 
@@ -1301,27 +2015,68 @@ class PortfolioTool(Tool):
             return ToolResult(True, "您当前没有理财持仓。", summary="无持仓")
         rows = []
         total_value = total_profit = 0.0
+        live_positions = 0
         for h in holdings:
             prod = ctx.providers.wealth.get(h.product_id) if getattr(ctx, "providers", None) else ctx.store.products.get(h.product_id)
             name = prod.name if prod else h.product_id
             risk = f"R{prod.risk_level}" if prod else "-"
-            total_value += h.market_value
-            total_profit += h.market_value - h.principal
+            current_value = h.market_value
+            current_price = h.last_price
+            price_time = h.price_as_of
+            price_source = h.price_source
+            if prod is not None and prod.has_live_data and h.quantity > 0:
+                snapshot = _live_price_snapshot(ctx, prod)
+                if snapshot is not None:
+                    current_price = float(snapshot["price"])
+                    current_value = round(h.quantity * current_price, 2)
+                    price_time = str(snapshot["as_of"])
+                    price_source = str(snapshot["source"])
+                    h.market_value = current_value
+                    h.last_price = current_price
+                    h.price_as_of = price_time
+                    h.price_source = price_source
+                    h.profit = round(current_value - h.principal, 2)
+                    ctx.store.touch(h)
+                    live_positions += 1
+            total_value += current_value
+            total_profit += current_value - h.principal
+            quantity_text = (
+                f"{h.quantity:,.4f}" if h.quantity and prod and prod.symbol_type == "fund"
+                else f"{h.quantity:,.0f}" if h.quantity
+                else "-"
+            )
             rows.append([
-                name, risk,
-                f"{h.principal:,.2f}", f"{h.market_value:,.2f}",
-                f"{h.market_value - h.principal:+,.2f}",
-                f"{(h.market_value - h.principal) / h.principal * 100:+.2f}%" if h.principal else "-",
-                source_badge(h.source, h.is_live, h.is_demo),
+                f"{name} {risk}", quantity_text,
+                f"{h.average_cost:,.4f}" if h.average_cost else "-",
+                f"{current_price:,.4f}" if current_price else "-",
+                f"{current_value:,.2f}",
+                f"{current_value - h.principal:+,.2f}",
+                (
+                    f"{price_source} {price_time}".strip()
+                    if price_source or price_time
+                    else source_badge(h.source, h.is_live, h.is_demo)
+                ),
             ])
         lines = [
             f"持仓总市值 {total_value:,.2f} 元，累计浮动盈亏 {total_profit:+,.2f} 元",
-            render_table(["产品", "风险", "本金", "市值", "盈亏", "收益率", "来源"], rows),
+            render_table(
+                ["产品", "持仓", "成本价", "最新价", "市值", "浮盈亏", "行情来源/时点"],
+                rows,
+            ),
         ]
+        if live_positions:
+            lines.append(
+                f"  已按公开行情刷新 {live_positions} 个持仓；"
+                "场外基金使用最新已披露净值。"
+            )
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"total_value": round(total_value, 2), "total_profit": round(total_profit, 2)},
+            data={
+                "total_value": round(total_value, 2),
+                "total_profit": round(total_profit, 2),
+                "live_positions": live_positions,
+            },
             summary=f"持仓市值 {total_value:,.2f} 元，浮动盈亏 {total_profit:+,.2f} 元",
         )
 

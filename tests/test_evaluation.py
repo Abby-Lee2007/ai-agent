@@ -18,6 +18,15 @@ class TestEvaluationRunner(unittest.TestCase):
         self.assertEqual(report["failed"], 0, report)
         self.assertEqual(report["accuracy"], 1.0)
 
+    def test_side_effect_evaluation_cases_verify_real_state_changes(self):
+        root = Path(__file__).resolve().parents[1]
+        report = EvaluationRunner(
+            load_cases(root / "evals" / "agent_side_effects.json")
+        ).run()
+
+        self.assertEqual(report["total"], 4)
+        self.assertEqual(report["failed"], 0, report)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "status": "snapshot",
+  "delivery": "bundled_snapshot",
+  "data_class": "official_public_data",
+  "is_simulated": false,
+  "fetched_at": "2026-10-28T19:45:35+08:00",
+  "as_of": "2026-10-28",
+  "sources": [
+    {
+      "id": "chinabond",
+      "name": "中国债券信息网",
+      "title": "中债收益率曲线和指数日评2026年10月28日",
+      "url": "https://www.chinabond.com.cn/xxwsy/sy_zdgz_ath/202610/t20261028_855527863.html",
+      "published_at": "2026-10-28",
+      "fetched_at": "2026-10-28T19:45:33+08:00",
+      "status": "ok",
+      "data": {
+        "government_bond_3m_yield_pct": 1.16,
+        "government_bond_2y_yield_pct": 1.23,
+        "government_bond_10y_yield_pct": 1.63,
+        "aaa_mtn_3m_yield_pct": 1.4,
+        "aaa_mtn_3y_yield_pct": 1.56,
+        "aaa_mtn_5y_yield_pct": 1.65,
+        "a_mtn_1y_yield_pct": 6.37,
+        "composite_net_price_index": 109.0641,
+        "composite_net_price_change_pct": 0.0089,
+        "composite_wealth_index": 264.6089,
+        "composite_wealth_change_pct": 0.0152,
+        "average_ytm_pct": 1.5864,
+        "average_duration_years": 6.1776,
+        "us_treasury_10y_yield_pct": 4.99
+      },
+      "parse_confidence": 0.99,
+      "snippets": [
+        "中债收益率曲线和指数日评2026年10月28日 --> 当前位置: 中债收益率曲线和指数日评2026年10月28日 债市观察 【中债指数走势】今日债券市场指数小幅波动，其中不包含利息再投资的中债综合指数（净价） 109.0641，上涨0.0089%，而包含利息再投资的中债综合指数（财富）264.6089，上涨0.0152%，平均市值法到期收益率为1.5864%，平均市值法久期为6.1776。 【利率品种】今日利率债市场收益率小幅波动。具体来看，中债国债收益率曲线 3M期限下行1BP至1.16%；2年期收益率下行1BP至1.23%；10年期收益率上行1BP至1.63%。 【信用品种】今日信用债市场收益率小幅波动。具体来看，中债中短期票据收益率曲线（ AAA）3M期限稳定在1.40%，3年期收益率稳定在1.56%，5年期收益率稳定在1.65%。中债中短期票据收益率曲线（A）1年期稳定在6.37%。 具体波动情况请见《各主要关键期限到期收益率两日变动》。 【海外市场】 10月27日美国国债收益率涨跌互现。具体来看，美国国债收益率曲线3M期限稳定在4.22%，"
+      ],
+      "error": "",
+      "homepage_url": "https://www.chinabond.com.cn/",
+      "discovered_title": "中债收益率曲线和指数日评2026年10月28日",
+      "source_mode": "public_http"
+    },
+    {
+      "id": "pboc",
+      "name": "中国人民银行",
+      "title": "公开市场业务交易公告 [2026]第208号",
+      "url": "https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125431/125475/2026102808465912088/index.html",
+      "published_at": "2026-10-28",
+      "fetched_at": "2026-10-28T19:45:33+08:00",
+      "status": "ok",
+      "data": {
+        "reverse_repo_7d_amount_100m_cny": 1510.0,
+        "reverse_repo_7d_rate_pct": 1.4,
+        "reverse_repo_7d_bid_amount_100m_cny": 1510.0,
+        "reverse_repo_7d_awarded_amount_100m_cny": 1510.0,
+        "reverse_repo_overnight_amount_100m_cny": 10000.0
+      },
+      "parse_confidence": 0.93,
+      "snippets": [
+        "业务交易公告 高级搜索 公开市场业务交易公告 [2026]第208号 字号 大 中 小 文章来源： 2026-10-28 09:20:30 打印本页 关闭窗口 2026年10月28日中国人民银行以固定利率、数量招标方式开展了1510亿元7天期逆回购操作，全额满足了一级交易商需求。具体情况如下： 7天期逆回购操作情况 期限 操作 利率 投标量 中标量 7 天 1. 40 % 1510 亿元 1510 亿元 同时，开展了10000亿元隔夜逆回购操作。 中国人民银行公开市场业务操作室 二〇二六年十月二十八日 打印本页 关闭窗口 ﻿ 法律声明 | 联系我们 | 设为首页 | 加入收藏 | 网站地图 京ICP备05073439号 网站标识码：bm25000001 京公网安备 11010202000016号 网站主办单位：中国人民银行办公厅 最佳分辨率：1024*768"
+      ],
+      "error": "",
+      "listing_url": "https://www.pbc.gov.cn/zhengcehuobisi/125207/125213/125431/125475/index.html",
+      "discovered_title": "公开市场业务交易公告 [2026]第208号",
+      "source_mode": "public_http"
+    },
+    {
+      "id": "world_bank",
+      "name": "世界银行",
+      "title": "中国：按消费者价格指数衡量的通货膨胀（年同比）",
+      "url": "https://api.worldbank.org/v2/country/CHN/indicator/FP.CPI.TOTL.ZG?format=json&per_page=10",
+      "published_at": "2025",
+      "fetched_at": "2026-10-28T19:45:35+08:00",
+      "status": "ok",
+      "data": {
+        "cpi_yoy_pct": 0.059565,
+        "cpi_period_year": 2025,
+        "country": "China",
+        "indicator": "Inflation, consumer prices (annual %)"
+      },
+      "parse_confidence": 0.99,
+      "snippets": [
+        "2025 年同比 0.059565%"
+      ],
+      "error": "",
+      "source_mode": "public_http"
+    }
+  ],
+  "indicators": {
+    "government_bond_3m_yield_pct": 1.16,
+    "government_bond_2y_yield_pct": 1.23,
+    "government_bond_10y_yield_pct": 1.63,
+    "aaa_mtn_3m_yield_pct": 1.4,
+    "aaa_mtn_3y_yield_pct": 1.56,
+    "aaa_mtn_5y_yield_pct": 1.65,
+    "a_mtn_1y_yield_pct": 6.37,
+    "composite_net_price_index": 109.0641,
+    "composite_net_price_change_pct": 0.0089,
+    "composite_wealth_index": 264.6089,
+    "composite_wealth_change_pct": 0.0152,
+    "average_ytm_pct": 1.5864,
+    "average_duration_years": 6.1776,
+    "us_treasury_10y_yield_pct": 4.99,
+    "reverse_repo_7d_amount_100m_cny": 1510.0,
+    "reverse_repo_7d_rate_pct": 1.4,
+    "reverse_repo_7d_bid_amount_100m_cny": 1510.0,
+    "reverse_repo_7d_awarded_amount_100m_cny": 1510.0,
+    "reverse_repo_overnight_amount_100m_cny": 10000.0,
+    "cpi_yoy_pct": 0.059565,
+    "cpi_period_year": 2025,
+    "country": "China",
+    "indicator": "Inflation, consumer prices (annual %)"
+  },
+  "warnings": [
+    "这是随项目发布的官方公开数据快照，不是实时行情。",
+    "世界银行 CPI 为年度指标，不代表当月通胀。"
+  ],
+  "freshness": {
+    "state": "snapshot",
+    "label": "随项目发布的官方数据快照",
+    "age_hours": 0.0,
+    "ttl_hours": 24.0,
+    "live_network_call_this_request": false
+  },
+  "original_status": "live"
+}

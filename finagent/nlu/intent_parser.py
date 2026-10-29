@@ -91,6 +91,14 @@ INTENT_KEYWORDS = {
     "forecast.cashflow": ["现金流", "数字孪生", "未来90天", "资金缺口", "财务预测"],
     "advisor.proactive": ["主动财务", "财务体检", "个人cfo", "主动提醒"],
     "advisor.health_score": ["财务健康分", "财务健康评分", "财务评分"],
+    "macro.official": [
+        "官方宏观数据", "国债收益率", "央行逆回购", "公开市场操作",
+        "中国cpi", "人民银行数据",
+    ],
+    "market.overview": [
+        "a股行情", "大盘怎么样", "上证指数", "深证成指", "创业板指",
+        "科创50", "北证50", "两市成交额",
+    ],
     "advisor.events": ["主动事件", "财务通知", "事件中心", "稍后提醒"],
     "risk.dispute": ["发起争议交易", "提交争议交易", "申请交易争议"],
     "risk.playbook": ["风险处置", "交易处置", "盗刷怎么办", "争议交易"],
@@ -148,6 +156,8 @@ class RuleIntentParser:
         "bill.scan_receipt",
         "advisor.proactive",
         "advisor.health_score",
+        "macro.official",
+        "market.overview",
         "advisor.events",
         "forecast.cashflow",
         "risk.dispute",
@@ -283,6 +293,20 @@ class RuleIntentParser:
 
     def _match_advisor_health_score(self, t: str) -> bool:
         return self._has(t, "财务健康分", "财务健康评分", "财务评分", "健康评分")
+
+    def _match_macro_official(self, t: str) -> bool:
+        return self._has(
+            t,
+            "官方宏观数据", "国债收益率", "央行逆回购", "人民银行公开市场",
+            "公开市场操作", "中国CPI", "中国cpi", "宏观利率", "刷新宏观",
+        )
+
+    def _match_market_overview(self, t: str) -> bool:
+        return self._has(
+            t, "A股行情", "a股行情", "大盘怎么样", "大盘行情", "上证指数",
+            "深证成指", "创业板指", "科创50", "北证50", "两市成交额",
+            "市场行情怎么样",
+        )
 
     def _match_advisor_events(self, t: str) -> bool:
         return self._has(
@@ -639,6 +663,10 @@ class RuleIntentParser:
             if note:
                 slots["note"] = note
 
+        elif intent == "macro.official":
+            if self._has(text, "刷新", "联网更新", "重新获取"):
+                slots["refresh"] = True
+
         elif intent == "forecast.cashflow":
             month_match = re.search(
                 r"(?:未来|接下来)?\s*(\d{1,2})\s*个?月|未来\s*(\d{2,3})\s*天",
@@ -853,6 +881,10 @@ class RuleIntentParser:
             product = self._product(text)
             if product:
                 slots["product"] = product
+            else:
+                symbol = re.search(r"(?<![A-Za-z0-9])((?:sh|sz|bj)?\d{6})(?![A-Za-z0-9])", text, re.I)
+                if symbol:
+                    slots["product"] = symbol.group(1).lower()
 
         elif intent == "wealth.redeem":
             amount = parse_amount(text)
@@ -861,6 +893,10 @@ class RuleIntentParser:
             product = self._product(text)
             if product:
                 slots["product"] = product
+            else:
+                symbol = re.search(r"(?<![A-Za-z0-9])((?:sh|sz|bj)?\d{6})(?![A-Za-z0-9])", text, re.I)
+                if symbol:
+                    slots["product"] = symbol.group(1).lower()
             if self._has(text, "全部", "所有", "都赎回"):
                 slots.pop("amount", None)
                 slots.pop("product", None)
@@ -1343,6 +1379,14 @@ class RuleIntentParser:
 class IntentParser:
     """统一入口：大模型优先，规则兜底，两者结果合并。"""
 
+    LLM_FINANCIAL_SLOTS = {
+        "payee", "amount", "total", "budget", "target_amount", "new_limit",
+        "limit_request", "account", "from_card", "to_card", "payee_account",
+        "card_no", "password", "phone", "payment_password", "product",
+        "participants", "when", "date", "deadline", "bank",
+        "monthly_income", "existing_debt",
+    }
+
     def __init__(self, store=None, user_id: str = "", llm: Optional[LLMClient] = None, mode: str = "auto") -> None:
         self.store = store
         self.user_id = user_id
@@ -1366,11 +1410,54 @@ class IntentParser:
         if name not in INTENTS:
             self.last_source = "rule(大模型返回未知意图)"
             return rule_intent
+        if (
+            not rule_intent.is_unknown()
+            and rule_intent.confidence >= 0.75
+            and name != rule_intent.name
+        ):
+            self.last_source = "rule(大模型意图与确定性规则冲突)"
+            return rule_intent
 
         slots: Dict[str, Any] = {}
         raw_slots = payload.get("slots") or {}
         if isinstance(raw_slots, dict):
-            slots.update({k: v for k, v in raw_slots.items() if v not in (None, "", [])})
+            spec = INTENTS[name]
+            slot_specs = {item.name: item for item in spec.slots}
+            for key, value in raw_slots.items():
+                if key not in slot_specs or value in (None, "", []):
+                    continue
+                if (
+                    key in self.LLM_FINANCIAL_SLOTS
+                    and key not in rule_intent.slots
+                ):
+                    continue
+                item = slot_specs[key]
+                if item.enum and value not in item.enum:
+                    continue
+                if item.type == "number":
+                    try:
+                        value = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                elif item.type == "integer":
+                    try:
+                        value = int(value)
+                    except (TypeError, ValueError):
+                        continue
+                elif item.type == "boolean":
+                    if isinstance(value, bool):
+                        pass
+                    elif str(value).lower() in {"true", "1", "yes"}:
+                        value = True
+                    elif str(value).lower() in {"false", "0", "no"}:
+                        value = False
+                    else:
+                        continue
+                elif item.type == "array" and not isinstance(value, list):
+                    continue
+                elif item.type == "string" and not isinstance(value, str):
+                    value = str(value)
+                slots[key] = value
         # 规则通道补全大模型漏掉的硬信息（金额、日期用正则更稳）
         for key, value in rule_intent.slots.items():
             slots.setdefault(key, value)

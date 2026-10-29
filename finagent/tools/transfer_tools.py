@@ -156,6 +156,7 @@ class TransferTool(Tool):
         payee_account: str = "",
         payment_password: str = "",
         payment_verified: bool = False,
+        idempotency_key: str = "",
     ) -> ToolResult:
         user = ctx.user
         store = ctx.store
@@ -191,6 +192,28 @@ class TransferTool(Tool):
                 False,
                 f"付款卡余额不足：可用 {payer.available:,.2f} 元，需要 {value:,.2f} 元。",
             )
+        execution_key = str(idempotency_key or "").strip()
+        if execution_key:
+            existing = next(
+                (
+                    txn for txn in providers.transactions.of(user.user_id)
+                    if txn.status == "success"
+                    and str((txn.metadata or {}).get("idempotency_key") or "")
+                    == execution_key
+                ),
+                None,
+            )
+            if existing is not None:
+                return ToolResult(
+                    True,
+                    f"该定时转账已经执行，避免重复扣款。原流水号：{existing.txn_id}",
+                    data={
+                        "txn_id": existing.txn_id,
+                        "replayed": True,
+                        "idempotency_key": execution_key,
+                    },
+                    summary="定时转账已执行，本次为幂等重放",
+                )
 
         # 收款人不在通讯录时，先落库为常用联系人（后续可按备注直接转）
         if payee_obj is None:
@@ -243,6 +266,7 @@ class TransferTool(Tool):
                 "payee": payee_obj.name,
                 "receiving_account": target_account,
                 "channel": channel,
+                "idempotency_key": execution_key,
             },
         )
         sandbox = ctx.session.get("sandbox")

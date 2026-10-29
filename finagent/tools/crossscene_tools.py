@@ -14,7 +14,13 @@ import re
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+from finagent.data.card_ledger import sync_cards_for_account
 from finagent.data.models import MerchantOffer, User
+from finagent.data.official_sources import (
+    OfficialDataError,
+    official_macro_answer_line,
+    official_macro_context,
+)
 from finagent.data.providers import MerchantOfferProvider
 from finagent.tools.base import Tool, ToolContext, ToolParam, ToolResult, format_money, render_table
 from finagent.tools.transfer_tools import resolve_account
@@ -526,6 +532,7 @@ class GoalCreateTool(Tool):
         )
         goal.locked_amount = amount
         account.locked = round(account.locked + amount, 2)
+        sync_cards_for_account(store, account)
         store.touch(goal, account)
 
         lines = [
@@ -540,7 +547,13 @@ class GoalCreateTool(Tool):
         return ToolResult(
             True,
             "\n".join(lines),
-            data={"goal_id": goal.goal_id, "amount": amount, "account": account.account_id},
+            data={
+                "goal_id": goal.goal_id,
+                "amount": amount,
+                "account": account.account_id,
+                "locked": account.locked,
+                "available": account.available,
+            },
             summary=f"已锁定 {amount:,.2f} 元到目标「{name}」",
         )
 
@@ -945,6 +958,7 @@ class ScheduleGiftTool(Tool):
         ToolParam("date", "string", True, "执行日期，如 2026-11-18 / 生日前2天"),
         ToolParam("budget", "number", False, "预算（元）"),
         ToolParam("offer_id", "string", False, "已选定的商户方案编号"),
+        ToolParam("goal_name", "string", False, "关联的礼物资金目标名称"),
         ToolParam("note", "string", False, "贺卡留言"),
     ]
     examples = ["生日前2天给老婆订一束花", "生日当天订蛋糕"]
@@ -958,6 +972,7 @@ class ScheduleGiftTool(Tool):
         date: str,
         budget: Any = None,
         offer_id: str = "",
+        goal_name: str = "",
         note: str = "",
     ) -> ToolResult:
         store = ctx.store
@@ -1032,6 +1047,7 @@ class ScheduleGiftTool(Tool):
                     "is_demo": offer.is_demo if offer is not None else True,
                     "note": note,
                     "channel": "同城即时配送",
+                    "goal_name": goal_name,
                 },
             )
             if getattr(ctx, "providers", None) is not None
@@ -1051,6 +1067,7 @@ class ScheduleGiftTool(Tool):
                     "is_demo": offer.is_demo if offer is not None else True,
                     "note": note,
                     "channel": "同城即时配送",
+                    "goal_name": goal_name,
                 },
             )
         )
@@ -1251,6 +1268,13 @@ class DailyBriefTool(Tool):
             "数据口径：当前会话账户与流水、订阅、信用卡、目标和任务；"
             f"最近上传记录 {len(uploads)} 批。"
         )
+        try:
+            official_macro = official_macro_context()
+        except (OfficialDataError, OSError, ValueError):
+            official_macro = {}
+        official_line = official_macro_answer_line(official_macro)
+        if official_line:
+            material_note += "\n" + official_line
         message = header + "\n" + material_note + "\n\n" + "\n\n".join(sections)
         return ToolResult(
             True,
@@ -1270,6 +1294,7 @@ class DailyBriefTool(Tool):
                     ]),
                 },
                 "generated_from": "当前会话已确认数据",
+                "official_macro": official_macro,
             },
             summary="；".join(summary_bits) if summary_bits else "今日没有需要特别关注的事项",
         )

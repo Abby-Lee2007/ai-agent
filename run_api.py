@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import socket
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -92,6 +93,10 @@ def main(argv=None) -> int:
         port=args.port,
         webhook_secret=os.getenv("FINAGENT_WEBHOOK_SECRET", ""),
         access_password=os.getenv("FINAGENT_WEB_PASSWORD", ""),
+        enforce_session_tokens=(
+            os.getenv("FINAGENT_ENFORCE_SESSION_TOKENS", "1")
+            .strip().lower() not in {"0", "false", "no", "off"}
+        ),
     )
     host, port = server.server_address
     print("AI Banking Agent 访问地址：")
@@ -102,11 +107,35 @@ def main(argv=None) -> int:
         print("  同一 Wi-Fi 下的手机可以使用上面的局域网地址访问")
         print("  其他设备无法访问时，请检查 Windows 防火墙是否允许该端口")
     print("按 Ctrl+C 停止服务")
+    scheduler_stop = threading.Event()
+    try:
+        scheduler_interval = max(
+            5.0,
+            float(os.getenv("FINAGENT_SCHEDULER_INTERVAL_SECONDS", "30")),
+        )
+    except ValueError:
+        scheduler_interval = 30.0
+
+    def scheduled_loop() -> None:
+        while not scheduler_stop.wait(scheduler_interval):
+            try:
+                service.run_due_tasks()
+            except Exception as exc:
+                print(f"定时任务扫描失败：{exc}")
+
+    scheduler_thread = threading.Thread(
+        target=scheduled_loop,
+        name="finagent-scheduler",
+        daemon=True,
+    )
+    scheduler_thread.start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n服务已停止")
     finally:
+        scheduler_stop.set()
+        scheduler_thread.join(timeout=2)
         server.server_close()
     return 0
 

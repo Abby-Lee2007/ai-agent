@@ -1,20 +1,50 @@
 """Session orchestration shared by HTTP, H5, and IM adapters."""
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+import secrets
 import threading
+import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from typing import Any, Callable, Dict, Optional
 
 from finagent.agent.core import AgentReply, BankingAgent
 from finagent.data.models import Card
+from finagent.data.market import build_market_overview
+from finagent.data.official_sources import load_official_data
+from finagent.data.sqlite import OptimisticConcurrencyError
 from finagent.data.store import DataStore
 from finagent.integrations.sandbox_adapters import execution_payload
 
 
 class SessionNotFound(KeyError):
     """Raised when a client references an unknown session."""
+
+
+class SessionAuthError(PermissionError):
+    """Raised when a session token is missing or invalid."""
+
+
+class StepUpRequired(PermissionError):
+    """Raised when a sensitive profile change needs card-level verification."""
+
+    def __init__(self, message: str, challenge: Dict[str, Any]) -> None:
+        super().__init__(message)
+        self.challenge = challenge
+
+
+@dataclass
+class StepUpChallenge:
+    token: str
+    session_id: str
+    card_id: str
+    digest: str
+    expires_at: float
+    attempts: int = 0
 
 
 @dataclass
@@ -24,6 +54,9 @@ class SessionRecord:
     channel: str
     created_at: str
     agent: BankingAgent
+    version: int = 0
+    session_token_hash: str = ""
+    processed_requests: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 class AgentSessionService:
@@ -35,6 +68,7 @@ class AgentSessionService:
         llm_mode: str = "off",
         store_factory: Optional[Callable[[], DataStore]] = None,
         repository: Optional[Any] = None,
+        step_up_ttl_seconds: int = 300,
     ) -> None:
         self.store = store
         self.store_factory = store_factory
@@ -43,6 +77,8 @@ class AgentSessionService:
         self._sessions: Dict[str, SessionRecord] = {}
         self._channel_sessions: Dict[tuple[str, str], str] = {}
         self._idempotency: Dict[tuple[str, str], Dict[str, Any]] = {}
+        self._step_up_challenges: Dict[str, StepUpChallenge] = {}
+        self._step_up_ttl_seconds = max(30, int(step_up_ttl_seconds))
         self._lock = threading.RLock()
 
     def create_session(
@@ -56,6 +92,10 @@ class AgentSessionService:
             raise ValueError(f"未知用户：{user_id}")
 
         session_id = f"SESSION-{uuid.uuid4().hex}"
+        session_token = secrets.token_urlsafe(32)
+        session_token_hash = hashlib.sha256(
+            session_token.encode("utf-8")
+        ).hexdigest()
         session_store = self.store_factory() if self.store_factory else self.store
         record = SessionRecord(
             session_id=session_id,
@@ -63,11 +103,15 @@ class AgentSessionService:
             channel=channel,
             created_at=datetime.now().isoformat(timespec="seconds"),
             agent=BankingAgent(session_store, user_id, llm_mode=self.llm_mode),
+            version=0,
+            session_token_hash=session_token_hash,
         )
         with self._lock:
             self._sessions[session_id] = record
             self._persist_session(record)
-        return self._session_payload(record)
+        payload = self._session_payload(record)
+        payload["session_token"] = session_token
+        return payload
 
     def send_message(
         self,
@@ -78,14 +122,33 @@ class AgentSessionService:
         text = (message or "").strip()
         if not text:
             raise ValueError("message 不能为空")
+        request_fingerprint = hashlib.sha256(
+            text.encode("utf-8")
+        ).hexdigest()
 
         with self._lock:
             record = self._get_or_load(session_id)
 
             cache_key = (session_id, request_id) if request_id else None
+            if request_id:
+                embedded = record.processed_requests.get(request_id)
+                if embedded is not None and self._is_replayable(embedded):
+                    if (
+                        embedded.get("request_fingerprint")
+                        and embedded["request_fingerprint"] != request_fingerprint
+                    ):
+                        raise ValueError("同一 request_id 不能用于不同消息")
+                    replayed = dict(embedded)
+                    replayed["replayed"] = True
+                    return replayed
             if cache_key and cache_key in self._idempotency:
                 cached = dict(self._idempotency[cache_key])
                 if self._is_replayable(cached):
+                    if (
+                        cached.get("request_fingerprint")
+                        and cached["request_fingerprint"] != request_fingerprint
+                    ):
+                        raise ValueError("同一 request_id 不能用于不同消息")
                     cached["replayed"] = True
                     return cached
                 self._idempotency.pop(cache_key, None)
@@ -93,6 +156,11 @@ class AgentSessionService:
                 cached = self.repository.load_idempotency(session_id, request_id)
                 if cached is not None and self._is_replayable(cached):
                     cached = dict(cached)
+                    if (
+                        cached.get("request_fingerprint")
+                        and cached["request_fingerprint"] != request_fingerprint
+                    ):
+                        raise ValueError("同一 request_id 不能用于不同消息")
                     cached["replayed"] = True
                     self._idempotency[cache_key] = cached
                     return cached
@@ -101,11 +169,18 @@ class AgentSessionService:
             payload = {
                 "session_id": session_id,
                 "request_id": request_id,
+                "request_fingerprint": request_fingerprint,
                 "reply": asdict(reply),
                 "replayed": False,
             }
-            # Persist the mutated business state before the replay cache so a
-            # crash cannot return an old response without its side effects.
+            # The result and its request fingerprint share one session snapshot.
+            # A crash can therefore lose both or persist both, never only one.
+            if request_id:
+                record.processed_requests[request_id] = dict(payload)
+                while len(record.processed_requests) > 500:
+                    record.processed_requests.pop(
+                        next(iter(record.processed_requests))
+                    )
             self._persist_session(record)
             if cache_key:
                 self._idempotency[cache_key] = payload
@@ -117,6 +192,34 @@ class AgentSessionService:
                         record.created_at,
                     )
             return payload
+
+    def run_due_tasks(self) -> Dict[str, list[str]]:
+        """Run due tasks for every active session and persist side effects."""
+        results: Dict[str, list[str]] = {}
+        with self._lock:
+            session_ids = set(self._sessions)
+            if self.repository is not None:
+                session_ids.update(
+                    self.repository.list_session_ids_with_tasks()
+                )
+            for session_id in sorted(session_ids):
+                record = self._get_or_load(session_id)
+                messages = record.agent.run_due_tasks()
+                if messages:
+                    results[session_id] = messages
+                    self._persist_session(record)
+        return results
+
+    def authorize_session(self, session_id: str, token: str) -> None:
+        """Validate a client-held session token against its stored hash."""
+        with self._lock:
+            record = self._get_or_load(session_id)
+            expected = record.session_token_hash
+            supplied = hashlib.sha256(
+                str(token or "").encode("utf-8")
+            ).hexdigest()
+            if not expected or not hmac.compare_digest(supplied, expected):
+                raise SessionAuthError("会话令牌无效")
 
     @staticmethod
     def _is_replayable(payload: Dict[str, Any]) -> bool:
@@ -303,6 +406,18 @@ class AgentSessionService:
                 **record.agent.market.status(),
             }
 
+    def get_market_overview(self, session_id: str) -> Dict[str, Any]:
+        with self._lock:
+            record = self._get_or_load(session_id)
+            return {
+                "session_id": session_id,
+                **build_market_overview(record.agent.market),
+            }
+
+    def get_official_data(self, refresh: bool = False) -> Dict[str, Any]:
+        """Load official public macro data; refresh only when explicitly asked."""
+        return load_official_data(refresh=refresh)
+
     def simulate_forecast(
         self,
         session_id: str,
@@ -488,7 +603,15 @@ class AgentSessionService:
             if user is None:
                 raise ValueError(f"用户不存在：{record.user_id}")
             store.ensure_card_ledger()
-            prefs = user.preferences or {}
+            prefs = dict(user.preferences or {})
+            sanitized_people = self._sanitize_care_people_storage(
+                prefs.get("care_people") or []
+            )
+            if sanitized_people != (prefs.get("care_people") or []):
+                prefs["care_people"] = sanitized_people
+                user.preferences = prefs
+                store.touch(user, source="user:profile")
+                self._persist_session(record)
             return {
                 "session_id": session_id,
                 "user": {
@@ -541,9 +664,9 @@ class AgentSessionService:
                 user.name = name[:40]
             if values.get("phone") is not None:
                 phone = "".join(ch for ch in str(values["phone"]) if ch.isdigit())
-                if len(phone) < 7:
-                    raise ValueError("手机号格式不正确")
-                user.phone = phone[:20]
+                if phone and (len(phone) != 11 or not phone.startswith("1")):
+                    raise ValueError("手机号格式不正确，应为以 1 开头的 11 位数字")
+                user.phone = phone
             if values.get("city") is not None:
                 user.city = str(values["city"]).strip()[:30]
             if values.get("occupation") is not None:
@@ -580,8 +703,36 @@ class AgentSessionService:
                     values["anniversary"], "纪念日"
                 )
             if values.get("care_people") is not None:
+                existing_people = {
+                    str(item.get("person_id") or ""): item
+                    for item in prefs.get("care_people") or []
+                    if isinstance(item, dict)
+                }
+                incoming_people = []
+                for item in values["care_people"]:
+                    if not isinstance(item, dict):
+                        continue
+                    person = dict(item)
+                    existing = existing_people.get(
+                        str(person.get("person_id") or "")
+                    )
+                    if (
+                        existing
+                        and not str(person.get("bank_card") or "").strip()
+                        and not str(person.get("bank_card_tail") or "").strip()
+                    ):
+                        old_card = "".join(
+                            ch for ch in str(existing.get("bank_card") or "")
+                            if ch.isdigit()
+                        )
+                        person["bank_card_tail"] = (
+                            old_card[-4:]
+                            or existing.get("bank_card_tail")
+                            or ""
+                        )
+                    incoming_people.append(person)
                 prefs["care_people"] = self._normalize_care_people(
-                    values["care_people"],
+                    incoming_people,
                     today,
                 )
             if values.get("favorite_gift") is not None:
@@ -609,6 +760,7 @@ class AgentSessionService:
                         "wechat": "",
                         "alipay": "",
                         "bank_card": "",
+                        "bank_card_tail": "",
                         "bank_card_masked": "",
                         "favorite_gift": [],
                         "avoid": [],
@@ -723,6 +875,8 @@ class AgentSessionService:
                 if released_amount:
                     account.locked = round(max(0.0, account.locked - released_amount), 2)
                     store.touch(account)
+                    from finagent.data.card_ledger import sync_cards_for_account
+                    sync_cards_for_account(store, account)
             del store.goals[goal_id]
             store.log(
                 "goal.profile_deleted",
@@ -747,27 +901,41 @@ class AgentSessionService:
             record = self._get_or_load(session_id)
             store = record.agent.store
             kind = str(values.get("kind") or "virtual")
-            balance = self._positive_number(values.get("balance"), 0.0)
+            if kind not in {"debit", "credit", "virtual", "supplementary"}:
+                raise ValueError("不支持的卡片类型")
             credit_limit = self._positive_number(values.get("credit_limit"), 0.0)
+            if credit_limit > 200_000:
+                raise ValueError("信用卡额度上限为 200,000 元")
+            daily_limit = self._positive_number(values.get("daily_limit"), 20000.0)
+            single_limit = self._positive_number(values.get("single_limit"), 5000.0)
+            single_limit = min(single_limit, daily_limit)
+            requested_status = str(
+                values.get("status")
+                or "active"
+            ).strip()
+            if requested_status not in {
+                "active", "frozen", "lost", "cancelled", "pending", "rejected",
+            }:
+                raise ValueError("卡片状态无效")
             card = Card(
                 card_id=store.next_id("cards"),
                 user_id=record.user_id,
                 kind=kind,
                 brand=str(values.get("brand") or "演示银行"),
                 tail=self._card_tail(values.get("tail")),
-                status=str(values.get("status") or "active"),
-                balance=0.0 if kind in {"credit", "supplementary"} else balance,
-                credit_limit=credit_limit,
-                used=self._positive_number(values.get("used"), 0.0),
+                status=requested_status,
+                balance=0.0,
+                credit_limit=credit_limit if kind == "credit" else 0.0,
+                used=0.0,
                 payment_password_hash=hash_card_password(DEMO_CARD_PASSWORD),
-                daily_limit=self._positive_number(values.get("daily_limit"), 20000.0),
-                single_limit=self._positive_number(values.get("single_limit"), 5000.0),
+                daily_limit=daily_limit,
+                single_limit=single_limit,
                 online_enabled=bool(values.get("online_enabled", True)),
                 overseas_enabled=bool(values.get("overseas_enabled", False)),
                 contactless_enabled=bool(values.get("contactless_enabled", True)),
                 note=str(values.get("note") or "用户添加卡片")[:100],
-                source="user:profile",
-                is_demo=False,
+                source="user:profile:test",
+                is_demo=True,
             )
             store.cards[card.card_id] = card
             store.touch(card)
@@ -776,6 +944,7 @@ class AgentSessionService:
                 card,
                 account_kind="credit" if kind in {"credit", "supplementary"} else "current",
                 account_name=f"{card.brand} {card.tail} 账户",
+                allow_fallback_link=False,
             )
             store.log("card.profile_created", card_id=card.card_id)
             self._persist_session(record)
@@ -788,41 +957,224 @@ class AgentSessionService:
         values: Dict[str, Any],
     ) -> Dict[str, Any]:
         with self._lock:
+            from finagent.data.card_ledger import linked_account, verify_card_password
+
             record = self._get_or_load(session_id)
             store = record.agent.store
             card = store.cards.get(card_id)
             if card is None or card.user_id != record.user_id:
                 raise ValueError(f"卡片不存在：{card_id}")
-            # Card type and tail identify the linked bank account and are immutable.
-            for field in ("brand", "status", "note"):
-                if values.get(field) is not None:
-                    setattr(card, field, str(values[field]).strip()[:100])
+            if values.get("used") is not None:
+                raise ValueError("已用额度由交易流水维护，不能在资料设置中手工修改")
+
+            canonical: Dict[str, Any] = {}
+            sensitive_changes: Dict[str, Any] = {}
+            if values.get("brand") is not None:
+                canonical["brand"] = str(values["brand"]).strip()[:100]
+            if values.get("note") is not None:
+                canonical["note"] = str(values["note"]).strip()[:100]
+
+            requested_status = ""
+            if values.get("status") is not None:
+                requested_status = str(values["status"]).strip()
+                allowed_statuses = {
+                    "active", "frozen", "lost", "cancelled", "pending",
+                }
+                if requested_status not in allowed_statuses:
+                    raise ValueError(
+                        "卡片状态只能是 active、frozen、lost、cancelled 或 pending"
+                    )
+                if (
+                    requested_status != card.status
+                    and (card.status, requested_status) != ("active", "frozen")
+                ):
+                    raise ValueError(
+                        "资料设置只能主动冻结卡片；解冻、激活、挂失恢复或注销"
+                        "必须通过对话风控流程办理"
+                    )
+                if requested_status != card.status:
+                    canonical["status"] = requested_status
+                    sensitive_changes["status"] = requested_status
+
             for field, default in (
                 ("credit_limit", card.credit_limit),
-                ("used", card.used),
                 ("daily_limit", card.daily_limit),
                 ("single_limit", card.single_limit),
             ):
                 if values.get(field) is not None:
-                    setattr(card, field, self._positive_number(values[field], default))
+                    if field == "credit_limit" and card.kind != "credit":
+                        raise ValueError("只有信用卡可以调整信用额度")
+                    if field in {"daily_limit", "single_limit"} and card.kind == "credit":
+                        raise ValueError("信用卡不使用借记卡的单笔/日限额字段")
+                    parsed = self._positive_number(values[field], default)
+                    if field == "credit_limit" and parsed > 200_000:
+                        raise ValueError("信用卡额度上限为 200,000 元")
+                    if field == "credit_limit" and parsed < card.used:
+                        raise ValueError(
+                            f"信用额度不能低于当前已用额度 {card.used:,.2f} 元"
+                        )
+                    if abs(parsed - float(default)) > 0.009:
+                        canonical[field] = parsed
+                        sensitive_changes[field] = parsed
+
+            daily_limit = float(canonical.get("daily_limit", card.daily_limit))
+            single_limit = float(canonical.get("single_limit", card.single_limit))
+            if single_limit > daily_limit:
+                if values.get("single_limit") is not None:
+                    raise ValueError("单笔限额不能高于日限额")
+                canonical["single_limit"] = daily_limit
+                sensitive_changes["single_limit"] = daily_limit
             for field in ("online_enabled", "overseas_enabled", "contactless_enabled"):
                 if values.get(field) is not None:
-                    setattr(card, field, bool(values[field]))
+                    enabled = self._strict_bool(values[field], field)
+                    if enabled != bool(getattr(card, field)):
+                        canonical[field] = enabled
+                        sensitive_changes[field] = enabled
+
+            if sensitive_changes and card.status != "active":
+                raise ValueError("冻结、挂失或待激活的卡片不能直接修改敏感设置")
+
+            if sensitive_changes:
+                self._authorize_card_step_up(
+                    record,
+                    card,
+                    canonical,
+                    str(values.get("confirmation_token") or ""),
+                    str(values.get("payment_password") or ""),
+                    verify_card_password,
+                )
+
+            # Card type and tail identify the linked bank account and are immutable.
+            for field in ("brand", "note"):
+                if field in canonical:
+                    setattr(card, field, canonical[field])
+            if "status" in canonical:
+                card.status = str(canonical["status"])
+            for field in ("credit_limit", "daily_limit", "single_limit"):
+                if field in canonical:
+                    setattr(card, field, float(canonical[field]))
+            for field in ("online_enabled", "overseas_enabled", "contactless_enabled"):
+                if field in canonical:
+                    setattr(card, field, bool(canonical[field]))
             card.source = "user:profile"
             card.is_demo = False
+            account = linked_account(store, card)
+            if account is not None:
+                account.status = card.status
+                if card.kind == "credit":
+                    account.credit_limit = card.credit_limit
+                    card.used = round(max(account.balance, 0.0), 2)
+                else:
+                    card.used = 0.0
+                    card.credit_limit = 0.0
+                store.touch(account)
             store.touch(card)
-            store.log("card.profile_updated", card_id=card.card_id)
+            store.log(
+                "card.profile_updated",
+                card_id=card.card_id,
+                account_id=card.account_id,
+            )
             self._persist_session(record)
             return asdict(card)
 
+    def _authorize_card_step_up(
+        self,
+        record: SessionRecord,
+        card: Card,
+        changes: Dict[str, Any],
+        confirmation_token: str,
+        payment_password: str,
+        verify_password: Callable[[Card, str], bool],
+    ) -> None:
+        """Require a single-use challenge plus the card PIN for risky settings."""
+        now = time.monotonic()
+        self._step_up_challenges = {
+            token: challenge
+            for token, challenge in self._step_up_challenges.items()
+            if challenge.expires_at > now
+        }
+        digest = hashlib.sha256(
+            json.dumps(
+                changes,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        if not confirmation_token:
+            token = secrets.token_urlsafe(24)
+            self._step_up_challenges[token] = StepUpChallenge(
+                token=token,
+                session_id=record.session_id,
+                card_id=card.card_id,
+                digest=digest,
+                expires_at=now + self._step_up_ttl_seconds,
+            )
+            raise StepUpRequired(
+                "该修改涉及额度、限额、交易开关或卡片状态，"
+                "需要输入该卡 6 位交易密码确认。",
+                {
+                    "confirmation_token": token,
+                    "expires_in_seconds": self._step_up_ttl_seconds,
+                    "preview": dict(changes),
+                },
+            )
+
+        challenge = self._step_up_challenges.get(confirmation_token)
+        if (
+            challenge is None
+            or challenge.expires_at <= now
+            or challenge.session_id != record.session_id
+            or challenge.card_id != card.card_id
+            or not hmac.compare_digest(challenge.digest, digest)
+        ):
+            self._step_up_challenges.pop(confirmation_token, None)
+            raise ValueError("二次确认已失效或修改内容发生变化，请重新保存")
+        if not verify_password(card, payment_password):
+            challenge.attempts += 1
+            if challenge.attempts >= 5:
+                self._step_up_challenges.pop(confirmation_token, None)
+                raise ValueError("交易密码连续错误次数过多，请重新发起修改")
+            raise ValueError(
+                f"交易密码验证失败，还可尝试 {5 - challenge.attempts} 次"
+            )
+        self._step_up_challenges.pop(confirmation_token, None)
+
+    @staticmethod
+    def _strict_bool(value: Any, field: str) -> bool:
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"{field} 必须是布尔值")
+
     def delete_card_settings(self, session_id: str, card_id: str) -> Dict[str, Any]:
-        """Delete a demo card without changing account balances."""
+        """Delete an empty demo card without creating orphan funds."""
         with self._lock:
+            from finagent.data.card_ledger import linked_account
+
             record = self._get_or_load(session_id)
             store = record.agent.store
             card = store.cards.get(card_id)
             if card is None or card.user_id != record.user_id:
                 raise ValueError(f"卡片不存在：{card_id}")
+            account = linked_account(store, card)
+            account_balance = max(float(account.balance if account else 0.0), 0.0)
+            account_locked = max(float(account.locked if account else 0.0), 0.0)
+            if (
+                max(float(card.balance), 0.0) > 0.01
+                or max(float(card.used), 0.0) > 0.01
+                or max(float(card.locked), 0.0) > 0.01
+                or account_balance > 0.01
+                or account_locked > 0.01
+            ):
+                raise ValueError(
+                    "该卡仍关联余额、已用额度或锁定资金，不能直接删除；"
+                    "请先划转资金、结清欠款或释放锁定金额。"
+                )
             del store.cards[card_id]
             store.log("card.profile_deleted", card_id=card_id)
             self._persist_session(record)
@@ -867,8 +1219,29 @@ class AgentSessionService:
             for field in ("phone", "wechat", "alipay", "bank_name", "bank_card"):
                 person.setdefault(field, "")
             bank_card = "".join(ch for ch in str(person.get("bank_card") or "") if ch.isdigit())
+            tail = bank_card[-4:] or str(person.get("bank_card_tail") or "")[-4:]
+            person["bank_card"] = ""
+            person["bank_card_tail"] = tail
+            person["bank_card_masked"] = f"**** **** **** {tail}" if tail else ""
+            people.append(person)
+        return people
+
+    @staticmethod
+    def _sanitize_care_people_storage(value: Any) -> list[dict[str, Any]]:
+        people = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            person = dict(item)
+            card = "".join(
+                ch for ch in str(person.get("bank_card") or "")
+                if ch.isdigit()
+            )
+            tail = card[-4:] or str(person.get("bank_card_tail") or "")[-4:]
+            person["bank_card"] = ""
+            person["bank_card_tail"] = tail
             person["bank_card_masked"] = (
-                f"**** **** **** {bank_card[-4:]}" if bank_card else ""
+                f"**** **** **** {tail}" if tail else ""
             )
             people.append(person)
         return people
@@ -890,6 +1263,7 @@ class AgentSessionService:
                 raise ValueError(f"{name}的手机号格式不正确")
             bank_name = str(item.get("bank_name") or "").strip()[:40]
             bank_card = "".join(ch for ch in str(item.get("bank_card") or "") if ch.isdigit())
+            bank_card_tail = str(item.get("bank_card_tail") or "").strip()
             if bank_card:
                 if not bank_name:
                     raise ValueError(
@@ -911,6 +1285,11 @@ class AgentSessionService:
                         f"{name}的银行卡号未通过 Luhn 校验，通常是某一位数字输错。"
                         f"当前为 {len(bank_card)} 位且以 62 开头，请逐位核对卡号。"
                     )
+                bank_card_tail = bank_card[-4:]
+            if bank_card_tail and (
+                len(bank_card_tail) != 4 or not bank_card_tail.isdigit()
+            ):
+                raise ValueError(f"{name}的银行卡后四位格式不正确")
             people.append({
                 "person_id": str(item.get("person_id") or f"CARE{index + 1:04d}")[:40],
                 "name": name[:40],
@@ -925,9 +1304,10 @@ class AgentSessionService:
                 "wechat": str(item.get("wechat") or "").strip()[:100],
                 "alipay": str(item.get("alipay") or "").strip()[:100],
                 "bank_name": bank_name,
-                "bank_card": bank_card,
+                "bank_card": "",
+                "bank_card_tail": bank_card_tail,
                 "bank_card_masked": (
-                    f"**** **** **** {bank_card[-4:]}" if bank_card else ""
+                    f"**** **** **** {bank_card_tail}" if bank_card_tail else ""
                 ),
                 "favorite_gift": self._list_values(item.get("favorite_gift")),
                 "avoid": self._list_values(item.get("avoid")),
@@ -989,6 +1369,7 @@ class AgentSessionService:
                 user.preferences = prefs
                 user.updated_at = store.clock.iso()
                 store.touch(user)
+        agent.restore_pending(data.get("pending"))
         agent.restore_paused_questionnaire(data.get("paused_questionnaire"))
         agent.session.history = list(data.get("history") or [])
         agent.session.transcript = list(data.get("transcript") or [])
@@ -1015,6 +1396,9 @@ class AgentSessionService:
             channel=str(data["channel"]),
             created_at=str(data["created_at"]),
             agent=agent,
+            version=int(data.get("version") or 0),
+            session_token_hash=str(data.get("session_token_hash") or ""),
+            processed_requests=dict(data.get("processed_requests") or {}),
         )
         self._sessions[session_id] = record
         return record
@@ -1032,25 +1416,39 @@ class AgentSessionService:
         if self.repository is None:
             return
         agent = record.agent
-        self.repository.save_session(
-            session_id=record.session_id,
-            user_id=record.user_id,
-            channel=record.channel,
-            created_at=record.created_at,
-            payload={
-                "store": agent.store.snapshot(),
-                "risk_answers": dict(agent.risk_answers),
-                "risk_level": agent.risk_level,
-                "risk_assessed_at": agent.risk_assessed_at,
-                "risk_inference_confirmed_at": agent.risk_inference_confirmed_at,
-                "paused_questionnaire": agent.export_paused_questionnaire(),
-                "history": list(agent.session.history),
-                "transcript": list(agent.session.transcript),
-                "turn": agent.session.turn,
-                "last_intent_name": agent.last_intent_name,
-                "last_reply": asdict(agent.last_reply) if agent.last_reply is not None else None,
-                "reply_history": agent.export_reply_history(),
-            },
+        try:
+            new_version = self.repository.save_session(
+                session_id=record.session_id,
+                user_id=record.user_id,
+                channel=record.channel,
+                created_at=record.created_at,
+                expected_version=record.version,
+                payload={
+                    "store": agent.store.snapshot(),
+                    "risk_answers": dict(agent.risk_answers),
+                    "risk_level": agent.risk_level,
+                    "risk_assessed_at": agent.risk_assessed_at,
+                    "risk_inference_confirmed_at": agent.risk_inference_confirmed_at,
+                    "session_token_hash": record.session_token_hash,
+                    "processed_requests": dict(record.processed_requests),
+                    "pending": agent.export_pending(),
+                    "paused_questionnaire": agent.export_paused_questionnaire(),
+                    "history": list(agent.session.history),
+                    "transcript": list(agent.session.transcript),
+                    "turn": agent.session.turn,
+                    "last_intent_name": agent.last_intent_name,
+                    "last_reply": asdict(agent.last_reply) if agent.last_reply is not None else None,
+                    "reply_history": agent.export_reply_history(),
+                },
+            )
+        except OptimisticConcurrencyError:
+            with self._lock:
+                if self._sessions.get(record.session_id) is record:
+                    self._sessions.pop(record.session_id, None)
+            raise
+        record.version = (
+            int(new_version)
+            if new_version is not None else record.version + 1
         )
 
     @staticmethod

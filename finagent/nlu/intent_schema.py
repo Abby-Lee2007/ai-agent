@@ -363,6 +363,18 @@ INTENTS: Dict[str, IntentSpec] = {
         "计算可解释的个人财务健康分",
         [], ["我的财务健康分", "帮我做财务健康评分", "我哪里需要改善"],
     ),
+    "macro.official": IntentSpec(
+        "macro.official", "智能财务",
+        "查看可追溯的人行、国债收益率与中国CPI官方公开数据",
+        [L("refresh", "是否刷新公开数据", False, "boolean")],
+        ["查看官方宏观数据", "最新国债收益率和央行逆回购"],
+    ),
+    "market.overview": IntentSpec(
+        "market.overview", "智能财务",
+        "查看A股主要指数、两市成交额与盘面温度",
+        [],
+        ["今天大盘怎么样", "A股市场行情", "上证指数和创业板现在多少"],
+    ),
     "advisor.events": IntentSpec(
         "advisor.events", "智能财务",
         "查看和处理主动财务事件中心",
@@ -465,6 +477,6 @@ def slot_dictionary_text() -> str:
         "income_change_pct=收入变化百分比, extra_monthly_expense=每月新增支出, "
         "investment_amount=计划投资金额, investment_return_pct=投资预期年化, "
         "case=风险事件描述, action=事件操作, event_id=事件编号, "
-        "reveal=是否展示虚拟卡安全信息"
+        "reveal=是否展示虚拟卡安全信息, refresh=是否刷新官方公开数据"
     )
 

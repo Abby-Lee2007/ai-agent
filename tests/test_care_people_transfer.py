@@ -1,6 +1,7 @@
 """Care-person contact accounts and transfer resolution."""
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,8 +49,14 @@ class TestCarePeopleTransfer(unittest.TestCase):
             self.assertEqual(person["wechat"], "xiaoya_wx")
             self.assertEqual(person["alipay"], "13800138000")
             self.assertEqual(person["bank_name"], "工商银行")
-            self.assertEqual(person["bank_card"], "6222020000000007")
+            self.assertEqual(person["bank_card"], "")
+            self.assertEqual(person["bank_card_tail"], "0007")
             self.assertEqual(person["bank_card_masked"], "**** **** **** 0007")
+            stored = service.repository.load_session(session_id)
+            self.assertNotIn(
+                "6222020000000007",
+                json.dumps(stored, ensure_ascii=False),
+            )
 
             restarted = AgentSessionService(
                 make_store(),

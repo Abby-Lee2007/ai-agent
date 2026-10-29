@@ -145,6 +145,10 @@ class PayeeProvider:
             bank_card = "".join(
                 ch for ch in str(item.get("bank_card") or "") if ch.isdigit()
             )
+            bank_card_tail = (
+                bank_card[-4:]
+                or str(item.get("bank_card_tail") or "").strip()[-4:]
+            )
             wechat = str(item.get("wechat") or "").strip()[:100]
             alipay = str(item.get("alipay") or "").strip()[:100]
             payee = next(
@@ -181,8 +185,8 @@ class PayeeProvider:
                 payee.wechat = wechat
             if alipay:
                 payee.alipay = alipay
-            if bank_card:
-                payee.tail = bank_card[-4:]
+            if bank_card_tail:
+                payee.tail = bank_card_tail
             payee.source = "user:profile"
             payee.is_demo = False
             payee.updated_at = self.store.clock.iso()

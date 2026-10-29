@@ -91,6 +91,8 @@ class TestCapabilityCatalog(unittest.TestCase):
             "advisor.health_score",
             "advisor.events",
             "account.reconcile",
+            "macro.official",
+            "market.overview",
         }
         self.assertEqual(actual, expected)
 

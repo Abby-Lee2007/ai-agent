@@ -22,7 +22,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, time as dt_time
 from typing import Dict, List, Optional
 
 from finagent.data.provenance import is_stale
@@ -33,8 +33,17 @@ FALLBACK_QUOTE_URL = (
     "?secid={secid}&fields=f43,f44,f45,f46,f47,f48,f57,f58,f59,f60,f167,f168,f169,f170"
 )
 FUND_URL = ("https://api.fund.eastmoney.com/f10/lsjz"
-            "?fundCode={code}&pageIndex=1&pageSize=1")
+            "?fundCode={code}&pageIndex=1&pageSize={page_size}")
 FUND_FALLBACK_URL = "https://fundgz.1234567.com.cn/js/{code}.js?rt={stamp}"
+FUND_HISTORY_URL = (
+    "https://fundmobapi.eastmoney.com/FundMNewApi/FundMNHisNetList"
+    "?FCODE={code}&pageIndex=1&pageSize={limit}"
+    "&deviceid=finagent&plat=Iphone&product=EFund&version=6.3.8"
+)
+HISTORY_URL = (
+    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+    "?param={symbol},day,,,{limit},qfq"
+)
 HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"),
@@ -72,6 +81,7 @@ class Quote:
     )
     is_demo: bool = False
     freshness_seconds: int = 60
+    turnover_100m_cny: Optional[float] = None
 
     @property
     def is_live(self) -> bool:
@@ -251,6 +261,10 @@ class MarketDataProvider:
                 timestamp=self._format_stamp(parts[30]),
                 updated_at=datetime.now().isoformat(timespec="seconds"),
                 freshness_seconds=self.quote_freshness_seconds,
+                turnover_100m_cny=(
+                    round((_to_float(parts[37]) or 0.0) / 10_000, 2)
+                    if len(parts) > 37 else None
+                ),
             )
             result[symbol] = quote
             self._store(f"q:{symbol}", quote)
@@ -314,6 +328,10 @@ class MarketDataProvider:
             source="东方财富",
             updated_at=datetime.now().isoformat(timespec="seconds"),
             freshness_seconds=self.quote_freshness_seconds,
+            turnover_100m_cny=(
+                round((_to_float(data.get("f48")) or 0.0) / 100_000_000, 2)
+                if data.get("f48") is not None else None
+            ),
         )
 
     @staticmethod
@@ -331,6 +349,71 @@ class MarketDataProvider:
         return self.quotes([symbol]).get(symbol)
 
     # ------------------------------------------------------------------
+    def history(self, symbol: str, limit: int = 250) -> Optional[Dict[str, object]]:
+        """Fetch adjusted daily OHLC history for stocks, ETFs and bonds."""
+        normalized = str(symbol or "").strip().lower()
+        if not normalized or not self.enabled:
+            return None
+        limit = max(30, min(int(limit or 250), 500))
+        cache_key = f"h:{normalized}:{limit}"
+        cached = self._cached(cache_key)
+        if cached is not None:
+            return cached
+        raw = self._fetch(
+            HISTORY_URL.format(symbol=normalized, limit=limit),
+            encoding="utf-8",
+        )
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+            data = (payload.get("data") or {}).get(normalized) or {}
+            rows = data.get("qfqday") or data.get("day") or []
+            points = []
+            previous_close: Optional[float] = None
+            for row in rows:
+                parts = row if isinstance(row, list) else str(row).split(",")
+                if len(parts) < 6:
+                    continue
+                close = _to_float(parts[2])
+                if close is None or close <= 0:
+                    continue
+                change_pct = (
+                    (close / previous_close - 1) * 100
+                    if previous_close and previous_close > 0 else None
+                )
+                points.append({
+                    "date": str(parts[0]),
+                    "open": _to_float(parts[1]),
+                    "close": close,
+                    "high": _to_float(parts[3]),
+                    "low": _to_float(parts[4]),
+                    "volume": _to_float(parts[5]),
+                    "amount": _to_float(parts[6]) if len(parts) > 6 else None,
+                    "change_pct": round(change_pct, 4) if change_pct is not None else None,
+                })
+                previous_close = close
+            if len(points) < 10:
+                return None
+            quote_row = (data.get("qt") or {}).get(normalized) or []
+            result = {
+                "symbol": normalized.upper(),
+                "name": (
+                    str(quote_row[1]) if len(quote_row) > 1
+                    else normalized.upper()
+                ),
+                "source": "腾讯财经",
+                "points": points,
+                "fetched_at": datetime.now().isoformat(timespec="seconds"),
+                "is_demo": False,
+            }
+            self._store(cache_key, result)
+            return result
+        except (json.JSONDecodeError, TypeError, ValueError):
+            self.last_error = "历史行情接口返回格式异常"
+            return None
+
+    # ------------------------------------------------------------------
     def fund_nav(self, code: str) -> Optional[FundNav]:
         """取场外基金最新单位净值与当日涨跌。"""
         code = (code or "").strip()
@@ -340,7 +423,7 @@ class MarketDataProvider:
         if cached is not None:
             return cached
         raw = self._fetch(
-            FUND_URL.format(code=code),
+            FUND_URL.format(code=code, page_size=1),
             encoding="utf-8",
             extra_headers={"Referer": "https://fundf10.eastmoney.com/"},
         )
@@ -399,6 +482,62 @@ class MarketDataProvider:
         self._store(f"f:{code}", result)
         return result
 
+    def fund_nav_history(
+        self,
+        code: str,
+        limit: int = 250,
+    ) -> Optional[Dict[str, object]]:
+        """Fetch recent disclosed NAV history for an off-exchange fund."""
+        code = str(code or "").strip()
+        if not code or not self.enabled:
+            return None
+        limit = max(20, min(int(limit or 250), 500))
+        cache_key = f"fh:{code}:{limit}"
+        cached = self._cached(cache_key)
+        if cached is not None:
+            return cached
+        raw = self._fetch(
+            FUND_HISTORY_URL.format(code=code, limit=limit),
+            encoding="utf-8",
+            extra_headers={"User-Agent": "Mozilla/5.0"},
+        )
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+            rows = (
+                payload.get("Datas")
+                or (payload.get("Data") or {}).get("LSJZList")
+                or []
+            )
+            points = []
+            for row in rows:
+                nav = _to_float(row.get("DWJZ"))
+                if nav is None or nav <= 0:
+                    continue
+                points.append({
+                    "date": str(row.get("FSRQ") or ""),
+                    "close": nav,
+                    "adjusted_close": _to_float(row.get("LJJZ")) or nav,
+                    "change_pct": _to_float(row.get("JZZZL")),
+                })
+            points.sort(key=lambda item: item["date"])
+            if len(points) < 10:
+                return None
+            result = {
+                "symbol": code,
+                "name": code,
+                "source": "东方财富",
+                "points": points,
+                "fetched_at": datetime.now().isoformat(timespec="seconds"),
+                "is_demo": False,
+            }
+            self._store(cache_key, result)
+            return result
+        except (json.JSONDecodeError, TypeError, ValueError):
+            self.last_error = "基金历史净值接口返回格式异常"
+            return None
+
     # ------------------------------------------------------------------
     @staticmethod
     def _format_stamp(raw: str) -> str:
@@ -431,3 +570,89 @@ class MarketDataProvider:
                 if bool(getattr(value, "stale", False))
             ),
         }
+
+
+MARKET_OVERVIEW_INDICES = (
+    ("sh000001", "上证指数"),
+    ("sz399001", "深证成指"),
+    ("sh000300", "沪深300"),
+    ("sz399006", "创业板指"),
+    ("sh000688", "科创50"),
+    ("bj899050", "北证50"),
+)
+
+
+def _a_share_market_state(now: Optional[datetime] = None) -> str:
+    current = now or datetime.now()
+    if current.weekday() >= 5:
+        return "休市"
+    clock = current.time()
+    if clock < dt_time(9, 15):
+        return "未开盘"
+    if clock < dt_time(9, 30):
+        return "集合竞价"
+    if clock <= dt_time(11, 30):
+        return "交易中"
+    if clock < dt_time(13, 0):
+        return "午间休市"
+    if clock <= dt_time(15, 0):
+        return "交易中"
+    return "已收盘"
+
+
+def build_market_overview(
+    market: MarketDataProvider,
+    *,
+    now: Optional[datetime] = None,
+) -> Dict[str, object]:
+    """Return a compact, source-attributed A-share market dashboard."""
+    symbols = [symbol for symbol, _ in MARKET_OVERVIEW_INDICES]
+    quotes = market.quotes(symbols) if market.enabled else {}
+    indices = []
+    for symbol, fallback_name in MARKET_OVERVIEW_INDICES:
+        quote = quotes.get(symbol)
+        if quote is None:
+            indices.append({
+                "symbol": symbol.upper(),
+                "name": fallback_name,
+                "available": False,
+            })
+            continue
+        indices.append({
+            "symbol": symbol.upper(),
+            "name": quote.name or fallback_name,
+            "price": round(quote.price, 3),
+            "change": round(quote.change, 3),
+            "change_pct": round(quote.change_pct, 3),
+            "timestamp": quote.timestamp,
+            "source": quote.source,
+            "available": True,
+        })
+    available = [item for item in indices if item.get("available")]
+    turnover = round(sum(
+        quote.turnover_100m_cny or 0.0
+        for symbol, quote in quotes.items()
+        if symbol in {"sh000001", "sz399001"}
+    ), 2)
+    observed_times = [str(item.get("timestamp") or "") for item in available]
+    leading = max(available, key=lambda item: item["change_pct"]) if available else None
+    lagging = min(available, key=lambda item: item["change_pct"]) if available else None
+    sources = sorted({str(item.get("source") or "") for item in available if item.get("source")})
+    return {
+        "available": bool(available),
+        "status": "live" if len(available) == len(indices) else ("partial" if available else "unavailable"),
+        "market_state": _a_share_market_state(now),
+        "observed_at": max(observed_times) if observed_times else "",
+        "indices": indices,
+        "turnover_100m_cny": turnover if turnover > 0 else None,
+        "leading_index": leading,
+        "lagging_index": lagging,
+        "sources": sources,
+        "source_mode": "public_market_data",
+        "is_simulated": False,
+        "production_grade": False,
+        "data_note": (
+            "指数为公开行情快照；收盘后显示最近交易时点价格。"
+            "成交额仅汇总上证指数与深证成指行情字段，单位为亿元。"
+        ),
+    }

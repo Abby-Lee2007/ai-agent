@@ -157,6 +157,7 @@ class Card:
     tail: str = ""
     status: str = "active"     # active / frozen 冻结 / lost 挂失 / cancelled 销卡 / pending 待激活
     balance: float = 0.0       # 借记卡/虚拟卡可用资金；信用卡不使用该字段
+    locked: float = 0.0        # 目标或预约锁定的资金
     credit_limit: float = 0.0
     used: float = 0.0
     payment_password_hash: str = ""
@@ -194,7 +195,7 @@ class Card:
         """可用余额或可用信用额度。"""
         if self.kind == "credit":
             return max(self.credit_limit - self.used, 0.0)
-        return max(self.balance, 0.0)
+        return max(self.balance - self.locked, 0.0)
 
     @property
     def is_asset_card(self) -> bool:
@@ -327,6 +328,13 @@ class Holding:
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     is_live: bool = False
     is_demo: bool = True
+    # Listed instruments retain quantity and execution-price provenance so the
+    # simulated holding can be valued later without inventing share counts.
+    quantity: float = 0.0
+    average_cost: float = 0.0
+    last_price: float = 0.0
+    price_source: str = ""
+    price_as_of: str = ""
 
 
 @dataclass
@@ -379,7 +387,7 @@ class ScheduledTask:
     run_date: str              # YYYY-MM-DD
     title: str = ""
     payload: Dict[str, Any] = field(default_factory=dict)
-    status: str = "pending"    # pending / done / cancelled / failed
+    status: str = "pending"    # pending / processing / done / cancelled / failed
     repeat: str = "once"       # once / monthly / weekly
     created_at: str = ""
     executed_at: str = ""

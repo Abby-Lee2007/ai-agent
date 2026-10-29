@@ -332,6 +332,20 @@ GLOBAL_ACTIONS: Tuple[CapabilityAction, ...] = (
         aliases=("财务健康分", "健康评分", "财务评分"),
     ),
     CapabilityAction(
+        "official_macro", "官方宏观数据", "官方宏观数据",
+        "macro.official",
+        aliases=(
+            "官方宏观数据", "国债收益率", "央行逆回购",
+            "公开市场操作", "中国CPI", "宏观利率",
+        ),
+    ),
+    CapabilityAction(
+        "market_overview", "A股市场行情", "今天大盘怎么样",
+        "market.overview",
+        input_mode="panel", panel_id="market-dialog",
+        aliases=("A股行情", "大盘怎么样", "上证指数", "创业板指", "两市成交额"),
+    ),
+    CapabilityAction(
         "event_center", "主动事件中心", "我的主动事件",
         "advisor.events",
         aliases=("主动事件", "财务通知", "事件中心"),

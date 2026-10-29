@@ -228,6 +228,73 @@ class BankingAgent:
             return None
         return asdict(self.paused_questionnaire)
 
+    def export_pending(self) -> Optional[Dict[str, Any]]:
+        """Persist non-secret pending state without writing payment PINs."""
+        if self.session.pending is None:
+            return None
+        pending = self.session.pending
+        sensitive_fields = {
+            "password", "card_password", "card_password_confirm",
+            "payment_password", "card_no", "phone",
+        }
+        if any(pending.slots.get(field) for field in sensitive_fields):
+            return {
+                "restorable": False,
+                "reason": "pending_contains_sensitive_data",
+                "intent": pending.intent,
+            }
+        if pending.plan is not None:
+            if any(
+                step.args.get(field)
+                for step in pending.plan.steps
+                for field in sensitive_fields
+            ):
+                return {
+                    "restorable": False,
+                    "reason": "pending_contains_sensitive_data",
+                    "intent": pending.intent,
+                }
+        return {"restorable": True, **asdict(pending)}
+
+    def restore_pending(self, data: Optional[Dict[str, Any]]) -> None:
+        if not data or not data.get("restorable"):
+            self.session.pending = None
+            return
+        plan_data = data.get("plan")
+        plan = None
+        if isinstance(plan_data, dict):
+            plan = Plan(
+                intent=str(plan_data.get("intent") or ""),
+                steps=[
+                    PlanStep(
+                        tool=str(item.get("tool") or ""),
+                        args=dict(item.get("args") or {}),
+                        note=str(item.get("note") or ""),
+                    )
+                    for item in plan_data.get("steps") or []
+                    if isinstance(item, dict)
+                ],
+                missing=list(plan_data.get("missing") or []),
+                question=str(plan_data.get("question") or ""),
+                description=str(plan_data.get("description") or ""),
+                slots=dict(plan_data.get("slots") or {}),
+            )
+        origin_data = data.get("origin")
+        origin = Intent(**origin_data) if isinstance(origin_data, dict) else None
+        self.session.pending = Pending(
+            kind=str(data.get("kind") or ""),
+            intent=str(data.get("intent") or ""),
+            slots=dict(data.get("slots") or {}),
+            missing=list(data.get("missing") or []),
+            plan=plan,
+            question=str(data.get("question") or ""),
+            answers=dict(data.get("answers") or {}),
+            queue=list(data.get("queue") or []),
+            origin=origin,
+            inferences=dict(data.get("inferences") or {}),
+            inference_confirmed_at=str(data.get("inference_confirmed_at") or ""),
+        )
+
     def restore_paused_questionnaire(self, data: Optional[Dict[str, Any]]) -> None:
         if not data:
             self.paused_questionnaire = None
@@ -294,14 +361,18 @@ class BankingAgent:
         return reply
 
     def _workflow_payload(self, reply: AgentReply) -> Dict[str, Any]:
-        status = {
-            "executed": "completed",
-            "reply": "completed",
-            "error": "blocked",
-            "confirm": "waiting_confirmation",
-            "verify": "waiting_verification",
-            "question": "collecting_information",
-        }.get(reply.kind, "in_progress")
+        status = (
+            "failed"
+            if not reply.ok
+            else {
+                "executed": "completed",
+                "reply": "completed",
+                "error": "blocked",
+                "confirm": "waiting_confirmation",
+                "verify": "waiting_verification",
+                "question": "collecting_information",
+            }.get(reply.kind, "in_progress")
+        )
         agents = ["understanding"]
         if reply.intent in {
             "bill.anomaly", "risk.playbook", "card.freeze", "card.report_lost",
@@ -344,7 +415,7 @@ class BankingAgent:
             return AgentReply("请说点什么吧，例如「给老婆转2000块」。", kind="question", needs_input=True)
 
         self.session.turn += 1
-        remembered_text = "******" if self._input_is_secret(raw) else raw
+        remembered_text = self._redact_sensitive_input(raw)
         self.session.remember_user(remembered_text)
         try:
             reply = self._route(raw)
@@ -366,18 +437,55 @@ class BankingAgent:
             self.remember_reply(remembered_text, reply)
         return reply
 
-    def _input_is_secret(self, text: str) -> bool:
+    def _redact_sensitive_input(self, text: str) -> str:
+        """Mask credentials and payment identifiers in retained dialogue."""
         pending = self.session.pending
         if pending is not None and pending.kind == "payment_auth":
-            return True
-        if pending is None or not pending.missing:
-            return False
-        current = pending.missing[0]
-        if pending.intent == "card.apply":
-            return current in {"card_password", "card_password_confirm"}
-        if pending.intent == "card.bind":
-            return current == "password"
-        return False
+            return "******"
+        if pending is not None and pending.missing:
+            current = pending.missing[0]
+            if pending.intent == "card.apply" and current in {
+                "card_password", "card_password_confirm",
+            }:
+                return "******"
+            if pending.intent == "card.bind" and current == "password":
+                return "******"
+
+        result = text
+        result = re.sub(
+            r"(?<!\d)(\d{16,19})(?!\d)",
+            lambda match: "**** **** **** " + match.group(1)[-4:],
+            result,
+        )
+        result = re.sub(
+            r"(?<!\d)(1[3-9]\d{9})(?!\d)",
+            lambda match: match.group(1)[:3] + "****" + match.group(1)[-4:],
+            result,
+        )
+        result = re.sub(
+            r"((?:取款|交易|支付|银行)密码\s*[:：是为]?\s*)\d{6}",
+            r"\1******",
+            result,
+        )
+        return result
+
+    @staticmethod
+    def _redact_tool_argument(key: str, value: Any) -> Any:
+        if key in {
+            "password", "card_password", "card_password_confirm",
+            "payment_password",
+        }:
+            return "******"
+        if key in {"card_no", "bank_card"}:
+            digits = "".join(ch for ch in str(value) if ch.isdigit())
+            return f"**** **** **** {digits[-4:]}" if digits else "******"
+        if key == "phone":
+            digits = "".join(ch for ch in str(value) if ch.isdigit())
+            return (
+                f"{digits[:3]}****{digits[-4:]}"
+                if len(digits) >= 7 else "******"
+            )
+        return value
 
     # ==================================================================
     # 主路由
@@ -2202,7 +2310,12 @@ class BankingAgent:
     # ==================================================================
     # 风控闸门
     # ==================================================================
-    def _gate_and_execute(self, plan: Plan, data_confirmed: bool = False) -> AgentReply:
+    def _gate_and_execute(
+        self,
+        plan: Plan,
+        data_confirmed: bool = False,
+        verification_confirmed: bool = False,
+    ) -> AgentReply:
         ctx = self.context()
         decisions: List[RiskDecision] = []
         blockers: List[str] = []
@@ -2242,7 +2355,10 @@ class BankingAgent:
                 intent=plan.intent, ok=False, kind="error",
             )
 
-        requires_verification = any(d.requires_verification for d in decisions)
+        requires_verification = (
+            any(d.requires_verification for d in decisions)
+            and not verification_confirmed
+        )
         requires_confirmation = any(d.requires_confirmation for d in decisions)
         cooling_minutes = max((d.cooling_minutes for d in decisions), default=0)
         risk_notes = [d.summary() for d in decisions if d.reasons]
@@ -2861,6 +2977,7 @@ class BankingAgent:
                     "date": gift_day.isoformat(),
                     "budget": item.get("price"),
                     "offer_id": item.get("offer_id"),
+                    "goal_name": f"{display_name}生日惊喜金",
                     "note": (
                         f"生日礼物；偏好：{pending.slots.get('preferences')}；"
                         f"禁忌：{pending.slots.get('avoid')}"
@@ -2984,7 +3101,11 @@ class BankingAgent:
             self.session.clear_pending()
             return AgentReply("计划已失效，请重新说一次您的需求。", ok=False, kind="error")
         self.session.clear_pending()
-        return self._execute(pending.plan, self.context())
+        return self._gate_and_execute(
+            pending.plan,
+            data_confirmed=True,
+            verification_confirmed=True,
+        )
 
     def _new_verification_state(self) -> Dict[str, Any]:
         now = self.clock.now()
@@ -3069,6 +3190,7 @@ class BankingAgent:
     # 工具执行
     # ==================================================================
     def _execute(self, plan: Plan, ctx: ToolContext) -> AgentReply:
+        checkpoint = self.store.checkpoint()
         trace: List[Dict[str, Any]] = []
         messages: List[str] = []
         summaries: List[str] = []
@@ -3090,14 +3212,12 @@ class BankingAgent:
                 "step": index,
                 "tool": step.tool,
                 "args": {
-                    key: ("******" if key in {
-                        "password", "card_password", "card_password_confirm",
-                        "payment_password",
-                    } else value)
+                    key: self._redact_tool_argument(key, value)
                     for key, value in step.args.items()
                 },
                 "ok": result.ok,
                 "summary": result.summary,
+                "rolled_back": False,
             })
             if len(plan.steps) > 1:
                 messages.append(f"[{index}/{len(plan.steps)}] {result.message}")
@@ -3109,6 +3229,10 @@ class BankingAgent:
             else:
                 ok = False
                 break
+        if not ok:
+            self.store.restore_checkpoint(checkpoint)
+            for item in trace:
+                item["rolled_back"] = True
         self.store.log("agent.execute", intent=plan.intent, tools=plan.tools(), ok=ok)
         text = "\n\n".join(messages) if len(plan.steps) > 1 else (messages[0] if messages else "操作已完成。")
         gift_recommend_failed = not ok and any(
