@@ -1678,6 +1678,37 @@ try {
   assert(playbookDirectAction.text.includes("已冻结"), "确认按钮没有直接完成冻结动作");
   await screenshot(cdp, "desktop.png");
 
+  await openChat(cdp, 700, 900, false);
+  const tabletNavigation = await evaluate(cdp, `(() => {
+    const sidebar = document.querySelector(".sidebar").getBoundingClientRect();
+    const chat = document.querySelector(".chat").getBoundingClientRect();
+    const shortcuts = document.querySelector(".capability-section").getBoundingClientRect();
+    const categories = document.querySelector(".capability-categories");
+    const categoryRect = categories.getBoundingClientRect();
+    return {
+      viewport: [innerWidth, innerHeight],
+      sidebarLeft: sidebar.left,
+      sidebarRight: sidebar.right,
+      chatLeft: chat.left,
+      shortcutsInsideSidebar:
+        shortcuts.left >= sidebar.left - 1
+        && shortcuts.right <= sidebar.right + 1,
+      categoriesInsideSidebar:
+        categoryRect.left >= sidebar.left - 1
+        && categoryRect.right <= sidebar.right + 1,
+      categoryDisplay: getComputedStyle(categories).display,
+      pageFits: document.documentElement.scrollWidth <= innerWidth,
+    };
+  })()`);
+  assert(
+    tabletNavigation.sidebarRight <= tabletNavigation.chatLeft + 1,
+    "窄窗口快捷键侧栏跑到了聊天区上方",
+  );
+  assert(tabletNavigation.shortcutsInsideSidebar, "窄窗口快捷入口不在侧栏内");
+  assert(tabletNavigation.categoriesInsideSidebar, "窄窗口业务分类不在侧栏内");
+  assert(tabletNavigation.categoryDisplay === "grid", "窄窗口业务分类没有保持侧栏布局");
+  assert(tabletNavigation.pageFits, "窄窗口侧栏布局出现横向滚动");
+
   await openChat(cdp, 319, 844, true);
   await evaluate(cdp, `(() => {
     const button = [...document.querySelectorAll(".capability-category")]
@@ -1952,6 +1983,7 @@ try {
   console.log(JSON.stringify({
     ok: true,
     desktop,
+    tabletNavigation,
     mobile,
     mobileBill,
     mobileMarketDialog,
