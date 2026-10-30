@@ -524,25 +524,30 @@ try {
       expandedCategories: [...document.querySelectorAll(".capability-category")]
         .filter((button) => button.getAttribute("aria-expanded") === "true")
         .map((button) => button.textContent.trim()),
-      halloweenEdition: document.querySelector(".halloween-edition")?.textContent || "",
-      agentAvatar: Boolean(document.querySelector(".message.agent .avatar svg")),
+      themeSelector: Boolean(document.querySelector("#theme-select")),
+      themeOptions: [...document.querySelectorAll("#theme-select option")]
+        .map((option) => option.value),
+      themeValue: document.querySelector("#theme-select")?.value || "",
+      activeTheme: document.documentElement.dataset.theme || "",
+      halloweenActive: document.documentElement.classList.contains("theme-halloween"),
+      agentClassicAvatar: Boolean(document.querySelector(".message.agent .avatar-classic")),
       halloweenBats: Boolean(document.querySelector(".halloween-bats")),
       halloweenWeb: Boolean(document.querySelector(".halloween-web svg")),
       halloweenCandies: document.querySelectorAll(".halloween-candy").length,
       halloweenSkulls: document.querySelectorAll(".halloween-skull").length,
-      pumpkinAccent: getComputedStyle(document.documentElement)
-        .getPropertyValue("--halloween-orange").trim(),
     };
   })()`);
   assert(desktop.title === "AI Banking Agent", "H5 标题不正确");
   assert(desktop.scrollWidth <= desktop.viewport[0], "桌面页面出现横向滚动");
-  assert(desktop.halloweenEdition.includes("Halloween"), "万圣节限定徽标缺失");
-  assert(desktop.agentAvatar, "Agent 万圣节头像缺失");
-  assert(desktop.halloweenBats, "顶部万圣节装饰缺失");
-  assert(desktop.halloweenWeb, "蜘蛛网装饰缺失");
-  assert(desktop.halloweenCandies === 7, "糖果装饰数量异常");
-  assert(desktop.halloweenSkulls === 2, "骷髅头装饰数量异常");
-  assert(desktop.pumpkinAccent, "万圣节主题色未加载");
+  assert(desktop.themeSelector, "皮肤选择器缺失");
+  assert(
+    desktop.themeOptions.join(",") === "classic,halloween",
+    "皮肤选择器选项不完整",
+  );
+  assert(desktop.themeValue === "classic", "默认皮肤应为经典主题");
+  assert(desktop.activeTheme === "classic", "默认主题状态不正确");
+  assert(!desktop.halloweenActive, "未选择万圣节时不应启用皮肤");
+  assert(desktop.agentClassicAvatar, "经典主题缺少 Agent 头像");
   assert(desktop.composerOverlap === false, "输入框与发送按钮重叠");
   assert(desktop.capabilityLabels.length === 6, "业务分类数量不是 6 个");
   assert(desktop.capabilityLabels[0].includes("智能转账"), "缺少智能转账分类");
@@ -1423,6 +1428,10 @@ try {
     const band50 = chart?.querySelector(".band-50");
     const band90 = chart?.querySelector(".band-90");
     const workflow = bubble?.querySelector(".workflow-strip");
+    const guide = panel?.querySelector(".forecast-guide");
+    const primaryAction = panel?.querySelector(".forecast-action-primary");
+    const actionLabels = [...(panel?.querySelectorAll(".forecast-action") || [])]
+      .map((button) => button.textContent.trim());
     const rect = bubble?.getBoundingClientRect();
     return {
       panel: Boolean(panel),
@@ -1445,6 +1454,14 @@ try {
       actionPlanItems: panel?.querySelectorAll(".action-plan-item").length || 0,
       stressTests: panel?.querySelectorAll(".stress-test").length || 0,
       workflow: workflow?.textContent || "",
+      hasGuide: Boolean(guide),
+      guideOpen: guide?.open || false,
+      guideText: guide?.textContent || "",
+      primaryAction: primaryAction?.textContent.trim() || "",
+      lastAction: actionLabels.at(-1) || "",
+      guideBeforeHead: Boolean(
+        guide?.getBoundingClientRect().top <= panel?.querySelector(".forecast-head")?.getBoundingClientRect().top
+      ),
       insideViewport: rect ? rect.left >= 0 && rect.right <= innerWidth + 1 : false,
       pageFits: document.documentElement.scrollWidth <= innerWidth
     };
@@ -1472,9 +1489,36 @@ try {
   assert(forecastLayout.breakdownRows >= 6, "财务数字孪生缺少现金流构成");
   assert(forecastLayout.actionPlanItems >= 1, "财务数字孪生缺少可执行建议");
   assert(forecastLayout.stressTests === 3, "财务数字孪生缺少三项压力测试");
-  assert(forecastLayout.workflow.includes("顾问 Agent"), "工作流没有显示多 Agent 角色");
+  assert(!forecastLayout.workflow, "现金流顶部仍然显示 Agent/查看流程");
+  assert(forecastLayout.hasGuide, "现金流面板缺少可展开的使用与阅读说明");
+  assert(!forecastLayout.guideOpen, "现金流使用说明不应默认展开");
+  assert(forecastLayout.guideBeforeHead, "现金流使用说明没有放在图表顶部");
+  assert(
+    forecastLayout.guideText.includes("确认应用此预测")
+      && forecastLayout.guideText.includes("灰色虚线")
+      && forecastLayout.guideText.includes("蓝色实线")
+      && forecastLayout.guideText.includes("黄色圆点")
+      && forecastLayout.guideText.includes("90%"),
+    "现金流使用说明没有讲清滑块、按钮和图表元素",
+  );
+  assert(forecastLayout.primaryAction === "确认应用此预测", "底部主按钮文案错误");
+  assert(forecastLayout.lastAction === "确认应用此预测", "确认按钮没有放在操作区最底部");
   assert(forecastLayout.insideViewport, "现金流预测面板超出视口");
   assert(forecastLayout.pageFits, "现金流预测面板导致页面横向滚动");
+  await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    bubble?.querySelector(".forecast-guide summary")?.click();
+    return true;
+  })()`);
+  const expandedGuide = await evaluate(cdp, `(() => {
+    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const guide = bubble?.querySelector(".forecast-guide");
+    return {
+      open: guide?.open || false,
+      bodyVisible: Boolean(guide?.querySelector(".forecast-guide-body"))
+    };
+  })()`);
+  assert(expandedGuide.open && expandedGuide.bodyVisible, "现金流使用说明无法展开查看");
   await evaluate(cdp, `(() => {
     const button = [...document.querySelectorAll(".forecast-action")]
       .find((item) => item.textContent.trim() === "试算收入下降20%");
@@ -1508,20 +1552,11 @@ try {
   assert(scenarioLayout.metricCount >= 7, "情景结果缺少基准差值指标");
   assert(scenarioLayout.hasDeltaMetric, "情景结果没有显示余额变化");
   assert(scenarioLayout.hasBaseline, "情景图缺少基准对比线");
-  assert(scenarioLayout.guidance.includes("使用顺序"), "数字孪生缺少使用说明");
-  await evaluate(cdp, `(() => {
-    const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
-    bubble?.querySelector(".workflow-open")?.click();
-    return true;
-  })()`);
-  await waitFor(cdp, `document.querySelector("#detail-dialog")?.open === true`);
-  const workflowDetails = await evaluate(cdp, `({
-    rows: document.querySelectorAll("#detail-dialog-content .transaction-detail-row").length,
-    text: document.querySelector("#detail-dialog-content")?.textContent || ""
-  })`);
-  assert(workflowDetails.rows >= 3, "Agent 操作中心没有展示工作流步骤");
-  assert(workflowDetails.text.includes("理解 Agent"), "工作流缺少理解 Agent 信息");
-  await evaluate(cdp, `document.querySelector("#detail-dialog-close").click()`);
+  assert(
+    scenarioLayout.guidance.includes("使用顺序")
+      && scenarioLayout.guidance.includes("确认应用此预测"),
+    "数字孪生缺少使用说明",
+  );
   await screenshot(cdp, "desktop-forecast.png");
   await sendPrompt(cdp, "主动财务管家", "个人 CFO");
   const proactive = await evaluate(cdp, `(() => {

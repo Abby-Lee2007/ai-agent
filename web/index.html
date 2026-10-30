@@ -4,17 +4,29 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Banking Agent</title>
+  <script>
+    (() => {
+      try {
+        const saved = localStorage.getItem("finagent_theme");
+        const theme = saved === "halloween" ? "halloween" : "classic";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.classList.toggle("theme-halloween", theme === "halloween");
+      } catch {
+        document.documentElement.dataset.theme = "classic";
+      }
+    })();
+  </script>
   <style>
     :root {
-      --bg: #17121f;
-      --surface: #fffaf3;
-      --surface-soft: #f8efe3;
-      --ink: #251d2b;
-      --muted: #756575;
-      --line: #e7d8c8;
-      --accent: #c9561d;
-      --accent-strong: #8f3514;
-      --accent-soft: #fbe6d2;
+      --bg: #f2f5f3;
+      --surface: #ffffff;
+      --surface-soft: #f7f9f8;
+      --ink: #1c2a28;
+      --muted: #667572;
+      --line: #dce5e2;
+      --accent: #0b6b5f;
+      --accent-strong: #075248;
+      --accent-soft: #e4f1ed;
       --halloween-purple: #432a61;
       --halloween-purple-soft: #eee1f5;
       --halloween-ink: #fff7ea;
@@ -24,6 +36,19 @@
       --danger: #a9362c;
       --market-up: #c23a32;
       --market-down: #087a5a;
+      --shadow: 0 14px 40px rgba(25, 54, 49, 0.08);
+    }
+
+    html.theme-halloween {
+      --bg: #17121f;
+      --surface: #fffaf3;
+      --surface-soft: #f8efe3;
+      --ink: #251d2b;
+      --muted: #756575;
+      --line: #e7d8c8;
+      --accent: #c9561d;
+      --accent-strong: #8f3514;
+      --accent-soft: #fbe6d2;
       --shadow: 0 16px 46px rgba(7, 4, 12, 0.28);
     }
 
@@ -2138,6 +2163,19 @@
     .insight-action:hover,
     .playbook-action:hover,
     .aa-copy:hover { border-color: #9ec7bd; background: var(--accent-soft); }
+    .forecast-action-primary {
+      flex: 0 0 100%;
+      width: 100%;
+      min-height: 36px;
+      margin-left: 0;
+      border-color: var(--accent);
+      color: #fff;
+      background: var(--accent);
+    }
+    .forecast-action-primary:hover {
+      color: #fff;
+      background: var(--accent-strong);
+    }
     .insight-table,
     .analytics-table {
       width: 100%;
@@ -2492,17 +2530,88 @@
       background: var(--surface);
     }
     .forecast-guide {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px 14px;
-      padding: 9px 11px;
+      display: block;
+      padding: 0;
       border-left: 3px solid var(--accent);
       border-radius: 0 5px 5px 0;
       color: var(--muted);
       background: var(--accent-soft);
       font-size: 11px;
     }
-    .forecast-guide strong { color: var(--accent-strong); }
+    .forecast-guide summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 11px;
+      color: var(--accent-strong);
+      font-weight: 750;
+      cursor: pointer;
+      list-style: none;
+    }
+    .forecast-guide summary::-webkit-details-marker { display: none; }
+    .forecast-guide summary::after {
+      content: "展开";
+      flex: 0 0 auto;
+      padding: 2px 6px;
+      border: 1px solid #b9d6cf;
+      border-radius: 4px;
+      color: var(--accent-strong);
+      background: var(--surface);
+      font-size: 10px;
+    }
+    .forecast-guide[open] summary::after { content: "收起"; }
+    .forecast-guide-body {
+      display: grid;
+      gap: 8px;
+      padding: 0 11px 10px;
+      border-top: 1px solid rgba(79, 155, 138, .18);
+      line-height: 1.55;
+    }
+    .forecast-guide-body > strong {
+      margin-top: 8px;
+      color: var(--accent-strong);
+    }
+    .forecast-guide-body ol,
+    .forecast-guide-body ul {
+      display: grid;
+      gap: 4px;
+      margin: 0;
+      padding-left: 18px;
+    }
+    .forecast-guide-line,
+    .forecast-guide-band,
+    .forecast-guide-dot {
+      display: inline-block;
+      flex: 0 0 auto;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+    .forecast-guide-line {
+      width: 18px;
+      height: 2px;
+      background: var(--accent);
+    }
+    .forecast-guide-line.baseline {
+      height: 1px;
+      background: repeating-linear-gradient(
+        90deg,
+        var(--muted) 0 5px,
+        transparent 5px 9px
+      );
+    }
+    .forecast-guide-band {
+      width: 18px;
+      height: 8px;
+      background: rgba(79, 155, 138, .2);
+    }
+    .forecast-guide-band.wide { background: rgba(123, 184, 170, .14); }
+    .forecast-guide-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--warning);
+    }
     .scenario-summary {
       display: flex;
       flex-wrap: wrap;
@@ -2673,6 +2782,106 @@
       background: color-mix(in srgb, var(--accent) 18%, transparent);
     }
 
+    .theme-switcher {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 10px;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+    .theme-switcher select {
+      min-height: 25px;
+      padding: 2px 23px 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      color: var(--ink);
+      background: var(--surface);
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+    html.theme-halloween .theme-switcher { color: #d9c8e6; }
+    html.theme-halloween .theme-switcher select {
+      color: var(--halloween-ink);
+      border-color: rgba(255, 213, 168, .42);
+      background: rgba(255, 250, 243, .08);
+    }
+    .brand-mark-classic,
+    .brand-mark-halloween,
+    .avatar-classic,
+    .avatar-halloween {
+      width: 100%;
+      height: 100%;
+      display: grid;
+      place-items: center;
+    }
+    html.theme-halloween .brand-mark-classic,
+    html.theme-halloween .avatar-classic { display: none; }
+    html:not(.theme-halloween) .brand-mark-halloween,
+    html:not(.theme-halloween) .avatar-halloween { display: none; }
+
+    html:not(.theme-halloween) body::before { display: none; }
+    html:not(.theme-halloween) .app { border-color: var(--line); }
+    html:not(.theme-halloween) .topbar {
+      color: var(--ink);
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+    html:not(.theme-halloween) .topbar::after { display: none; }
+    html:not(.theme-halloween) .halloween-bats,
+    html:not(.theme-halloween) .halloween-scenery,
+    html:not(.theme-halloween) .halloween-candies { display: none; }
+    html:not(.theme-halloween) .brand-mark { background: var(--accent); }
+    html:not(.theme-halloween) .brand-copy strong { color: var(--ink); }
+    html:not(.theme-halloween) .brand-copy > span { color: var(--muted); }
+    html:not(.theme-halloween) .status { color: var(--muted); }
+    html:not(.theme-halloween) .topbar .event-center-button {
+      color: var(--ink);
+      border-color: var(--line);
+      background: var(--surface);
+    }
+    html:not(.theme-halloween) .topbar .event-center-button:hover {
+      border-color: #9ec7bd;
+      background: var(--accent-soft);
+    }
+    html:not(.theme-halloween) .sidebar {
+      border-right: 1px solid var(--line);
+      background: var(--surface-soft);
+    }
+    html:not(.theme-halloween) .side-label { color: var(--muted); }
+    html:not(.theme-halloween) .customer {
+      border: 1px solid var(--line);
+    }
+    html:not(.theme-halloween) .chat { background: #fbfcfc; }
+    html:not(.theme-halloween) .avatar {
+      border: 0;
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+      box-shadow: none;
+    }
+    html:not(.theme-halloween) .message.user .avatar {
+      background: #e9eceb;
+      color: #4b5b58;
+    }
+    html:not(.theme-halloween) .message.user .bubble {
+      border-color: #c9d9d5;
+      background: #e8f2ef;
+    }
+    html:not(.theme-halloween) .composer-area {
+      border-top: 1px solid var(--line);
+      background: var(--surface);
+    }
+    html:not(.theme-halloween) .composer {
+      border: 1px solid #bdcfca;
+      box-shadow: none;
+    }
+    html:not(.theme-halloween) .composer:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(11, 107, 95, .1);
+    }
+
     @media (min-width: 601px) and (max-width: 760px) {
       .workspace { grid-template-columns: 224px minmax(0, 1fr); }
       .sidebar { padding: 14px; }
@@ -2804,6 +3013,10 @@
       .market-overview-title span { max-width: 210px; }
       .market-overview-meta { align-items: flex-start; flex-direction: column; gap: 2px; }
       .forecast-controls { grid-template-columns: 1fr; }
+      .forecast-action-primary {
+        width: 100%;
+        margin-left: 0;
+      }
       .stress-test-grid { grid-template-columns: 1fr; }
       .cashflow-breakdown-row {
         grid-template-columns: 88px minmax(0, 1fr) 86px;
@@ -2815,11 +3028,20 @@
   <div class="app">
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">31</div>
+        <div class="brand-mark" aria-hidden="true">
+          <span class="brand-mark-classic">FA</span>
+          <span class="brand-mark-halloween">31</span>
+        </div>
         <div class="brand-copy">
           <strong>AI Banking Agent</strong>
           <span>智能银行代理系统</span>
-          <span class="halloween-edition">Halloween limited edition</span>
+          <label class="theme-switcher">
+            <span>皮肤</span>
+            <select id="theme-select" aria-label="切换页面皮肤">
+              <option value="classic">经典</option>
+              <option value="halloween">万圣节限定</option>
+            </select>
+          </label>
         </div>
       </div>
       <div class="halloween-bats" aria-hidden="true">
@@ -2894,14 +3116,17 @@
         <div class="messages" id="messages" aria-live="polite">
           <article class="message agent">
             <div class="avatar avatar-agent" aria-hidden="true">
-              <svg viewBox="0 0 32 32" focusable="false">
-                <rect width="32" height="32" fill="#432a61"></rect>
-                <path d="M9 9 12 3l4 5 4-5 3 6" fill="#ed812b"></path>
-                <path d="M8 15c0-4 3-6 8-6s8 2 8 6v9l-3-2-2 2-3-3-3 3-3-2-2 2Z" fill="#fff7ea"></path>
-                <circle cx="13" cy="16" r="1.2" fill="#432a61"></circle>
-                <circle cx="19" cy="16" r="1.2" fill="#432a61"></circle>
-                <path d="M14 21c1.5 1 2.5 1 4 0" fill="none" stroke="#c9561d" stroke-width="1.4" stroke-linecap="round"></path>
-              </svg>
+              <span class="avatar-classic">FA</span>
+              <span class="avatar-halloween">
+                <svg viewBox="0 0 32 32" focusable="false">
+                  <rect width="32" height="32" fill="#432a61"></rect>
+                  <path d="M9 9 12 3l4 5 4-5 3 6" fill="#ed812b"></path>
+                  <path d="M8 15c0-4 3-6 8-6s8 2 8 6v9l-3-2-2 2-3-3-3 3-3-2-2 2Z" fill="#fff7ea"></path>
+                  <circle cx="13" cy="16" r="1.2" fill="#432a61"></circle>
+                  <circle cx="19" cy="16" r="1.2" fill="#432a61"></circle>
+                  <path d="M14 21c1.5 1 2.5 1 4 0" fill="none" stroke="#c9561d" stroke-width="1.4" stroke-linecap="round"></path>
+                </svg>
+              </span>
             </div>
             <div class="bubble">
               <div class="message-meta"><span class="kind">就绪</span><span>在线助手</span></div>
@@ -3233,6 +3458,7 @@
     const cardStatus = document.getElementById("card-settings-status");
     const customerName = document.getElementById("customer-name");
     const customerSubtitle = document.getElementById("customer-subtitle");
+    const themeSelect = document.getElementById("theme-select");
     const capabilityGlobalActions = document.getElementById("capability-global-actions");
     const capabilityCategories = document.getElementById("capability-categories");
     const marketOverviewStatus = document.getElementById("market-overview-status");
@@ -3274,6 +3500,31 @@
     let activeRequest = null;
     const REQUEST_RECOVERY_KEY = "finagent_request_recovery_v1";
     const REQUEST_RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
+    const THEME_STORAGE_KEY = "finagent_theme";
+
+    function applyTheme(theme, { persist = true } = {}) {
+      const normalized = theme === "halloween" ? "halloween" : "classic";
+      document.documentElement.dataset.theme = normalized;
+      document.documentElement.classList.toggle(
+        "theme-halloween",
+        normalized === "halloween",
+      );
+      themeSelect.value = normalized;
+      if (persist) {
+        try {
+          localStorage.setItem(THEME_STORAGE_KEY, normalized);
+        } catch {
+          // Theme still applies for this page view when storage is unavailable.
+        }
+      }
+    }
+
+    themeSelect.addEventListener("change", () => {
+      applyTheme(themeSelect.value);
+    });
+    applyTheme(document.documentElement.dataset.theme || "classic", {
+      persist: false,
+    });
 
     function localTodayISO() {
       const now = new Date();
@@ -4855,6 +5106,57 @@
       const root = document.createElement("div");
       root.className = "forecast-panel";
 
+      const guide = document.createElement("details");
+      guide.className = "forecast-guide";
+      const guideSummary = document.createElement("summary");
+      guideSummary.textContent = "图表怎么读？点开查看使用与阅读说明";
+      const guideBody = document.createElement("div");
+      guideBody.className = "forecast-guide-body";
+      const usageTitle = document.createElement("strong");
+      usageTitle.textContent = "使用顺序";
+      const usageList = document.createElement("ol");
+      [
+        "先选择 30、60 或 90 天预测周期。",
+        "拖动下方滑块，设置一次性消费、收入变化、新增支出或投资情景。",
+        "点击卡片最底部的“确认应用此预测”，系统才会按新条件重新计算。",
+      ].forEach((text) => {
+        const item = document.createElement("li");
+        item.textContent = text;
+        usageList.appendChild(item);
+      });
+      const readingTitle = document.createElement("strong");
+      readingTitle.textContent = "图表元素";
+      const readingList = document.createElement("ul");
+      [
+        ["forecast-guide-line", "蓝色实线：当前设置下，每天预计还能动用多少钱。"],
+        ["forecast-guide-line baseline", "灰色虚线：没有调整滑块时的基准余额。"],
+        ["forecast-guide-band", "深色区间：50% 的模拟结果落在其中（P25-P75）。"],
+        ["forecast-guide-band wide", "浅色区间：90% 的模拟结果落在其中（P05-P95）；区间越宽，不确定性越大。"],
+        ["forecast-guide-dot", "黄色圆点：预计余额最低的一天。"],
+        ["", "红色虚线：余额 0 元警戒线；出现时表示可能透支。"],
+        ["", "纵轴 k 表示千元；横轴是未来日期。"],
+      ].forEach(([className, text]) => {
+        const item = document.createElement("li");
+        if (className) {
+          const symbol = document.createElement("span");
+          symbol.className = className;
+          item.appendChild(symbol);
+        }
+        item.appendChild(document.createTextNode(text));
+        readingList.appendChild(item);
+      });
+      const guideNote = document.createElement("p");
+      guideNote.textContent = "滑块只修改假设，不会自动覆盖当前预测；必须点击底部“确认应用此预测”后才会重新计算。";
+      guideBody.append(
+        usageTitle,
+        usageList,
+        readingTitle,
+        readingList,
+        guideNote,
+      );
+      guide.append(guideSummary, guideBody);
+      root.appendChild(guide);
+
       const head = document.createElement("div");
       head.className = "forecast-head";
       const copy = document.createElement("div");
@@ -4908,18 +5210,6 @@
         horizons.appendChild(button);
       });
       root.appendChild(horizons);
-
-      const guide = document.createElement("div");
-      guide.className = "forecast-guide";
-      const guideTitle = document.createElement("strong");
-      guideTitle.textContent = "使用顺序";
-      guide.append(
-        guideTitle,
-        document.createTextNode("① 选择 30/60/90 天"),
-        document.createTextNode("② 拖动情景滑块并点击“应用情景滑块”"),
-        document.createTextNode("③ 对比最低余额、净现金流和压力测试后再做决定"),
-      );
-      root.appendChild(guide);
 
       if (scenarioActive) {
         const scenarioSummary = document.createElement("div");
@@ -5453,14 +5743,17 @@
       const actions = document.createElement("div");
       actions.className = "forecast-actions";
       [
-        ["应用情景滑块", "__scenario__"],
         ["试算购买8000元电脑", "如果下个月买8000元电脑会怎样"],
         ["试算收入下降20%", "收入下降20%后未来90天现金流会怎样"],
-        ["重新预测", "预测我未来90天的现金流"]
+        ["重新预测", "预测我未来90天的现金流"],
+        ["确认应用此预测", "__scenario__"]
       ].forEach(([label, prompt]) => {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "forecast-action";
+        if (prompt === "__scenario__") {
+          button.classList.add("forecast-action-primary");
+        }
         button.textContent = label;
         button.addEventListener("click", async () => {
           if (busy) return;
@@ -6431,7 +6724,7 @@
       const avatar = document.createElement("div");
       avatar.className = `avatar avatar-${role}`;
       avatar.setAttribute("aria-hidden", "true");
-      avatar.innerHTML = role === "user"
+      const halloweenAvatar = role === "user"
         ? `<svg viewBox="0 0 32 32" focusable="false">
              <rect width="32" height="32" fill="#fff0df"></rect>
              <path d="M16 8c-1-3 1-5 3-6 0 3-1 5-2 6Z" fill="#47714b"></path>
@@ -6447,6 +6740,10 @@
              <circle cx="19" cy="16" r="1.2" fill="#432a61"></circle>
              <path d="M14 21c1.5 1 2.5 1 4 0" fill="none" stroke="#c9561d" stroke-width="1.4" stroke-linecap="round"></path>
            </svg>`;
+      avatar.innerHTML = `
+        <span class="avatar-classic">${role === "user" ? "YOU" : "FA"}</span>
+        <span class="avatar-halloween">${halloweenAvatar}</span>
+      `;
 
       const bubble = document.createElement("div");
       bubble.className = "bubble";
@@ -6463,7 +6760,9 @@
         const intent = document.createElement("span");
         intent.textContent = reply.intent || "agent";
         meta.append(kind, intent);
-        renderWorkflowStrip(meta, reply.data?.workflow);
+        if (reply.intent !== "forecast.cashflow") {
+          renderWorkflowStrip(meta, reply.data?.workflow);
+        }
         bubble.appendChild(meta);
       }
 
@@ -6624,8 +6923,20 @@
       article.className = "message agent";
       article.id = "typing-message";
       const avatar = document.createElement("div");
-      avatar.className = "avatar";
-      avatar.textContent = "FA";
+      avatar.className = "avatar avatar-agent";
+      avatar.innerHTML = `
+        <span class="avatar-classic">FA</span>
+        <span class="avatar-halloween">
+          <svg viewBox="0 0 32 32" focusable="false">
+            <rect width="32" height="32" fill="#432a61"></rect>
+            <path d="M9 9 12 3l4 5 4-5 3 6" fill="#ed812b"></path>
+            <path d="M8 15c0-4 3-6 8-6s8 2 8 6v9l-3-2-2 2-3-3-3 3-3-2-2 2Z" fill="#fff7ea"></path>
+            <circle cx="13" cy="16" r="1.2" fill="#432a61"></circle>
+            <circle cx="19" cy="16" r="1.2" fill="#432a61"></circle>
+            <path d="M14 21c1.5 1 2.5 1 4 0" fill="none" stroke="#c9561d" stroke-width="1.4" stroke-linecap="round"></path>
+          </svg>
+        </span>
+      `;
       const bubble = document.createElement("div");
       bubble.className = "bubble";
       bubble.innerHTML = '<span class="typing"><span>正在处理</span><i></i><i></i><i></i></span>';
