@@ -524,10 +524,25 @@ try {
       expandedCategories: [...document.querySelectorAll(".capability-category")]
         .filter((button) => button.getAttribute("aria-expanded") === "true")
         .map((button) => button.textContent.trim()),
+      halloweenEdition: document.querySelector(".halloween-edition")?.textContent || "",
+      agentAvatar: Boolean(document.querySelector(".message.agent .avatar svg")),
+      halloweenBats: Boolean(document.querySelector(".halloween-bats")),
+      halloweenWeb: Boolean(document.querySelector(".halloween-web svg")),
+      halloweenCandies: document.querySelectorAll(".halloween-candy").length,
+      halloweenSkulls: document.querySelectorAll(".halloween-skull").length,
+      pumpkinAccent: getComputedStyle(document.documentElement)
+        .getPropertyValue("--halloween-orange").trim(),
     };
   })()`);
   assert(desktop.title === "AI Banking Agent", "H5 标题不正确");
   assert(desktop.scrollWidth <= desktop.viewport[0], "桌面页面出现横向滚动");
+  assert(desktop.halloweenEdition.includes("Halloween"), "万圣节限定徽标缺失");
+  assert(desktop.agentAvatar, "Agent 万圣节头像缺失");
+  assert(desktop.halloweenBats, "顶部万圣节装饰缺失");
+  assert(desktop.halloweenWeb, "蜘蛛网装饰缺失");
+  assert(desktop.halloweenCandies === 7, "糖果装饰数量异常");
+  assert(desktop.halloweenSkulls === 2, "骷髅头装饰数量异常");
+  assert(desktop.pumpkinAccent, "万圣节主题色未加载");
   assert(desktop.composerOverlap === false, "输入框与发送按钮重叠");
   assert(desktop.capabilityLabels.length === 6, "业务分类数量不是 6 个");
   assert(desktop.capabilityLabels[0].includes("智能转账"), "缺少智能转账分类");
@@ -614,10 +629,12 @@ try {
   );
   const transferShortcut = await evaluate(cdp, `(() => ({
     userText: [...document.querySelectorAll(".message.user .bubble")].at(-1)?.textContent.trim(),
-    agentText: [...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent || ""
+    agentText: [...document.querySelectorAll(".message.agent .bubble")].at(-1)?.textContent || "",
+    userAvatar: Boolean(document.querySelector(".message.user .avatar svg"))
   }))()`);
   assert(transferShortcut.userText === "给他人转账", "转账快捷指令没有只发送卡片简称");
   assert(!transferShortcut.agentText.includes("转给他人"), "转账快捷指令把“他人”误当成收款人");
+  assert(transferShortcut.userAvatar, "用户南瓜头像缺失");
   await sendPrompt(cdp, "取消", "本次操作已取消");
   await evaluate(cdp, `(() => {
     const button = [...document.querySelectorAll(".capability-category")]
