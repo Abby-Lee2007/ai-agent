@@ -6,9 +6,32 @@ import unittest
 from tests.support import make_agent, run_to_completion
 
 
+CREDIT_MODEL_ANSWERS = (
+    "教育本科",
+    "按时还清,按时还清,按时还清,按时还清,按时还清,按时还清",
+    "100,200,300,400,500,600",
+    "1000,2000",
+)
+
+
 class TestCardManagement(unittest.TestCase):
     def setUp(self):
         self.agent = make_agent()
+
+    def _add_uploaded_transaction(self, agent=None):
+        agent = agent or self.agent
+        account_id = agent.store.accounts_of("u_001")[0].account_id
+        agent.store.add_transaction(
+            user_id="u_001",
+            account_id=account_id,
+            amount=-120,
+            merchant="测试上传账单",
+            category="餐饮",
+            timestamp="2026-10-12T12:00:00",
+            tags=["receipt_import"],
+            source="upload:user",
+            is_demo=False,
+        )
 
     def test_card_list(self):
         reply = self.agent.handle("我有哪些卡")
@@ -156,6 +179,7 @@ class TestCardManagement(unittest.TestCase):
         self.assertEqual(self.agent.session.pending.missing, ["phone"])
 
     def test_apply_credit_card(self):
+        self._add_uploaded_transaction()
         reply = self.agent.handle("我想申请一张工商银行的信用卡")
         self.assertEqual(reply.kind, "question")
         self.assertIn("信用卡申请", reply.text)
@@ -167,8 +191,9 @@ class TestCardManagement(unittest.TestCase):
             "3000",
             "30000",
             "日常消费",
-            "使用演示流水",
+            "已上传",
             "同意",
+            *CREDIT_MODEL_ANSWERS,
         ):
             reply = self.agent.handle(answer)
         self.assertEqual(reply.kind, "confirm")
@@ -176,12 +201,23 @@ class TestCardManagement(unittest.TestCase):
         self.assertTrue(reply.ok)
         self.assertIn("模拟预审完成", reply.text)
         self.assertIn("用途：日常消费", reply.text)
-        self.assertIn("演示流水（模拟数据）", reply.text)
+        self.assertIn("已上传流水", reply.text)
         self.assertIn("1-3 个工作日", reply.text)
-        self.assertIn("模拟预审结果", reply.text)
+        self.assertIn("转人工复核", reply.text)
         pending = [c for c in self.agent.store.cards_of("u_001") if c.status == "pending"]
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0].kind, "credit")
+
+    def test_credit_card_bank_question_accepts_china_bank_answer(self):
+        self.agent.handle("申请卡片")
+        reply = self.agent.handle("信用卡")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("发卡行", reply.text)
+        reply = self.agent.handle("中国银行")
+        self.assertIn("预留手机号", reply.text)
+        self.assertNotIn("请选择发卡行", reply.text)
+        self.assertEqual(self.agent.session.pending.slots["bank"], "中国银行")
+        self.assertNotIn("bank", self.agent.session.pending.missing)
 
     def test_open_debit_card_uses_separate_flow(self):
         reply = self.agent.handle("开一张工商银行的储蓄卡")
@@ -254,6 +290,7 @@ class TestCardManagement(unittest.TestCase):
         self.assertIn("bank", self.agent.session.pending.missing)
 
     def test_credit_card_requires_consent_before_application(self):
+        self._add_uploaded_transaction()
         reply = self.agent.handle("申请一张中国银行信用卡")
         for answer in (
             "13800138000",
@@ -262,7 +299,7 @@ class TestCardManagement(unittest.TestCase):
             "3000",
             "30000",
             "旅行",
-            "使用演示流水",
+            "已上传",
             "不同意",
         ):
             reply = self.agent.handle(answer)
@@ -273,6 +310,23 @@ class TestCardManagement(unittest.TestCase):
             card.brand == "中国银行" and card.kind == "credit"
             for card in self.agent.store.cards_of("u_001")
         ))
+
+    def test_credit_card_rejects_demo_statement_without_upload(self):
+        reply = self.agent.handle("我想申请一张工商银行的信用卡")
+        for answer in (
+            "13800138000",
+            "互联网公司产品经理",
+            "25000",
+            "3000",
+            "30000",
+            "日常消费",
+        ):
+            reply = self.agent.handle(answer)
+
+        reply = self.agent.handle("使用演示流水")
+        self.assertEqual(reply.kind, "question")
+        self.assertIn("不能使用演示流水", reply.text)
+        self.assertEqual(self.agent.session.pending.missing, ["statement_mode"])
 
     def test_credit_application_uses_uploaded_transactions_when_selected(self):
         account_id = self.agent.store.accounts_of("u_001")[0].account_id
@@ -299,6 +353,7 @@ class TestCardManagement(unittest.TestCase):
             "日常消费",
             "已上传",
             "同意",
+            *CREDIT_MODEL_ANSWERS,
         ):
             reply = self.agent.handle(answer)
         self.assertEqual(reply.kind, "confirm")
@@ -307,6 +362,42 @@ class TestCardManagement(unittest.TestCase):
         self.assertIn("已上传流水", reply.text)
         self.assertIn("6 笔", reply.text)
         self.assertNotIn("演示流水（模拟数据）", reply.text)
+
+    def test_bill_import_restores_same_credit_application_draft(self):
+        agent = make_agent()
+        reply = agent.handle("我想申请一张工商银行的信用卡")
+        for answer in (
+            "13800138000",
+            "互联网公司产品经理",
+            "25000",
+            "3000",
+            "30000",
+            "日常消费",
+        ):
+            reply = agent.handle(answer)
+
+        reply = agent.handle("识别这张账单截图 samples/bill_sample.txt")
+        self.assertEqual(reply.kind, "confirm")
+        reply = agent.handle("确认")
+        self.assertEqual(reply.intent, "bill.import_receipt")
+        self.assertIsNotNone(agent.session.pending)
+        self.assertEqual(agent.session.pending.intent, "card.apply")
+        self.assertEqual(agent.session.pending.slots["statement_mode"], "uploaded")
+        self.assertIn("consent", agent.session.pending.missing)
+
+        reply = agent.handle("已上传")
+        self.assertEqual(reply.intent, "card.apply")
+        self.assertEqual(agent.session.pending.missing, ["consent"])
+        self.assertIn("授权", reply.text)
+
+        reply = agent.handle("同意")
+        self.assertEqual(reply.kind, "question")
+        for answer in CREDIT_MODEL_ANSWERS:
+            reply = agent.handle(answer)
+        self.assertEqual(reply.kind, "confirm")
+        final = agent.handle("确认")
+        self.assertTrue(final.ok)
+        self.assertEqual(final.intent, "card.apply")
 
     def test_credit_uploaded_statement_requires_confirmed_import(self):
         self.agent.handle("申请一张工商银行的信用卡")

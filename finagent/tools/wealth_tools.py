@@ -948,7 +948,8 @@ class ProductRecommendTool(Tool):
             else:
                 allow_allocation = False
                 lines.append(
-                    f"  当前没有满足全部硬约束的组合：{optimization['reason']}。"
+                    f"  约束优化组合：当前没有满足全部硬约束的组合。"
+                    f"{optimization['reason']}。"
                     "系统不会为了给出推荐而放宽风险、期限或现金缓冲约束。"
                 )
                 lines.append(

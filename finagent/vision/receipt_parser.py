@@ -26,7 +26,8 @@ FULLWIDTH_MAP = str.maketrans({
 HEADER_WORDS = ("账单", "周期", "卡号", "户名", "合计", "小计", "总计", "汇总", "应还",
                 "总额", "余额", "打印", "页码", "备注", "说明", "交易明细")
 SUMMARY_WORDS = ("支出¥", "收入¥", "全部账单", "查找交易", "收支统计", "本期",
-                 "合计", "小计", "总计", "汇总", "应还", "总额")
+                 "合计", "小计", "总计", "汇总", "应还", "总额",
+                 "应发", "总收入", "本月收入")
 DATE_RE = re.compile(r"(20\d{2})-(\d{1,2})-(\d{1,2})")
 # 中文日期：10月14日13:11 / 10月14日 13:11
 CN_DATETIME_RE = re.compile(r"(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[:：](\d{1,2})?")
@@ -466,6 +467,12 @@ def _parse_line(line: str, assume_expense: bool = True) -> Optional[ParsedTransa
         merchant=merchant,
         amount=amount,
         category=guess_category(merchant),
+        field_confidence={
+            "date": 0.98,
+            "merchant": 0.88,
+            "amount": 0.94,
+            "category": 0.82,
+        },
         raw_line=line,
     )
 
@@ -520,6 +527,12 @@ def _column_fallback(lines: List[str], assume_expense: bool = True) -> List[Pars
                 amount=amounts[index],
                 category=guess_category(merchant),
                 confidence=0.6,
+                field_confidence={
+                    "date": 0.9,
+                    "merchant": 0.55 if merchant == "未知商户" else 0.75,
+                    "amount": 0.85,
+                    "category": 0.6,
+                },
             )
         )
     return records
@@ -576,10 +589,22 @@ def _parse_paired(lines: List[str], default_year: int, today: date,
         stamp = assigned.get(index)
         if stamp is None:
             parsed_date, clock = today, ""
-            confidence = 0.5
+            confidence = 0.35
+            field_confidence = {
+                "date": 0.2,
+                "merchant": 0.62,
+                "amount": 0.8,
+                "category": 0.55,
+            }
         else:
             parsed_date, clock = stamp
             confidence = 0.9
+            field_confidence = {
+                "date": 0.95,
+                "merchant": 0.85,
+                "amount": 0.9,
+                "category": 0.82,
+            }
         if sign in {"-", "一"}:
             amount = -value
         elif sign == "+" or any(word in merchant for word in INCOME_WORDS):
@@ -597,6 +622,7 @@ def _parse_paired(lines: List[str], default_year: int, today: date,
                 category=guess_category(merchant),
                 raw_line=lines[index],
                 confidence=confidence,
+                field_confidence=field_confidence,
             )
         )
     return records

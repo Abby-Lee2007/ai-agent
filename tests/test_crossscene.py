@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import unittest
 
+from finagent.tools.crossscene_tools import build_external_gift_options
 from tests.support import make_agent, run_to_completion, send_money
 
 
@@ -227,8 +228,10 @@ class TestCrossScene(unittest.TestCase):
         self.assertIn("郁金香过敏", self.agent.session.pending.slots["avoid"])
 
         prefs = self.agent.store.get_user("u_001").preferences
-        stored_favorites = "、".join(prefs.get("favorite_gift") or [])
-        stored_avoid = "、".join(prefs.get("avoid") or [])
+        care_person = (prefs.get("care_people") or [])[0]
+        self.assertEqual(care_person["name"], "林雅雯")
+        stored_favorites = "、".join(care_person.get("favorite_gift") or [])
+        stored_avoid = "、".join(care_person.get("avoid") or [])
         self.assertIn("第五人格", stored_favorites)
         self.assertIn("海鲜", stored_avoid)
         self.assertIn("郁金香过敏", stored_avoid)
@@ -368,19 +371,136 @@ class TestCrossScene(unittest.TestCase):
         self.assertTrue(all(option.get("external_only") for option in options))
         self.assertTrue(all(
             option["items"][0]["merchant"] == "淘宝搜索"
-            and option["items"][0]["price_pending"]
+            and not option["items"][0]["price_pending"]
+            and option["items"][0]["market_price"] > 0
             for option in options
         ))
         self.assertTrue(all(
             option.get("price_label")
+            and option.get("market_price", 0) > 0
             and option.get("price_estimate_min", 0) > 0
             and option.get("price_estimate_max", 0)
             >= option.get("price_estimate_min", 0)
-            and option.get("price_source") == "市场参考区间（非实时淘宝价格）"
+            and option.get("price_source") == "市场参考区间中位数估算（非实时淘宝价格）"
             for option in options
         ))
-        self.assertIn("市场参考价", recommendation.text)
+        self.assertIn("估算市场价", recommendation.text)
         self.assertNotIn("价格待核实", recommendation.text)
+
+    def test_reading_preferences_produce_specific_gifts_and_exact_prices(self):
+        options = build_external_gift_options("喜欢阅读、看书")
+
+        self.assertGreaterEqual(len(options), 3)
+        names = [option["name"] for option in options[:3]]
+        self.assertTrue(any(
+            word in " ".join(names)
+            for word in ("阅读灯", "书签", "阅读支架", "书盒")
+        ))
+        self.assertFalse(any(
+            name.endswith(("生日礼物", "礼盒", "精选", "定制纪念摆件"))
+            for name in names
+        ))
+        self.assertTrue(all(option["total"] > 0 for option in options))
+        self.assertTrue(all(
+            option["total"] == option["market_price"]
+            for option in options
+        ))
+
+    def test_medication_allergy_is_not_used_as_a_gift_theme(self):
+        tool = self.agent.registry.get("crossscene.gift_recommend")
+        result = tool.run(
+            self.agent.context(),
+            person="陈妈妈",
+            birthday="2027-01-22",
+            birthday_precision="full",
+            budget=200,
+            preferences="沿用材料、青霉素",
+            avoid="无",
+        )
+
+        self.assertTrue(result.ok)
+        options = result.data["options"]
+        option_text = " ".join(
+            option["name"]
+            + option["reason"]
+            + option["search_query"]
+            for option in options
+        )
+        self.assertNotIn("青霉素", option_text)
+        self.assertNotIn("沿用材料", option_text)
+        self.assertTrue(any(
+            word in option_text
+            for word in ("家庭相册", "保温杯", "围巾", "照片书")
+        ))
+        care_person = (
+            self.agent.store.get_user("u_001")
+            .preferences.get("care_people") or []
+        )[0]
+        self.assertEqual(care_person["favorite_gift"], [])
+        self.assertIn("青霉素", care_person["avoid"])
+        self.assertTrue(all(option["total"] > 0 for option in options))
+
+    def test_external_market_price_is_locked_and_care_person_is_saved(self):
+        for text in (
+            "给陈妈妈准备生日惊喜",
+            "2027-01-28",
+            "喜欢手工、蓝色、茉莉的味道",
+            "无",
+            "2000",
+        ):
+            recommendation = self.agent.handle(text)
+
+        self.assertEqual(recommendation.intent, "crossscene.birthday_plan")
+        self.assertEqual(self.agent.session.pending.kind, "gift_choice")
+        selected = recommendation.data["options"][0]
+        self.assertTrue(selected["external_only"])
+        self.assertGreater(selected["total"], 0)
+        self.assertEqual(selected["total"], selected["market_price"])
+
+        care_people = (
+            self.agent.store.get_user("u_001")
+            .preferences.get("care_people") or []
+        )
+        self.assertEqual(len(care_people), 1)
+        self.assertEqual(care_people[0]["name"], "陈妈妈")
+        self.assertEqual(care_people[0]["relation"], "母亲")
+        self.assertEqual(care_people[0]["birthday"], "2027-01-28")
+        self.assertIn("手工", "、".join(care_people[0]["favorite_gift"]))
+
+        confirmation = self.agent.handle("第1个")
+        self.assertEqual(confirmation.kind, "confirm")
+        self.assertIn(f"{selected['total']:,.2f}", confirmation.text)
+        executed = self.agent.handle("确认")
+
+        self.assertTrue(executed.ok)
+        self.assertNotIn("锁定金额需要大于 0", executed.text)
+        birthday_goal = next(
+            goal for goal in self.agent.store.goals_of("u_001", status="active")
+            if goal.scenario == "birthday"
+        )
+        self.assertEqual(birthday_goal.locked_amount, selected["total"])
+        task = self.agent.store.tasks_of("u_001", status="pending")[-1]
+        self.assertEqual(task.payload["budget"], selected["total"])
+
+    def test_yearless_birthday_is_saved_as_month_day_not_a_fake_year(self):
+        recommendation = begin_birthday_recommendation(
+            self.agent,
+            text="给陈妈妈准备生日惊喜",
+            budget="1000",
+            preferences="喜欢阅读和蓝色",
+            avoid="没有禁忌",
+        )
+
+        self.assertEqual(recommendation.intent, "crossscene.birthday_plan")
+        care_person = (
+            self.agent.store.get_user("u_001")
+            .preferences.get("care_people") or []
+        )[0]
+        self.assertEqual(care_person["name"], "陈妈妈")
+        self.assertEqual(care_person["birthday"], "")
+        self.assertEqual(care_person["birthday_month_day"], "11-20")
+        self.assertIn("阅读", "、".join(care_person["favorite_gift"]))
+        self.assertEqual(care_person["avoid"], [])
 
     def test_hobby_preferences_generate_concrete_gifts_and_new_batches(self):
         recommendation = begin_birthday_recommendation(
@@ -608,7 +728,7 @@ class TestCrossScene(unittest.TestCase):
         self.assertEqual(retried.intent, "crossscene.birthday_plan")
         self.assertEqual(self.agent.session.pending.kind, "gift_choice")
         self.assertEqual(self.agent.session.pending.slots.get("budget"), 1000.0)
-        self.assertEqual(self.agent.session.pending.slots.get("avoid"), "没有禁忌")
+        self.assertEqual(self.agent.session.pending.slots.get("avoid"), "")
 
     def test_generic_graduation_gift_asks_for_item_and_custom_price(self):
         reply = self.agent.handle("明天毕业了我想给老师送个毕业礼物")

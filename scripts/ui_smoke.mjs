@@ -144,6 +144,349 @@ async function sendPrompt(cdp, prompt, expectedText) {
   await waitFor(cdp, `!document.querySelector("#typing-message")`);
 }
 
+async function renderCreditApplicationFixtures(cdp) {
+  return evaluate(cdp, `(() => {
+    const append = (suffix, decision, extra = {}) => {
+      const id = suffix ? "APP-" + suffix : "";
+      const reply = {
+        text: "【信用卡申请】内部评分 88/100；shadow_status=hidden；model_version=hidden",
+        intent: "card.apply",
+        ok: true,
+        kind: "executed",
+        trace: [],
+        plan: ["card.apply"],
+        data: {
+          kind: "credit",
+          application_id: id,
+          card_id: id,
+          decision,
+          score: 88,
+          reference_limit: extra.reference_limit,
+          submitted_at: extra.submitted_at || "",
+          statement_quality: "良好",
+          shadow_status: "insufficient_data",
+          model_version: "internal-only",
+          coverage: { reliable: 1 },
+          artifact_sha256: "hidden",
+          diagnostic_code: "hidden_diagnostic",
+          ...extra.data,
+        },
+        needs_input: false,
+      };
+      appendMessage("agent", reply.text, reply);
+      return reply;
+    };
+    const approved = append("APPROVED", "通过", {
+      reference_limit: 30000,
+      submitted_at: "2026-10-30T09:00:00",
+      data: {
+        credit_risk_collection: {
+          total_features: 23,
+          collected_features: 23,
+          missing_features: 0,
+          invalid_features: 0,
+          required_total_features: 5,
+          required_collected_features: 5,
+          required_missing_features: 0,
+          required_complete: true,
+          core_complete: true,
+          policy_allowed_for_decision: true,
+          model_status: "success",
+          collected_values: [
+            { key: "X1", label: "当前信用额度", display_value: "50,000.00 元" },
+            { key: "X3", label: "教育程度", display_value: "本科/大专" },
+            { key: "X6", label: "过去第 1 个月还款状态", display_value: "按时还清" },
+          ],
+        },
+        credit_risk_model: {
+          status: "success",
+          executed: true,
+          predicted_probability: 0.448976,
+          probability: 0.448976,
+          threshold: 0.5,
+          risk_label: "较低模型风险",
+        },
+      },
+    });
+    const review = append("REVIEW", "转人工复核", { reference_limit: 12000 });
+    const rejected = append("REJECTED", "未通过", { reference_limit: 0 });
+    const missing = append("", "", {
+      data: {
+        application_id: "",
+        card_id: "",
+        decision: "",
+        reference_limit: null,
+      },
+    });
+    appendMessage("agent", approved.text, approved);
+    appendMessage("agent", "请确认是否提交信用卡申请。", {
+      intent: "card.apply",
+      kind: "confirm",
+      data: {},
+    });
+    appendMessage("agent", "请补充信用风险评估资料。", {
+      intent: "card.apply",
+      kind: "question",
+      data: {
+        credit_risk_collection: {
+          total_features: 23,
+          collected_features: 3,
+          missing_features: 20,
+          invalid_features: 0,
+          required_total_features: 5,
+          required_collected_features: 1,
+          required_missing_features: 4,
+          core_complete: false,
+          required_complete: false,
+          policy_allowed_for_decision: true,
+          model_status: "collecting",
+          collected_values: [
+            { key: "X1", label: "当前信用额度", display_value: "50,000.00 元" },
+          ],
+        },
+        credit_risk_model: {
+          status: "collecting",
+          executed: false,
+          probability: null,
+        },
+      },
+    });
+    appendMessage("agent", "当前余额为 100.00 元", {
+      intent: "account.balance",
+      kind: "executed",
+      data: { amount: 100 },
+    });
+
+    const cards = [...document.querySelectorAll(".credit-application-result")];
+    const applicationCard = (id) =>
+      cards.find((node) => node.dataset.applicationId === id);
+    const approvedCard = applicationCard("APP-APPROVED");
+    const reviewCard = applicationCard("APP-REVIEW");
+    const rejectedCard = applicationCard("APP-REJECTED");
+    const missingCard = cards.find((node) => !node.dataset.applicationId);
+    const confirmBubble = [...document.querySelectorAll(".message.agent .bubble")].at(-3);
+    const collectionBubble = [...document.querySelectorAll(".message.agent .bubble")].at(-2);
+    const balanceBubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
+    const allText = cards.map((node) => node.textContent).join("\\n");
+    return {
+      count: cards.length,
+      approved: {
+        tone: approvedCard?.dataset.tone || "",
+        text: approvedCard?.textContent || "",
+      },
+      review: {
+        tone: reviewCard?.dataset.tone || "",
+        text: reviewCard?.textContent || "",
+      },
+      rejected: {
+        tone: rejectedCard?.dataset.tone || "",
+        text: rejectedCard?.textContent || "",
+      },
+      missing: {
+        tone: missingCard?.dataset.tone || "",
+        text: missingCard?.textContent || "",
+      },
+      progressText: approvedCard?.querySelector(".credit-risk-progress")?.textContent || "",
+      questionProgressShown: Boolean(
+        collectionBubble?.querySelector(".credit-risk-progress")
+      ),
+      modelResultVisible: (approvedCard?.textContent || "").includes("模型风险评估"),
+      modelDoesNotReplaceApproval: (
+        approvedCard?.textContent || ""
+      ).includes("不替代正式审批"),
+      valuesVisible: Boolean(
+        approvedCard?.querySelector(".credit-risk-values")
+      ) && (approvedCard?.textContent || "").includes("查看已采集资料"),
+      confirmHadCard: Boolean(confirmBubble?.querySelector(".credit-application-result")),
+      nonApplyUnchanged: (balanceBubble?.textContent || "").includes("当前余额为 100.00 元")
+        && !(balanceBubble?.querySelector(".credit-application-result")),
+      shadowLeaked: /shadow_status|model_version|artifact_sha256|diagnostic_code|coverage/.test(allText),
+      scoreLeaked: /88\\/100/.test(allText),
+      pageFits: document.documentElement.scrollWidth <= innerWidth,
+    };
+  })()`);
+}
+
+async function exerciseRequestLifecycle(cdp) {
+  return evaluate(cdp, `(async () => {
+    const realFetch = window.fetch.bind(window);
+    const streamRequestIds = [];
+    const queryRequestIds = [];
+    let mode = "normal";
+    let replySequence = 0;
+
+    const makeReply = (text) => ({
+      ok: true,
+      kind: "reply",
+      text,
+      intent: "test.request_lifecycle",
+      data: {},
+      trace: [],
+      plan: [],
+      needs_input: false
+    });
+    const completedPayload = (requestId, text) => ({
+      session_id: sessionId,
+      request_id: requestId,
+      request_status: "completed",
+      replayed: true,
+      reply: makeReply(text)
+    });
+
+    window.fetch = async (url, options = {}) => {
+      const parsed = new URL(String(url), location.origin);
+      if (parsed.pathname === "/v1/messages/stream") {
+        const requestBody = JSON.parse(options.body || "{}");
+        streamRequestIds.push(requestBody.request_id);
+        if (mode === "disconnect" || mode === "disconnect-unknown") {
+          throw new TypeError("simulated SSE disconnect");
+        }
+        replySequence += 1;
+        const text = "生命周期回复 " + replySequence;
+        const payload = completedPayload(requestBody.request_id, text);
+        return new Response(
+          "event: start\\n"
+          + "data: " + JSON.stringify({
+            session_id: sessionId,
+            request_id: requestBody.request_id
+          }) + "\\n\\n"
+          + "event: message\\n"
+          + "data: " + JSON.stringify({
+            ...payload,
+            replayed: false
+          }) + "\\n\\n"
+          + "event: done\\n"
+          + "data: {\\"ok\\":true,\\"request_status\\":\\"completed\\"}\\n\\n",
+          {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" }
+          }
+        );
+      }
+      if (parsed.pathname.startsWith("/v1/requests/")) {
+        const requestId = decodeURIComponent(
+          parsed.pathname.slice("/v1/requests/".length)
+        );
+        queryRequestIds.push(requestId);
+        const status = mode === "unknown" || mode === "disconnect-unknown"
+          ? "outcome_unknown"
+          : "completed";
+        return new Response(JSON.stringify(
+          status === "completed"
+            ? completedPayload(requestId, "断线恢复原结果")
+            : {
+              session_id: sessionId,
+              request_id: requestId,
+              request_status: status,
+              replayed: false
+            }
+        ), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+      return realFetch(url, options);
+    };
+
+    try {
+      sessionStorage.removeItem(REQUEST_RECOVERY_KEY);
+      busy = false;
+      sendButton.disabled = false;
+
+      await sendMessage("生命周期测试一");
+      const firstRequestId = streamRequestIds.at(-1);
+      const firstReplyCount = [...document.querySelectorAll(".message.agent")]
+        .filter((node) => node.dataset.requestId === firstRequestId).length;
+
+      await sendMessage("生命周期测试一", {
+        requestId: firstRequestId,
+        retry: true
+      });
+      const replayCount = [...document.querySelectorAll(".message.agent")]
+        .filter((node) => node.dataset.requestId === firstRequestId).length;
+
+      await sendMessage("生命周期测试二");
+      const secondRequestId = streamRequestIds.at(-1);
+
+      mode = "disconnect";
+      const streamsBeforeDisconnect = streamRequestIds.length;
+      await sendMessage("断线恢复测试");
+      const disconnectRequestId = streamRequestIds[streamsBeforeDisconnect];
+      mode = "normal";
+
+      const refreshId = "refresh-request-001";
+      sessionStorage.setItem(REQUEST_RECOVERY_KEY, JSON.stringify({
+        request_id: refreshId,
+        session_id: sessionId,
+        status: "completed",
+        message_fingerprint: "refresh-fingerprint",
+        created_at: new Date().toISOString()
+      }));
+      await recoverPendingRequest();
+      await recoverPendingRequest();
+      const refreshBubbles = [...document.querySelectorAll(".message.agent")]
+        .filter((node) => node.dataset.requestId === refreshId).length;
+
+      mode = "unknown";
+      const unknownId = "unknown-request-001";
+      sessionStorage.setItem(REQUEST_RECOVERY_KEY, JSON.stringify({
+        request_id: unknownId,
+        session_id: sessionId,
+        status: "outcome_unknown",
+        message_fingerprint: await messageFingerprint("未知执行操作"),
+        created_at: new Date().toISOString()
+      }));
+      await recoverPendingRequest();
+      const unknownRecoveryRaw = sessionStorage.getItem(REQUEST_RECOVERY_KEY) || "";
+      const streamsBeforeUnknownRetry = streamRequestIds.length;
+      await sendMessage("未知执行操作");
+      const streamsAfterUnknownRetry = streamRequestIds.length;
+      const unknownNotice = [...document.querySelectorAll(".message.agent")]
+        .find((node) => node.dataset.requestNoticeId === unknownId);
+
+      sessionStorage.removeItem(REQUEST_RECOVERY_KEY);
+      mode = "disconnect-unknown";
+      awaitingSecret = true;
+      await sendMessage("654321");
+      awaitingSecret = false;
+      const secretRecoveryRaw = sessionStorage.getItem(REQUEST_RECOVERY_KEY) || "";
+      const secretRecovery = JSON.parse(secretRecoveryRaw || "{}");
+      const secretFingerprintNotPersisted =
+        Boolean(secretRecovery.request_id)
+        && !secretRecovery.message_fingerprint
+        && !secretRecoveryRaw.includes("654321");
+
+      return {
+        firstRequestId,
+        secondRequestId,
+        disconnectRequestId,
+        differentOperationsUseDifferentIds:
+          Boolean(firstRequestId && secondRequestId)
+          && firstRequestId !== secondRequestId,
+        noDuplicateOnReplay:
+          firstReplyCount === 1 && replayCount === 1,
+        disconnectQueryReusedId:
+          Boolean(disconnectRequestId)
+          && queryRequestIds.includes(disconnectRequestId),
+        refreshRecoveredOnce: refreshBubbles === 1,
+        unknownBlockedResubmit:
+          streamsAfterUnknownRetry === streamsBeforeUnknownRetry,
+        unknownNotice:
+          unknownNotice?.textContent?.includes("不要重复提交相同操作")
+          || false,
+        secretFingerprintNotPersisted,
+        recoveryStoresNoMessageBody:
+          !unknownRecoveryRaw.includes("未知执行操作")
+      };
+    } finally {
+      window.fetch = realFetch;
+      sessionStorage.removeItem(REQUEST_RECOVERY_KEY);
+      busy = false;
+      sendButton.disabled = false;
+    }
+  })()`);
+}
+
 let cdp;
 try {
   await waitForDebugger();
@@ -310,7 +653,7 @@ try {
   await sendPrompt(cdp, "没有", "过敏");
   await sendPrompt(cdp, "对花粉和奶制品过敏", "预算");
   await sendPrompt(cdp, "70", "没有可预约礼物");
-  await sendPrompt(cdp, "预算1000，没有禁忌", "选择方案 1");
+  await sendPrompt(cdp, "预算1000，没有禁忌", "按估算价选择 1");
   const giftLayout = await evaluate(cdp, `(() => {
     const bubble = [...document.querySelectorAll(".message.agent .bubble")].at(-1);
     const grid = bubble?.querySelector(".gift-option-grid");
@@ -365,7 +708,9 @@ try {
   assert(giftLayout.taobaoLinksSafe, "淘宝搜索链接缺少安全窗口属性");
   assert(giftLayout.taobaoHosts.every((host) => host === "s.taobao.com"), "淘宝搜索链接域名不正确");
   assert(
-    giftLayout.priceCaptions.every((caption) => ["方案价", "市场参考价"].includes(caption)),
+    giftLayout.priceCaptions.every((caption) =>
+      ["方案价", "估算市场价", "市场参考价"].includes(caption)
+    ),
     "礼物卡价格标签不统一",
   );
   assert(giftLayout.uniformCardHeight, "礼物方案卡高度不一致");
@@ -904,7 +1249,18 @@ try {
   })()`);
   await waitFor(
     cdp,
-    `document.querySelector("#profile-settings-status")?.textContent.includes("已保存")`,
+    `(() => {
+      const text = document.querySelector("#profile-settings-status")?.textContent || "";
+      return text.length > 0 && !text.includes("保存中");
+    })()`,
+  );
+  const profileSaveStatus = await evaluate(
+    cdp,
+    `document.querySelector("#profile-settings-status")?.textContent || ""`,
+  );
+  assert(
+    profileSaveStatus.includes("已保存"),
+    `个人资料保存失败：${profileSaveStatus}`,
   );
   const savedContacts = await evaluate(cdp, `(async () => {
     const response = await fetchWithAuth(
@@ -1501,6 +1857,81 @@ try {
   assert(ocrQuality.editorRows > 0, "账单识别没有生成可编辑核对表");
   assert(ocrQuality.hasCorrection, "账单识别缺少人工校正操作");
 
+  const mobileCreditApplication = await renderCreditApplicationFixtures(cdp);
+  assert(mobileCreditApplication.count === 4, "信用卡申请卡片数量异常或 SSE 重放产生重复卡片");
+  assert(mobileCreditApplication.approved.tone === "approved", "通过结果没有使用通过态样式");
+  assert(mobileCreditApplication.approved.text.includes("预审通过"), "通过结果缺少预审通过文案");
+  assert(mobileCreditApplication.approved.text.includes("30,000"), "通过结果没有展示正式参考额度");
+  assert(mobileCreditApplication.approved.text.includes("2026-10-30"), "可靠提交时间没有展示");
+  assert(mobileCreditApplication.review.tone === "review", "人工复核结果样式异常");
+  assert(mobileCreditApplication.review.text.includes("等待人工复核"), "人工复核文案异常");
+  assert(mobileCreditApplication.rejected.tone === "rejected", "未通过结果样式异常");
+  assert(mobileCreditApplication.rejected.text.includes("预审未通过"), "未通过文案异常");
+  assert(!mobileCreditApplication.rejected.text.includes("¥0.00"), "未通过结果不应展示误导性额度");
+  assert(mobileCreditApplication.missing.text.includes("申请处理中"), "缺失结果字段时没有降级状态");
+  assert(mobileCreditApplication.missing.text.includes("暂未提供"), "缺失申请编号时没有降级展示");
+  assert(mobileCreditApplication.missing.text.includes("待确认"), "缺失预审结果时没有降级展示");
+  assert(!mobileCreditApplication.confirmHadCard, "确认阶段不应提前显示申请结果卡片");
+  assert(mobileCreditApplication.nonApplyUnchanged, "非 card.apply 消息渲染受到影响");
+  assert(
+    mobileCreditApplication.progressText.includes("核心 5/5"),
+    "申请结果卡片没有展示 Top-5 核心资料进度",
+  );
+  assert(
+    mobileCreditApplication.questionProgressShown,
+    "采集过程中的问题气泡没有展示模型资料进度",
+  );
+  assert(
+    mobileCreditApplication.modelResultVisible,
+    "模型真实执行后前端没有展示风险结果",
+  );
+  assert(
+    mobileCreditApplication.modelDoesNotReplaceApproval,
+    "模型结果没有明确与正式审批隔离",
+  );
+  assert(
+    mobileCreditApplication.valuesVisible,
+    "用户无法查看已采集的信用风险资料",
+  );
+  assert(!mobileCreditApplication.shadowLeaked, "申请结果卡片泄漏 Shadow 内部字段");
+  assert(!mobileCreditApplication.scoreLeaked, "申请结果卡片泄漏内部评分");
+  assert(mobileCreditApplication.pageFits, "移动端信用卡申请结果卡片导致横向滚动");
+  await screenshot(cdp, "mobile-credit-application.png");
+
+  await openChat(cdp, 1440, 1000, false);
+  const desktopCreditApplication = await renderCreditApplicationFixtures(cdp);
+  assert(desktopCreditApplication.count === 4, "桌面端信用卡申请卡片数量异常");
+  assert(desktopCreditApplication.pageFits, "桌面端信用卡申请结果卡片导致横向滚动");
+  await screenshot(cdp, "desktop-credit-application.png");
+
+  const requestLifecycle = await exerciseRequestLifecycle(cdp);
+  assert(
+    requestLifecycle.differentOperationsUseDifferentIds,
+    "不同业务操作复用了同一个 request_id",
+  );
+  assert(requestLifecycle.noDuplicateOnReplay, "SSE 结果重放产生了重复聊天气泡");
+  assert(
+    requestLifecycle.disconnectQueryReusedId,
+    "断线恢复查询没有复用原 request_id",
+  );
+  assert(requestLifecycle.refreshRecoveredOnce, "页面恢复重复插入原请求结果");
+  assert(
+    requestLifecycle.unknownBlockedResubmit,
+    "未知执行状态仍允许相同操作生成新请求",
+  );
+  assert(
+    requestLifecycle.unknownNotice,
+    "未知执行状态没有提示先核对且不要重复提交",
+  );
+  assert(
+    requestLifecycle.recoveryStoresNoMessageBody,
+    "页面恢复状态包含原始消息正文",
+  );
+  assert(
+    requestLifecycle.secretFingerprintNotPersisted,
+    "交易密码或验证码的指纹被写入页面恢复状态",
+  );
+
   console.log(JSON.stringify({
     ok: true,
     desktop,
@@ -1528,6 +1959,9 @@ try {
     staleSessionRetry: true,
     fileUpload: true,
     ocrQuality,
+    mobileCreditApplication,
+    desktopCreditApplication,
+    requestLifecycle,
     accessPasswordTested: Boolean(accessPassword),
     artifacts: outDir,
   }, null, 2));

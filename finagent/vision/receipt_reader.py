@@ -206,6 +206,12 @@ class ReceiptResult:
             max(0.0, min(float(record.confidence), 1.0))
             for record in self.records
         ) / count
+        low_confidence_fields = sum(
+            1
+            for record in self.records
+            for confidence in (record.field_confidence or {}).values()
+            if float(confidence) < 0.8
+        )
         completeness = 1.0 - (missing_date + missing_merchant) / max(count * 2, 1)
         score = min(
             100.0,
@@ -215,6 +221,11 @@ class ReceiptResult:
         issues: List[str] = []
         if average_confidence < 0.65:
             issues.append("平均识别置信度偏低，建议放大截图或改用 CSV")
+        if low_confidence_fields:
+            issues.append(
+                f"{low_confidence_fields} 个字段的证据置信度低，需要人工核对"
+            )
+            score = max(0.0, score - min(12.0, low_confidence_fields * 1.5))
         if missing_date:
             issues.append(f"{missing_date} 笔交易缺少可靠日期")
         if missing_merchant:
@@ -242,9 +253,11 @@ class ReceiptResult:
             "record_count": count,
             "summary_mode": False,
             "average_confidence": round(average_confidence, 3),
+            "confidence_basis": "field_evidence",
             "low_confidence_count": sum(
                 1 for record in self.records if record.confidence < 0.8
             ),
+            "low_confidence_fields": low_confidence_fields,
             "duplicate_count": duplicate_count,
             "completeness": round(completeness, 3),
         }

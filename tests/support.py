@@ -38,6 +38,22 @@ def make_agent(
     return agent
 
 
+def add_uploaded_transaction(agent: BankingAgent, amount: float = -120.0) -> None:
+    """Add a minimal confirmed-import transaction for card-application tests."""
+    account_id = agent.store.accounts_of(agent.user_id)[0].account_id
+    agent.store.add_transaction(
+        user_id=agent.user_id,
+        account_id=account_id,
+        amount=amount,
+        merchant="测试上传账单",
+        category="餐饮",
+        timestamp="2026-10-12T12:00:00",
+        tags=["receipt_import"],
+        source="upload:user",
+        is_demo=False,
+    )
+
+
 def talk(agent: BankingAgent, *turns: str):
     """连续对话，返回最后一次回复。"""
     reply = None

@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from finagent.api.service import (
     AgentSessionService,
+    RequestNotFound,
     SessionAuthError,
     SessionNotFound,
     StepUpRequired,
@@ -234,6 +235,39 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
                 return
             try:
                 self._send_json(200, self.service.get_pending_receipt(session_id))
+            except SessionNotFound as exc:
+                self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
+            return
+        request_prefix = "/v1/requests/"
+        if path.startswith(request_prefix):
+            if not self._authorized():
+                self._send_json(401, {"error": "unauthorized", "message": "访问口令无效"})
+                return
+            request_id = unquote(path[len(request_prefix):]).strip("/")
+            session_id = parse_qs(parsed.query).get("session_id", [""])[0]
+            if not request_id or not session_id:
+                self._send_json(
+                    400,
+                    {
+                        "error": "bad_request",
+                        "message": "session_id 和 request_id 不能为空",
+                    },
+                )
+                return
+            try:
+                self._send_json(
+                    200,
+                    self.service.get_request_status(session_id, request_id),
+                )
+            except RequestNotFound as exc:
+                self._send_json(
+                    404,
+                    {
+                        "error": "request_not_found",
+                        "request_status": "not_found",
+                        "request_id": str(exc),
+                    },
+                )
             except SessionNotFound as exc:
                 self._send_json(404, {"error": "session_not_found", "message": f"会话不存在：{exc}"})
             return
@@ -691,27 +725,73 @@ class ApiRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
         self.close_connection = True
-        self._write_sse("start", {"session_id": session_id, "request_id": request_id})
+        if not self._safe_write_sse(
+            "start",
+            {"session_id": session_id, "request_id": request_id},
+        ):
+            return
         try:
             body = self.service.send_message(
                 session_id=session_id,
                 message=str(payload.get("message") or ""),
                 request_id=request_id,
             )
-            self._write_sse("message", body)
-            self._write_sse("done", {"ok": True})
+            request_status = str(body.get("request_status") or "completed")
+            if request_status == "completed" and isinstance(
+                body.get("reply"),
+                dict,
+            ):
+                if not self._safe_write_sse("message", body):
+                    return
+                self._safe_write_sse(
+                    "done",
+                    {"ok": True, "request_status": "completed"},
+                )
+            elif request_status in {
+                "processing",
+                "outcome_unknown",
+                "failed",
+            }:
+                if not self._safe_write_sse("status", body):
+                    return
+                self._safe_write_sse(
+                    "done",
+                    {
+                        "ok": request_status in {"processing", "failed"},
+                        "request_status": request_status,
+                    },
+                )
+            else:
+                self._safe_write_sse(
+                    "error",
+                    {
+                        "error": "invalid_request_result",
+                        "message": "服务返回了无法识别的请求状态",
+                    },
+                )
         except SessionNotFound as exc:
-            self._write_sse(
+            self._safe_write_sse(
                 "error",
                 {"error": "session_not_found", "message": f"会话不存在：{exc}"},
             )
         except OptimisticConcurrencyError as exc:
-            self._write_sse(
+            self._safe_write_sse(
                 "error",
                 {"error": "session_conflict", "message": str(exc)},
             )
         except Exception as exc:
-            self._write_sse("error", {"error": "stream_error", "message": str(exc)})
+            self._safe_write_sse(
+                "error",
+                {"error": "stream_error", "message": str(exc)},
+            )
+
+    def _safe_write_sse(self, event: str, payload: dict[str, Any]) -> bool:
+        try:
+            self._write_sse(event, payload)
+            return True
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            self.close_connection = True
+            return False
 
     def _write_sse(self, event: str, payload: dict[str, Any]) -> None:
         data = json.dumps(payload, ensure_ascii=False, allow_nan=False)

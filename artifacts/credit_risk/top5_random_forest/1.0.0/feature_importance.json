@@ -1,0 +1,127 @@
+{
+  "method": "grouped_mdi",
+  "ranked_features": [
+    {
+      "rank": 1,
+      "feature": "X6",
+      "importance": 0.2131971971
+    },
+    {
+      "rank": 2,
+      "feature": "X7",
+      "importance": 0.1051656909
+    },
+    {
+      "rank": 3,
+      "feature": "X8",
+      "importance": 0.0662765156
+    },
+    {
+      "rank": 4,
+      "feature": "X9",
+      "importance": 0.0573681643
+    },
+    {
+      "rank": 5,
+      "feature": "X1",
+      "importance": 0.0485709105
+    },
+    {
+      "rank": 6,
+      "feature": "X18",
+      "importance": 0.0452861701
+    },
+    {
+      "rank": 7,
+      "feature": "X19",
+      "importance": 0.0396541347
+    },
+    {
+      "rank": 8,
+      "feature": "X10",
+      "importance": 0.0392666603
+    },
+    {
+      "rank": 9,
+      "feature": "X12",
+      "importance": 0.0391891218
+    },
+    {
+      "rank": 10,
+      "feature": "X20",
+      "importance": 0.0362929407
+    },
+    {
+      "rank": 11,
+      "feature": "X11",
+      "importance": 0.0344379115
+    },
+    {
+      "rank": 12,
+      "feature": "X13",
+      "importance": 0.0330835601
+    },
+    {
+      "rank": 13,
+      "feature": "X15",
+      "importance": 0.0288408615
+    },
+    {
+      "rank": 14,
+      "feature": "X14",
+      "importance": 0.0284122201
+    },
+    {
+      "rank": 15,
+      "feature": "X23",
+      "importance": 0.0279785024
+    },
+    {
+      "rank": 16,
+      "feature": "X22",
+      "importance": 0.0275075352
+    },
+    {
+      "rank": 17,
+      "feature": "X21",
+      "importance": 0.0273990467
+    },
+    {
+      "rank": 18,
+      "feature": "X16",
+      "importance": 0.0270088375
+    },
+    {
+      "rank": 19,
+      "feature": "X17",
+      "importance": 0.0264978009
+    },
+    {
+      "rank": 20,
+      "feature": "X5",
+      "importance": 0.0211679368
+    },
+    {
+      "rank": 21,
+      "feature": "X3",
+      "importance": 0.0114829666
+    },
+    {
+      "rank": 22,
+      "feature": "X2",
+      "importance": 0.0081894039
+    },
+    {
+      "rank": 23,
+      "feature": "X4",
+      "importance": 0.0077259108
+    }
+  ],
+  "selected_top5": [
+    "X6",
+    "X7",
+    "X8",
+    "X9",
+    "X1"
+  ]
+}

@@ -49,6 +49,7 @@ def lookup_person(ctx: ToolContext, name: str) -> Tuple[Optional[User], Optional
     resolved_name = prefs.get(key, keyword) if key else keyword
 
     birthday_raw = ""
+    birthday_month_day = ""
     relation_groups = {
         "spouse": {
             "老婆", "妻子", "爱人", "配偶", "丈夫", "老公", "太太", "伴侣", "媳妇",
@@ -70,6 +71,7 @@ def lookup_person(ctx: ToolContext, name: str) -> Tuple[Optional[User], Optional
         ):
             resolved_name = item_name or resolved_name
             birthday_raw = str(item.get("birthday") or "")
+            birthday_month_day = str(item.get("birthday_month_day") or "")
             key = "care"
             break
 
@@ -110,13 +112,13 @@ def lookup_person(ctx: ToolContext, name: str) -> Tuple[Optional[User], Optional
         birthday_raw = person.birthday
 
     birthday: Optional[date] = None
+    today = ctx.clock.today()
     if birthday_raw:
         try:
             parsed = date.fromisoformat(birthday_raw)
         except ValueError:
             parsed = None
         if parsed:
-            today = ctx.clock.today()
             month, day = parsed.month, parsed.day
             try:
                 upcoming = date(today.year, month, day)
@@ -128,6 +130,17 @@ def lookup_person(ctx: ToolContext, name: str) -> Tuple[Optional[User], Optional
                 except ValueError:
                     upcoming = date(today.year + 1, 3, 1)
             birthday = upcoming
+    elif birthday_month_day:
+        try:
+            month, day = (
+                int(part) for part in birthday_month_day.split("-", 1)
+            )
+            upcoming = date(today.year, month, day)
+            if upcoming < today:
+                upcoming = date(today.year + 1, month, day)
+            birthday = upcoming
+        except (TypeError, ValueError):
+            birthday = None
     return person, birthday
 
 
@@ -154,6 +167,10 @@ def lookup_person_preferences(ctx: ToolContext, name: str) -> Dict[str, Any]:
                 "favorite_gift": list(item.get("favorite_gift") or []),
                 "avoid": list(item.get("avoid") or []),
                 "relation": relation,
+                "birthday": str(item.get("birthday") or ""),
+                "birthday_month_day": str(
+                    item.get("birthday_month_day") or ""
+                ),
             }
     return {
         "favorite_gift": list(prefs.get("favorite_gift") or []),
@@ -200,6 +217,55 @@ GIFT_CONCEPT_LIBRARY = {
         ("第五人格主题鼠标垫", "兼顾游戏主题和日常电脑使用"),
         ("第五人格收藏卡册", "适合收集角色卡和纪念卡，方便长期保存"),
     ),
+    "饰品": (
+        ("蓝色系饰品收纳盒", "兼顾首饰收纳和蓝色偏好，适合日常使用"),
+        ("玫瑰元素银饰礼盒", "把玫瑰偏好转化为可长期佩戴的具体饰品"),
+        ("茉莉香氛首饰护理套装", "兼顾香气偏好与饰品清洁保养"),
+    ),
+    "手工": (
+        ("蓝色系手工材料礼盒", "围绕手工爱好准备可直接开始制作的材料与工具"),
+        ("个性化手工定制套装", "可按姓名、纪念日或图案定制，纪念属性更强"),
+        ("手工饰品制作材料包", "把手工、饰品和颜色偏好结合到一个实际礼物中"),
+    ),
+    "蓝色": (
+        ("蓝色系通勤饰品套装", "把蓝色偏好落到日常可佩戴的具体饰品"),
+        ("蓝色手账与收纳礼盒", "适合记录生活和整理小物件"),
+        ("蓝色系家居氛围套装", "围绕偏好颜色选择可直接使用的居家用品"),
+    ),
+    "玫瑰": (
+        ("玫瑰元素锁骨链", "以玫瑰造型呈现，避开鲜花过敏风险且可长期佩戴"),
+        ("玫瑰香氛护手礼盒", "围绕玫瑰气味偏好选择日常护理用品"),
+        ("玫瑰主题纪念相框", "把玫瑰元素用于家居陈列，不依赖鲜花"),
+    ),
+    "茉莉": (
+        ("茉莉香氛手作礼盒", "结合茉莉香味偏好和手工兴趣"),
+        ("茉莉元素书签礼盒", "使用清香主题和长期留存的小物件"),
+        ("茉莉香氛睡眠喷雾", "以环境气味改善为定位，不宣称治疗作用"),
+    ),
+    "阅读": (
+        ("护眼阅读灯", "适合床头或书桌阅读，重点改善照明舒适度"),
+        ("定制黄铜书签", "可按姓名或纪念日定制，适合长期使用和收藏"),
+        ("可折叠阅读支架", "用于桌面阅读和电子设备支撑，实用属性明确"),
+        ("阅读主题纪念书盒", "用于收纳常读书籍和小物件，兼具纪念与整理功能"),
+    ),
+    "长辈关怀": (
+        ("定制家庭相册", "用家人照片制作实体相册，适合长期保存共同回忆"),
+        ("舒适保温杯", "日常使用频率高，适合作为稳妥的关怀型礼物"),
+        ("亲肤保暖围巾", "以日常保暖和舒适为重点，不涉及医疗功效"),
+        ("家庭纪念照片书", "整理家庭照片并制作成书，纪念属性明确"),
+    ),
+    "伴侣关怀": (
+        ("双人纪念相册", "记录共同经历，适合生日和纪念日"),
+        ("定制纪念首饰盒", "兼顾收纳和纪念意义，款式可按偏好选择"),
+        ("双人手作体验券", "强调共同参与和相处时间"),
+        ("个性化家居摆件", "可结合姓名、日期或共同照片定制"),
+    ),
+    "通用关怀": (
+        ("定制家庭相册", "选择合适照片制作实体相册，适合长期保存回忆"),
+        ("舒适保温杯", "日常使用频率高，属于稳妥实用的关怀礼物"),
+        ("纪念照片书", "把照片和文字整理成书，兼具纪念与实用价值"),
+        ("实用收纳礼盒", "适合居家整理，可按对方生活习惯选择具体款式"),
+    ),
 }
 
 GIFT_PRICE_ESTIMATES = {
@@ -221,6 +287,19 @@ GIFT_PRICE_ESTIMATES = {
     "第五人格徽章盲盒": (29, 99),
     "第五人格主题鼠标垫": (39, 139),
     "第五人格收藏卡册": (49, 159),
+    "护眼阅读灯": (79, 239),
+    "定制黄铜书签": (39, 129),
+    "可折叠阅读支架": (49, 169),
+    "阅读主题纪念书盒": (99, 299),
+    "定制家庭相册": (99, 299),
+    "舒适保温杯": (79, 239),
+    "亲肤保暖围巾": (69, 229),
+    "家庭纪念照片书": (89, 269),
+    "双人纪念相册": (99, 299),
+    "定制纪念首饰盒": (89, 259),
+    "双人手作体验券": (99, 399),
+    "个性化家居摆件": (69, 239),
+    "实用收纳礼盒": (69, 219),
 }
 
 GENERIC_GIFT_FORMS = (
@@ -230,32 +309,96 @@ GENERIC_GIFT_FORMS = (
     ("实用兴趣装备套装", "从日常使用场景出发，挑选与兴趣相关的实用物品"),
 )
 
+GIFT_TOPIC_ALIASES = {
+    "睡眠": ("睡不好", "睡眠质量", "失眠", "睡眠障碍", "入睡困难", "浅睡", "易醒"),
+    "编织": ("编织", "毛线", "针织"),
+    "长跑": ("长跑", "跑步", "马拉松", "跑鞋"),
+    "第五人格": ("第五人格",),
+    "饰品": ("饰品", "首饰", "项链", "手链", "耳饰"),
+    "手工": ("手工", "手作", "DIY"),
+    "蓝色": ("蓝色", "天蓝", "湖蓝", "海军蓝"),
+    "玫瑰": ("玫瑰",),
+    "茉莉": ("茉莉",),
+    "阅读": ("阅读", "看书", "读书", "书签", "书本"),
+}
+
+GIFT_EMPTY_PREFERENCES = {
+    "", "无", "没有", "没有偏好", "没有补充", "沿用", "沿用资料",
+    "沿用材料", "按资料", "按照资料", "依资料", "使用已存资料",
+}
+MEDICAL_AVOID_WORDS = (
+    "青霉素", "抗生素", "头孢", "磺胺", "阿司匹林", "布洛芬",
+    "药物过敏", "用药禁忌",
+)
+
+
+def _split_gift_values(value: Any) -> List[str]:
+    return [
+        item.strip(" ，,。；;")
+        for item in re.split(r"[,，、；;。\n]+", str(value or ""))
+        if item.strip(" ，,。；;")
+    ]
+
+
+def _is_medical_avoid(value: str) -> bool:
+    return any(word in str(value or "") for word in MEDICAL_AVOID_WORDS)
+
+
+def sanitize_gift_preferences(
+    preferences: Any,
+    avoid: Any,
+) -> Tuple[str, str]:
+    """Remove empty placeholders and move medication restrictions to avoid."""
+    favorites: List[str] = []
+    restrictions: List[str] = []
+    ignored_avoid = {
+        "无", "没有", "没有过敏", "无过敏", "没有禁忌", "无禁忌",
+        "没有特别禁忌", "没有特别偏好",
+    }
+    for value in _split_gift_values(preferences):
+        if value in GIFT_EMPTY_PREFERENCES or value.startswith("沿用"):
+            continue
+        if _is_medical_avoid(value):
+            restrictions.append(value)
+            continue
+        favorites.append(value)
+    for value in _split_gift_values(avoid):
+        if value in ignored_avoid:
+            continue
+        restrictions.append(value)
+    return (
+        "、".join(dict.fromkeys(favorites)),
+        "、".join(dict.fromkeys(restrictions)),
+    )
+
 
 def _preference_topics(text: str) -> List[str]:
-    cleaned = re.sub(r"(还喜欢|喜欢|爱好是|平时喜欢|本次偏好)", "", text or "")
+    cleaned = re.sub(
+        r"(还喜欢|喜欢|爱好是|平时喜欢|本次偏好|她|他|收礼人|生日礼物|礼物|想要|希望)",
+        " ",
+        text or "",
+    )
+    topics: List[str] = []
+    for topic, aliases in GIFT_TOPIC_ALIASES.items():
+        if any(alias in cleaned for alias in aliases):
+            topics.append(topic)
     parts = [
         part.strip(" ，,。；;、")
-        for part in re.split(r"[、，,；;/]+", cleaned)
+        for part in re.split(r"[、，,；;/\s]+", cleaned)
         if part.strip(" ，,。；;、")
     ]
-    topics = []
     for part in parts:
-        if re.search(
-            r"(睡不好|睡眠质量|失眠|睡眠障碍|入睡困难|浅睡|易醒)",
-            part,
-        ):
-            topics.append("睡眠")
+        if _is_medical_avoid(part) or part in GIFT_EMPTY_PREFERENCES:
             continue
-        for known in GIFT_CONCEPT_LIBRARY:
-            if known in part:
-                topics.append(known)
-        if part not in topics and not any(known in part for known in GIFT_CONCEPT_LIBRARY):
+        if any(alias in part for aliases in GIFT_TOPIC_ALIASES.values() for alias in aliases):
+            continue
+        if part:
             topics.append(part[:24])
     return list(dict.fromkeys(topics))
 
 
 def build_external_gift_options(preference_text: str) -> List[Dict[str, Any]]:
-    """Create concrete, hobby-aware external gift ideas without fake prices."""
+    """Create concrete external gift ideas with a definite planning price."""
     topics = _preference_topics(preference_text)
     if not topics:
         topics = [str(preference_text or "兴趣礼物").strip()[:24]]
@@ -279,14 +422,15 @@ def build_external_gift_options(preference_text: str) -> List[Dict[str, Any]]:
             if title in seen_titles:
                 continue
             seen_titles.add(title)
-            if not concepts:
-                estimate_min, estimate_max = (59, 259)
-            else:
-                estimate_min, estimate_max = GIFT_PRICE_ESTIMATES.get(
-                    title,
-                    (59, 259),
-                )
-            price_label = f"参考 ¥{estimate_min:,}-¥{estimate_max:,}"
+            estimate_min, estimate_max = GIFT_PRICE_ESTIMATES.get(
+                title,
+                (59, 259),
+            )
+            market_price = max(
+                1,
+                int(round(((estimate_min + estimate_max) / 2) / 10) * 10),
+            )
+            price_label = f"估算市场价 ¥{market_price:,}"
             options.append({
                 "key": (f"taobao:{title}",),
                 "name": title,
@@ -295,20 +439,25 @@ def build_external_gift_options(preference_text: str) -> List[Dict[str, Any]]:
                     "label": title,
                     "offer_id": "",
                     "merchant": "淘宝搜索",
-                    "price": 0.0,
-                    "price_pending": True,
+                    "price": float(market_price),
+                    "price_pending": False,
+                    "market_price": float(market_price),
                     "price_estimate_min": estimate_min,
                     "price_estimate_max": estimate_max,
                     "price_label": price_label,
                 }],
-                "total": 0.0,
+                "total": float(market_price),
+                "market_price": float(market_price),
                 "price_estimate_min": estimate_min,
                 "price_estimate_max": estimate_max,
                 "price_label": price_label,
-                "price_source": "市场参考区间（非实时淘宝价格）",
-                "reason": f"围绕「{topic}」：{reason}；价格与库存请在淘宝页面核实",
+                "price_source": "市场参考区间中位数估算（非实时淘宝价格）",
+                "reason": (
+                    f"围绕「{topic}」：{reason}；"
+                    "本轮按市场估算价锁定预算，实际淘宝价格和库存需在页面确认"
+                ),
                 "external_only": True,
-                "search_query": title,
+                "search_query": f"{title} 生日礼物",
             })
     return options
 
@@ -396,11 +545,47 @@ def remember_gift_preferences(
     person: str,
     preferences: str,
     avoid: str,
-) -> None:
-    """Persist newly supplied gift preferences to the related care-person profile."""
+    birthday: str = "",
+    relation: str = "",
+    birthday_precision: str = "full",
+) -> Dict[str, Any]:
+    """Create or update a care-person record with the latest gift intake."""
     user = ctx.user
     prefs = dict(user.preferences or {})
     people = list(prefs.get("care_people") or [])
+    original_person = person
+    profile_relation_keys = {
+        "老婆": "spouse", "妻子": "spouse", "爱人": "spouse", "配偶": "spouse",
+        "老公": "spouse", "丈夫": "spouse", "太太": "spouse", "伴侣": "spouse",
+        "妈妈": "mother", "母亲": "mother", "妈": "mother",
+        "爸爸": "father", "父亲": "father", "爸": "father",
+    }
+    for alias, profile_key in profile_relation_keys.items():
+        if alias in original_person and prefs.get(profile_key):
+            person = str(prefs[profile_key])
+            break
+    relation_aliases = {
+        "妈妈": "母亲", "母亲": "母亲", "妈": "母亲",
+        "爸爸": "父亲", "父亲": "父亲", "爸": "父亲",
+        "老婆": "配偶", "妻子": "配偶", "爱人": "配偶", "配偶": "配偶",
+        "老公": "配偶", "丈夫": "配偶", "太太": "配偶", "伴侣": "配偶",
+    }
+    relation_value = relation or relation_aliases.get(original_person)
+    if (
+        not relation_value
+        and prefs.get("spouse")
+        and original_person == str(prefs.get("spouse"))
+    ):
+        relation_value = "配偶"
+    if not relation_value:
+        relation_value = next(
+            (
+                value
+                for alias, value in relation_aliases.items()
+                if alias in original_person
+            ),
+            "关心的人",
+        )
     target = None
     target_index = -1
     spouse_name = str(prefs.get("spouse") or "")
@@ -409,11 +594,61 @@ def remember_gift_preferences(
             continue
         if (
             str(item.get("name") or "") in {person, spouse_name}
+            or (
+                str(item.get("name") or "")
+                and (
+                    str(item.get("name") or "") in person
+                    or person in str(item.get("name") or "")
+                )
+            )
             or str(item.get("relation") or "") in {"配偶", "老婆", "妻子", "爱人"}
         ):
             target = dict(item)
             target_index = index
             break
+
+    action = "updated"
+    if target is None:
+        used_ids = {
+            str(item.get("person_id") or "")
+            for item in people
+            if isinstance(item, dict)
+        }
+        index = len(people) + 1
+        while f"CARE{index:04d}" in used_ids:
+            index += 1
+        target = {
+            "person_id": f"CARE{index:04d}",
+            "name": person,
+            "relation": relation_value,
+            "birthday": birthday if birthday_precision == "full" else "",
+            "birthday_month_day": (
+                birthday[5:10]
+                if birthday and birthday_precision == "month_day"
+                else ""
+            ),
+            "anniversary": "",
+            "phone": "",
+            "wechat": "",
+            "alipay": "",
+            "bank_name": "",
+            "bank_card": "",
+            "bank_card_tail": "",
+            "bank_card_masked": "",
+            "favorite_gift": (
+                list(prefs.get("favorite_gift") or [])
+                if relation_value == "配偶"
+                else []
+            ),
+            "avoid": (
+                list(prefs.get("avoid") or [])
+                if relation_value == "配偶"
+                else []
+            ),
+        }
+        people.append(target)
+        target_index = len(people) - 1
+        action = "created"
 
     def append_values(existing: Any, value: str, ignored: set[str]) -> List[str]:
         if isinstance(existing, list):
@@ -442,17 +677,44 @@ def remember_gift_preferences(
             values.append(cleaned)
         return values
 
+    existing_favorites, existing_avoid = sanitize_gift_preferences(
+        "、".join(
+            (target or {}).get(
+                "favorite_gift",
+                prefs.get("favorite_gift"),
+            ) or []
+        ),
+        "、".join(
+            (target or {}).get("avoid", prefs.get("avoid")) or []
+        ),
+    )
     next_favorites = append_values(
-        (target or {}).get("favorite_gift", prefs.get("favorite_gift")),
+        existing_favorites,
         preferences,
-        {"沿用资料", "没有补充", "无"},
+        GIFT_EMPTY_PREFERENCES,
     )
     next_avoid = append_values(
-        (target or {}).get("avoid", prefs.get("avoid")),
+        existing_avoid,
         avoid,
-        {"无", "没有", "没有过敏", "无过敏"},
+        {"无", "没有", "没有过敏", "无过敏", "没有禁忌", "无禁忌", "没有特别禁忌"},
     )
     if target is not None and target_index >= 0:
+        target_name = str(target.get("name") or "")
+        target["name"] = (
+            person
+            if person and (target_name in person or not target_name)
+            else target_name
+        )
+        if relation_value and not target.get("relation"):
+            target["relation"] = relation_value
+        if birthday:
+            if birthday_precision == "month_day":
+                target.setdefault("birthday", "")
+                if not target.get("birthday"):
+                    target["birthday_month_day"] = birthday[5:10]
+            else:
+                target["birthday"] = birthday
+                target["birthday_month_day"] = ""
         target["favorite_gift"] = next_favorites
         target["avoid"] = next_avoid
         people[target_index] = target
@@ -464,6 +726,20 @@ def remember_gift_preferences(
     user.source = "user:profile"
     user.updated_at = ctx.clock.iso()
     ctx.store.touch(user)
+    return {
+        "action": action,
+        "person_id": str(target.get("person_id") or "") if target else "",
+        "name": str(target.get("name") or person) if target else person,
+        "relation": str(target.get("relation") or relation_value) if target else relation_value,
+        "birthday": (
+            str(
+                target.get("birthday")
+                or target.get("birthday_month_day")
+                or birthday
+            )
+            if target else birthday
+        ),
+    }
 
 
 class GoalCreateTool(Tool):
@@ -610,6 +886,14 @@ class GiftRecommendTool(Tool):
     params = [
         ToolParam("person", "string", True, "收礼人"),
         ToolParam("birthday", "string", True, "生日日期"),
+        ToolParam(
+            "birthday_precision",
+            "string",
+            False,
+            "生日精度",
+            enum=["full", "month_day"],
+            default="full",
+        ),
         ToolParam("budget", "number", True, "礼物预算"),
         ToolParam("preferences", "string", False, "补充喜好"),
         ToolParam("avoid", "string", False, "过敏或禁忌"),
@@ -623,14 +907,14 @@ class GiftRecommendTool(Tool):
         person: str,
         birthday: str,
         budget: Any,
+        birthday_precision: str = "full",
         preferences: str = "",
         avoid: str = "",
         offset: int = 0,
     ) -> ToolResult:
         target, parsed_birthday = lookup_person(ctx, person)
         display_name = target.name if target else person
-        profile = lookup_person_preferences(ctx, person)
-        remember_gift_preferences(ctx, display_name, preferences, avoid)
+        preferences, avoid = sanitize_gift_preferences(preferences, avoid)
         try:
             max_budget = round(float(budget), 2)
         except (TypeError, ValueError):
@@ -640,20 +924,57 @@ class GiftRecommendTool(Tool):
         birthday_day = parse_date(str(birthday), ctx.clock.today(), base=parsed_birthday)
         if birthday_day is None:
             return ToolResult(False, "生日日期无法识别，请重新输入。")
+        profile_before = lookup_person_preferences(ctx, person)
+        care_sync = remember_gift_preferences(
+            ctx,
+            display_name,
+            preferences,
+            avoid,
+            birthday=birthday_day.isoformat(),
+            relation=str(profile_before.get("relation") or ""),
+            birthday_precision=(
+                "month_day"
+                if str(birthday_precision or "").strip() == "month_day"
+                else "full"
+            ),
+        )
+        profile = lookup_person_preferences(ctx, display_name)
         delivery_day = birthday_day - timedelta(days=2)
+        sanitized_profile_preferences, sanitized_profile_avoid = (
+            sanitize_gift_preferences(
+                "、".join(profile.get("favorite_gift") or []),
+                "、".join(profile.get("avoid") or []),
+            )
+        )
         avoid_text = " ".join([
-            " ".join(profile.get("avoid") or []),
+            sanitized_profile_avoid,
             str(avoid or ""),
         ])
+        raw_profile_favorites = list(profile.get("favorite_gift") or [])
         profile_favorites = [
             str(item).strip()
-            for item in (profile.get("favorite_gift") or [])
+            for item in sanitized_profile_preferences.split("、")
             if str(item).strip() not in {"", "鲜花", "蛋糕"}
         ]
         preference_text = " ".join([
             str(preferences or ""),
             " ".join(profile_favorites),
-        ])
+        ]).strip()
+        if (
+            not preference_text.strip()
+            and (
+                not raw_profile_favorites
+                or _is_medical_avoid(sanitized_profile_avoid)
+            )
+            and not str(preferences or "").strip()
+        ):
+            relation = str(profile.get("relation") or "")
+            if "母" in relation or "父" in relation:
+                preference_text = "长辈关怀"
+            elif "配偶" in relation:
+                preference_text = "伴侣关怀"
+            else:
+                preference_text = "通用关怀"
 
         ensure_gift_offer_catalog(ctx)
         offers = []
@@ -761,8 +1082,13 @@ class GiftRecommendTool(Tool):
         preference_label = "、".join(
             item for item in [explicit_label, *profile_favorites] if item
         )
-        if preference_label and not matched_gifts:
-            options.extend(build_external_gift_options(preference_label))
+        external_preference = preference_label or preference_text
+        if external_preference and not matched_gifts:
+            options.extend([
+                option
+                for option in build_external_gift_options(external_preference)
+                if float(option.get("total") or 0) <= max_budget
+            ])
 
         prefer_safe_gifts = fruit_risk or dairy_egg_risk or flower_risk or cake_risk
         prioritize_gifts = prefer_safe_gifts or bool(matched_gifts)
@@ -874,6 +1200,11 @@ class GiftRecommendTool(Tool):
             f"为「{display_name}」准备的生日礼物候选（预算 {max_budget:,.2f} 元）：",
             f"  生日：{birthday_day.isoformat()}；计划提前 2 天（{delivery_day.isoformat()}）配送",
             f"  已知偏好：{known_preferences}；过敏/禁忌：{known_avoid}",
+            (
+                f"  已自动{'新增' if care_sync['action'] == 'created' else '更新'}"
+                f"「关心的人」资料：{care_sync['name']}，"
+                f"关系 {care_sync['relation']}，生日 {care_sync['birthday']}"
+            ),
         ]
         if preferences:
             lines.append(f"  本次补充喜好：{preferences}")
@@ -891,7 +1222,7 @@ class GiftRecommendTool(Tool):
             )
         lines.extend([
             render_table(
-                ["#", "方案", "包含", "市场参考价", "商户", "推荐理由"],
+                ["#", "方案", "包含", "方案价", "商户", "推荐理由"],
                 rows,
             ),
             "请回复「第1个」「第2个」或「第3个」选择方案；也可以回复「换一批」继续浏览。",
@@ -901,12 +1232,14 @@ class GiftRecommendTool(Tool):
             "person": person,
             "display_name": display_name,
             "birthday": birthday_day.isoformat(),
+            "birthday_precision": birthday_precision,
             "delivery_date": delivery_day.isoformat(),
             "budget": max_budget,
             "preferences": preferences,
             "avoid": avoid,
             "known_preferences": list(profile.get("favorite_gift") or []),
             "known_avoid": list(profile.get("avoid") or []),
+            "care_person_sync": care_sync,
             "offset": (start + len(visible)) % len(options),
             "batch_index": start // batch_size + 1,
             "batch_reset": batch_reset,
@@ -923,6 +1256,7 @@ class GiftRecommendTool(Tool):
                 "batch_reset": context["batch_reset"],
                 "has_more": context["has_more"],
                 "total_options": context["total_options"],
+                "care_person_sync": context["care_person_sync"],
                 "options": [
                     {
                         "index": option["index"],
@@ -932,6 +1266,7 @@ class GiftRecommendTool(Tool):
                         "reason": option["reason"],
                         "external_only": bool(option.get("external_only")),
                         "price_label": str(option.get("price_label") or ""),
+                        "market_price": option.get("market_price"),
                         "price_estimate_min": option.get("price_estimate_min"),
                         "price_estimate_max": option.get("price_estimate_max"),
                         "price_source": str(option.get("price_source") or ""),

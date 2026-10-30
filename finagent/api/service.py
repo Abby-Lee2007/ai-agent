@@ -4,12 +4,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
+import re
 import secrets
 import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Optional
 
 from finagent.agent.core import AgentReply, BankingAgent
@@ -19,6 +21,11 @@ from finagent.data.official_sources import load_official_data
 from finagent.data.sqlite import OptimisticConcurrencyError
 from finagent.data.store import DataStore
 from finagent.integrations.sandbox_adapters import execution_payload
+from finagent.risk.credit_risk.integration import BusinessCreditShadowIntegration
+from finagent.risk.credit_risk.run_repository import CreditShadowRunRepository
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class SessionNotFound(KeyError):
@@ -27,6 +34,10 @@ class SessionNotFound(KeyError):
 
 class SessionAuthError(PermissionError):
     """Raised when a session token is missing or invalid."""
+
+
+class RequestNotFound(KeyError):
+    """Raised when a request lifecycle record does not exist."""
 
 
 class StepUpRequired(PermissionError):
@@ -69,6 +80,8 @@ class AgentSessionService:
         store_factory: Optional[Callable[[], DataStore]] = None,
         repository: Optional[Any] = None,
         step_up_ttl_seconds: int = 300,
+        now_utc: Optional[Callable[[], datetime]] = None,
+        processing_stale_seconds: int = 300,
     ) -> None:
         self.store = store
         self.store_factory = store_factory
@@ -79,7 +92,44 @@ class AgentSessionService:
         self._idempotency: Dict[tuple[str, str], Dict[str, Any]] = {}
         self._step_up_challenges: Dict[str, StepUpChallenge] = {}
         self._step_up_ttl_seconds = max(30, int(step_up_ttl_seconds))
+        self._now_utc = now_utc or (lambda: datetime.now(timezone.utc))
+        self._processing_stale_seconds = max(
+            30,
+            int(processing_stale_seconds),
+        )
         self._lock = threading.RLock()
+        self._credit_shadow_runs = (
+            CreditShadowRunRepository(repository)
+            if repository is not None else None
+        )
+
+    def _build_agent(self, store: DataStore, user_id: str) -> BankingAgent:
+        return BankingAgent(
+            store,
+            user_id,
+            llm_mode=self.llm_mode,
+            credit_shadow=BusinessCreditShadowIntegration.from_env(
+                run_repository=self._credit_shadow_runs,
+            ),
+        )
+
+    def _discard_credit_shadow_pending(
+        self,
+        record: SessionRecord,
+        *,
+        reason: str,
+        error_type: str,
+    ) -> None:
+        try:
+            record.agent.discard_credit_shadow_runs(
+                reason=reason,
+                error_type=error_type,
+            )
+        except Exception as exc:
+            _LOGGER.error(
+                "credit shadow pending cleanup failed: %s",
+                type(exc).__name__,
+            )
 
     def create_session(
         self,
@@ -102,7 +152,7 @@ class AgentSessionService:
             user_id=user_id,
             channel=channel,
             created_at=datetime.now().isoformat(timespec="seconds"),
-            agent=BankingAgent(session_store, user_id, llm_mode=self.llm_mode),
+            agent=self._build_agent(session_store, user_id),
             version=0,
             session_token_hash=session_token_hash,
         )
@@ -130,47 +180,110 @@ class AgentSessionService:
             record = self._get_or_load(session_id)
 
             cache_key = (session_id, request_id) if request_id else None
+            claim_token = ""
             if request_id:
                 embedded = record.processed_requests.get(request_id)
-                if embedded is not None and self._is_replayable(embedded):
-                    if (
-                        embedded.get("request_fingerprint")
-                        and embedded["request_fingerprint"] != request_fingerprint
-                    ):
-                        raise ValueError("同一 request_id 不能用于不同消息")
-                    replayed = dict(embedded)
-                    replayed["replayed"] = True
-                    return replayed
+                if embedded is not None:
+                    self._require_matching_fingerprint(
+                        embedded,
+                        request_fingerprint,
+                    )
+                    embedded_status = self._request_status(embedded)
+                    if embedded_status == "completed":
+                        replayed = self._public_request_payload(embedded)
+                        replayed["replayed"] = True
+                        return replayed
+                    if embedded_status in {"processing", "outcome_unknown"}:
+                        return self._public_request_payload(embedded)
             if cache_key and cache_key in self._idempotency:
                 cached = dict(self._idempotency[cache_key])
-                if self._is_replayable(cached):
-                    if (
-                        cached.get("request_fingerprint")
-                        and cached["request_fingerprint"] != request_fingerprint
-                    ):
-                        raise ValueError("同一 request_id 不能用于不同消息")
-                    cached["replayed"] = True
-                    return cached
+                self._require_matching_fingerprint(
+                    cached,
+                    request_fingerprint,
+                )
+                cached_status = self._request_status(cached)
+                if cached_status == "completed":
+                    replayed = self._public_request_payload(cached)
+                    replayed["replayed"] = True
+                    return replayed
+                if cached_status in {"processing", "outcome_unknown"}:
+                    if self.repository is None:
+                        return self._public_request_payload(cached)
                 self._idempotency.pop(cache_key, None)
-            if cache_key and self.repository is not None:
-                cached = self.repository.load_idempotency(session_id, request_id)
-                if cached is not None and self._is_replayable(cached):
-                    cached = dict(cached)
-                    if (
-                        cached.get("request_fingerprint")
-                        and cached["request_fingerprint"] != request_fingerprint
-                    ):
-                        raise ValueError("同一 request_id 不能用于不同消息")
-                    cached["replayed"] = True
-                    self._idempotency[cache_key] = cached
-                    return cached
 
-            reply = record.agent.handle(text)
+            if cache_key:
+                claim_token = uuid.uuid4().hex
+                if self.repository is not None:
+                    claim_state, cached = self.repository.claim_idempotency(
+                        session_id,
+                        request_id,
+                        request_fingerprint,
+                        self._utc_now_iso(),
+                        claim_token,
+                    )
+                    if claim_state == "fingerprint_mismatch":
+                        raise ValueError("同一 request_id 不能用于不同消息")
+                    if claim_state == "conflict":
+                        claim_state = "outcome_unknown"
+                    if claim_state != "claimed":
+                        self._idempotency[cache_key] = dict(cached)
+                        if claim_state == "processing":
+                            if self._processing_is_stale(cached):
+                                self._record_outcome_unknown(
+                                    cache_key,
+                                    str(cached.get("claim_token") or ""),
+                                )
+                                return self._public_request_payload(
+                                    self._idempotency[cache_key]
+                                )
+                            return self._public_request_payload(cached)
+                        if claim_state == "outcome_unknown":
+                            return self._public_request_payload({
+                                **cached,
+                                "request_status": "outcome_unknown",
+                            })
+                        if claim_state == "completed":
+                            replayed = self._public_request_payload(cached)
+                            replayed["replayed"] = True
+                            return replayed
+                        if claim_state == "failed":
+                            return self._public_request_payload({
+                                **cached,
+                                "request_status": "failed",
+                            })
+                        raise RuntimeError("无法确认请求执行状态")
+                else:
+                    self._idempotency[cache_key] = {
+                        "session_id": session_id,
+                        "request_id": request_id,
+                        "request_fingerprint": request_fingerprint,
+                        "request_status": "processing",
+                        "claimed_at": self._utc_now_iso(),
+                        "claim_token": claim_token,
+                        "replayed": False,
+                    }
+
+            try:
+                reply = record.agent.handle(text, request_id=request_id)
+            except Exception as exc:
+                self._discard_credit_shadow_pending(
+                    record,
+                    reason="business_execution_not_committed",
+                    error_type=type(exc).__name__,
+                )
+                if cache_key:
+                    self._record_outcome_unknown(
+                        cache_key,
+                        claim_token,
+                    )
+                raise
             payload = {
                 "session_id": session_id,
                 "request_id": request_id,
                 "request_fingerprint": request_fingerprint,
                 "reply": asdict(reply),
+                "request_status": "completed",
+                "completed_at": self._utc_now_iso(),
                 "replayed": False,
             }
             # The result and its request fingerprint share one session snapshot.
@@ -181,17 +294,135 @@ class AgentSessionService:
                     record.processed_requests.pop(
                         next(iter(record.processed_requests))
                     )
-            self._persist_session(record)
+            try:
+                self._persist_session(record)
+            except Exception as exc:
+                self._discard_credit_shadow_pending(
+                    record,
+                    reason="business_session_not_saved",
+                    error_type=type(exc).__name__,
+                )
+                if cache_key:
+                    self._record_outcome_unknown(
+                        cache_key,
+                        claim_token,
+                    )
+                raise
+            try:
+                record.agent.flush_credit_shadow_runs()
+            except Exception as exc:
+                _LOGGER.error(
+                    "credit shadow post-session flush failed: %s",
+                    type(exc).__name__,
+                )
             if cache_key:
                 self._idempotency[cache_key] = payload
                 if self.repository is not None:
-                    self.repository.save_idempotency(
+                    completed = self.repository.complete_idempotency(
                         session_id,
                         request_id,
                         payload,
-                        record.created_at,
+                        self._utc_now_iso(),
+                        claim_token,
                     )
+                    if str(
+                        completed.get("request_status") or ""
+                    ) != "completed":
+                        raise RuntimeError("请求结果状态持久化失败")
             return payload
+
+    def get_request_status(
+        self,
+        session_id: str,
+        request_id: str,
+    ) -> Dict[str, Any]:
+        """Return a request's durable lifecycle state without executing it."""
+        if not session_id or not request_id:
+            raise ValueError("session_id 和 request_id 不能为空")
+
+        with self._lock:
+            embedded: Optional[Dict[str, Any]] = None
+            record = self._sessions.get(session_id)
+            if record is not None:
+                embedded = record.processed_requests.get(request_id)
+            elif self.repository is not None:
+                data = self.repository.load_session(session_id)
+                if data is None:
+                    raise SessionNotFound(session_id)
+                processed = data.get("processed_requests") or {}
+                if isinstance(processed, dict):
+                    candidate = processed.get(request_id)
+                    if isinstance(candidate, dict):
+                        embedded = dict(candidate)
+            else:
+                raise SessionNotFound(session_id)
+
+            cached = self._idempotency.get((session_id, request_id))
+            if cached is None and self.repository is not None:
+                loaded = self.repository.load_idempotency(
+                    session_id,
+                    request_id,
+                )
+                if isinstance(loaded, dict):
+                    cached = dict(loaded)
+                    self._idempotency[(session_id, request_id)] = cached
+
+            if embedded is not None:
+                embedded_status = self._request_status(embedded)
+                if embedded_status == "completed":
+                    token = str((cached or {}).get("claim_token") or "")
+                    if (
+                        self.repository is not None
+                        and token
+                        and self._request_status(cached or {}) != "completed"
+                    ):
+                        self.repository.complete_idempotency(
+                            session_id,
+                            request_id,
+                            embedded,
+                            self._utc_now_iso(),
+                            token,
+                        )
+                    result = self._public_request_payload(embedded)
+                    result["replayed"] = True
+                    return result
+                if embedded_status in {
+                    "processing",
+                    "outcome_unknown",
+                    "failed",
+                }:
+                    return self._public_request_payload(embedded)
+
+            if cached is None:
+                raise RequestNotFound(request_id)
+
+            status = self._request_status(cached)
+            if status == "processing" and self._processing_is_stale(cached):
+                if self.repository is not None:
+                    updated = self.repository.mark_idempotency_outcome_unknown(
+                        session_id,
+                        request_id,
+                        self._utc_now_iso(),
+                        str(cached.get("claim_token") or ""),
+                    )
+                    if isinstance(updated, dict):
+                        cached = dict(updated)
+                else:
+                    cached = {
+                        **cached,
+                        "request_status": "outcome_unknown",
+                        "updated_at": self._utc_now_iso(),
+                    }
+                self._idempotency[(session_id, request_id)] = cached
+                status = "outcome_unknown"
+
+            result = self._public_request_payload({
+                **cached,
+                "request_status": status,
+            })
+            if status == "completed":
+                result["replayed"] = True
+            return result
 
     def run_due_tasks(self) -> Dict[str, list[str]]:
         """Run due tasks for every active session and persist side effects."""
@@ -223,9 +454,106 @@ class AgentSessionService:
 
     @staticmethod
     def _is_replayable(payload: Dict[str, Any]) -> bool:
-        """Only successful responses are safe to replay forever."""
+        """Completed requests always replay their original terminal result."""
+        if payload.get("request_status") == "completed":
+            return True
+        if payload.get("request_status") in {
+            "processing",
+            "outcome_unknown",
+            "failed",
+        }:
+            return False
         reply = payload.get("reply") or {}
         return bool(reply.get("ok", True)) and reply.get("kind") != "error"
+
+    @staticmethod
+    def _request_status(payload: Dict[str, Any]) -> str:
+        explicit = str(payload.get("request_status") or "")
+        if explicit:
+            return explicit
+        if "reply" in payload:
+            if AgentSessionService._is_replayable(payload):
+                return "completed"
+            return "failed"
+        return "outcome_unknown"
+
+    @staticmethod
+    def _require_matching_fingerprint(
+        payload: Dict[str, Any],
+        request_fingerprint: str,
+    ) -> None:
+        stored = str(payload.get("request_fingerprint") or "")
+        if stored and stored != request_fingerprint:
+            raise ValueError("同一 request_id 不能用于不同消息")
+
+    @staticmethod
+    def _public_request_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+        allowed = (
+            "session_id",
+            "request_id",
+            "request_fingerprint",
+            "request_status",
+            "reply",
+            "claimed_at",
+            "completed_at",
+            "updated_at",
+        )
+        result = {
+            key: payload[key]
+            for key in allowed
+            if key in payload
+        }
+        if "request_status" not in result:
+            result["request_status"] = AgentSessionService._request_status(
+                payload
+            )
+        result["replayed"] = bool(payload.get("replayed"))
+        return result
+
+    def _utc_now(self) -> datetime:
+        value = self._now_utc()
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def _utc_now_iso(self) -> str:
+        return self._utc_now().isoformat(timespec="milliseconds")
+
+    def _processing_is_stale(self, payload: Dict[str, Any]) -> bool:
+        claimed_at = str(payload.get("claimed_at") or "")
+        try:
+            claimed = datetime.fromisoformat(claimed_at)
+        except (TypeError, ValueError):
+            return True
+        if claimed.tzinfo is None:
+            claimed = claimed.replace(tzinfo=timezone.utc)
+        age = self._utc_now() - claimed.astimezone(timezone.utc)
+        return age > timedelta(seconds=self._processing_stale_seconds)
+
+    def _record_outcome_unknown(
+        self,
+        cache_key: tuple[str, str],
+        claim_token: str,
+    ) -> None:
+        session_id, request_id = cache_key
+        unknown = {
+            **self._idempotency.get(cache_key, {}),
+            "session_id": session_id,
+            "request_id": request_id,
+            "request_status": "outcome_unknown",
+            "updated_at": self._utc_now_iso(),
+            "replayed": False,
+        }
+        self._idempotency[cache_key] = unknown
+        if self.repository is not None:
+            updated = self.repository.mark_idempotency_outcome_unknown(
+                session_id,
+                request_id,
+                self._utc_now_iso(),
+                claim_token,
+            )
+            if isinstance(updated, dict):
+                self._idempotency[cache_key] = dict(updated)
 
     def handle_channel_message(
         self,
@@ -756,6 +1084,7 @@ class AgentSessionService:
                         "name": prefs.get("spouse", "爱人"),
                         "relation": "配偶",
                         "birthday": prefs.get("spouse_birthday", ""),
+                        "birthday_month_day": "",
                         "phone": "",
                         "wechat": "",
                         "alipay": "",
@@ -1201,6 +1530,21 @@ class AgentSessionService:
         return text
 
     @staticmethod
+    def _validate_month_day(value: Any, label: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        match = re.fullmatch(r"(\d{1,2})[-/月](\d{1,2})日?", text)
+        if not match:
+            raise ValueError(f"{label}格式应为 MM-DD，例如 11-20")
+        month, day = int(match.group(1)), int(match.group(2))
+        try:
+            date(2000, month, day)
+        except ValueError as exc:
+            raise ValueError(f"{label}不是有效的月日") from exc
+        return f"{month:02d}-{day:02d}"
+
+    @staticmethod
     def _list_values(value: Any) -> list[str]:
         if isinstance(value, list):
             parts = value
@@ -1290,15 +1634,25 @@ class AgentSessionService:
                 len(bank_card_tail) != 4 or not bank_card_tail.isdigit()
             ):
                 raise ValueError(f"{name}的银行卡后四位格式不正确")
+            birthday = self._validate_birthday(
+                item.get("birthday"),
+                f"{name}的生日",
+                today,
+            )
+            birthday_month_day = (
+                ""
+                if birthday
+                else self._validate_month_day(
+                    item.get("birthday_month_day"),
+                    f"{name}的生日月日",
+                )
+            )
             people.append({
                 "person_id": str(item.get("person_id") or f"CARE{index + 1:04d}")[:40],
                 "name": name[:40],
                 "relation": str(item.get("relation") or "关心的人").strip()[:20],
-                "birthday": self._validate_birthday(
-                    item.get("birthday"),
-                    f"{name}的生日",
-                    today,
-                ),
+                "birthday": birthday,
+                "birthday_month_day": birthday_month_day,
                 "anniversary": self._validate_date(item.get("anniversary"), f"{name}的纪念日"),
                 "phone": phone,
                 "wechat": str(item.get("wechat") or "").strip()[:100],
@@ -1343,7 +1697,7 @@ class AgentSessionService:
         if data is None:
             raise SessionNotFound(session_id)
         store = self._restore_store(data["store"])
-        agent = BankingAgent(store, str(data["user_id"]), llm_mode=self.llm_mode)
+        agent = self._build_agent(store, str(data["user_id"]))
         agent.risk_answers = dict(data.get("risk_answers") or {})
         agent.risk_level = data.get("risk_level")
         agent.risk_assessed_at = str(data.get("risk_assessed_at") or "")

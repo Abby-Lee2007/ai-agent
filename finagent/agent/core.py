@@ -47,6 +47,10 @@ from finagent.nlu.membership_parser import (
     validate_membership_items,
 )
 from finagent.nlu.llm_client import LLMClient
+from finagent.risk.credit_risk.integration import BusinessCreditShadowIntegration
+from finagent.risk.credit_risk.model_feature_collection import (
+    CreditRiskFeatureCollection,
+)
 from finagent.risk.engine import RiskDecision, RiskEngine
 from finagent.risk.questionnaire import (
     BASIC_MAP,
@@ -132,6 +136,7 @@ class BankingAgent:
         llm: Optional[LLMClient] = None,
         llm_mode: Optional[str] = None,
         session: Optional[DialogueSession] = None,
+        credit_shadow: Optional[BusinessCreditShadowIntegration] = None,
     ) -> None:
         self.store = store
         self.clock: Clock = store.clock
@@ -152,6 +157,9 @@ class BankingAgent:
             providers=self.providers,
         )
         self.llm = llm if llm is not None else LLMClient()
+        self.credit_shadow = (
+            credit_shadow or BusinessCreditShadowIntegration.from_env()
+        )
         self.parser = IntentParser(
             store=store,
             user_id=user_id,
@@ -175,6 +183,7 @@ class BankingAgent:
         self.reply_history: List[ReplyMemory] = []
         self.workflow_sequence = 0
         self.current_workflow_id = ""
+        self.current_request_id = ""
 
     # ==================================================================
     # 对外入口
@@ -193,6 +202,7 @@ class BankingAgent:
         self.reply_history.clear()
         self.workflow_sequence = 0
         self.current_workflow_id = ""
+        self.current_request_id = ""
 
     def export_reply_history(self) -> List[Dict[str, Any]]:
         return [
@@ -237,7 +247,52 @@ class BankingAgent:
             "password", "card_password", "card_password_confirm",
             "payment_password", "card_no", "phone",
         }
-        if any(pending.slots.get(field) for field in sensitive_fields):
+        has_sensitive_slot = any(
+            pending.slots.get(field) for field in sensitive_fields
+        )
+        if has_sensitive_slot:
+            # A card application may already contain the phone required by the
+            # formal tool while the non-sensitive model-feature collection is
+            # still in progress.  Keep that progress recoverable, but never
+            # persist the phone itself.  Confirmation/payment states remain
+            # non-restorable because resuming them without the original
+            # authorization material would be unsafe.
+            if pending.intent == "card.apply" and pending.kind == "slot":
+                data = asdict(pending)
+                slots = dict(data.get("slots") or {})
+                redacted = sorted(
+                    field for field in sensitive_fields if slots.get(field)
+                )
+                for field in redacted:
+                    slots.pop(field, None)
+                data["slots"] = slots
+                plan_data = data.get("plan")
+                if isinstance(plan_data, dict):
+                    plan_data = dict(plan_data)
+                    plan_slots = dict(plan_data.get("slots") or {})
+                    for field in redacted:
+                        plan_slots.pop(field, None)
+                    plan_data["slots"] = plan_slots
+                    plan_steps = []
+                    for step in plan_data.get("steps") or []:
+                        if not isinstance(step, dict):
+                            continue
+                        step = dict(step)
+                        args = dict(step.get("args") or {})
+                        for field in redacted:
+                            args.pop(field, None)
+                        step["args"] = args
+                        plan_steps.append(step)
+                    plan_data["steps"] = plan_steps
+                    data["plan"] = plan_data
+                missing = list(data.get("missing") or [])
+                for field in redacted:
+                    if field not in missing:
+                        missing.insert(0, field)
+                data["missing"] = missing
+                data["redacted_fields"] = redacted
+                data["restore_note"] = "sensitive_fields_will_be_requested_again"
+                return {"restorable": True, **data}
             return {
                 "restorable": False,
                 "reason": "pending_contains_sensitive_data",
@@ -278,6 +333,7 @@ class BankingAgent:
                 question=str(plan_data.get("question") or ""),
                 description=str(plan_data.get("description") or ""),
                 slots=dict(plan_data.get("slots") or {}),
+                data=dict(plan_data.get("data") or {}),
             )
         origin_data = data.get("origin")
         origin = Intent(**origin_data) if isinstance(origin_data, dict) else None
@@ -337,28 +393,53 @@ class BankingAgent:
         """执行到期的定时任务（定时转账、预约下单、提醒）。"""
         return self.scheduler.run_due(self.user_id)
 
-    def handle(self, text: str) -> AgentReply:
-        if self.session.pending is None or not self.current_workflow_id:
-            self.workflow_sequence += 1
-            self.current_workflow_id = (
-                f"WF-{self.clock.today().strftime('%Y%m%d')}-"
-                f"{self.workflow_sequence:04d}"
-            )
-        lifecycle_messages = process_subscription_lifecycle(
-            self.store,
-            self.clock,
-            self.user_id,
+    def flush_credit_shadow_runs(self):
+        """Persist queued shadow runs after the formal session commits."""
+        if not self.credit_shadow.enabled:
+            return ()
+        return self.credit_shadow.flush_pending()
+
+    def discard_credit_shadow_runs(
+        self,
+        *,
+        reason: str,
+        error_type: str,
+    ) -> None:
+        """Discard queued observations when formal persistence failed."""
+        if not self.credit_shadow.enabled:
+            return
+        self.credit_shadow.discard_pending_persistence(
+            reason=reason,
+            error_type=error_type,
         )
-        reply = self._handle_input(text)
-        if lifecycle_messages:
-            notice = "\n".join(f"  · {message}" for message in lifecycle_messages)
-            reply.text = (
-                f"订阅状态更新：\n{notice}\n\n{reply.text}"
-                if reply.text else f"订阅状态更新：\n{notice}"
+
+    def handle(self, text: str, *, request_id: str = "") -> AgentReply:
+        previous_request_id = self.current_request_id
+        self.current_request_id = str(request_id or "").strip()
+        try:
+            if self.session.pending is None or not self.current_workflow_id:
+                self.workflow_sequence += 1
+                self.current_workflow_id = (
+                    f"WF-{self.clock.today().strftime('%Y%m%d')}-"
+                    f"{self.workflow_sequence:04d}"
+                )
+            lifecycle_messages = process_subscription_lifecycle(
+                self.store,
+                self.clock,
+                self.user_id,
             )
-            reply.data["lifecycle_messages"] = lifecycle_messages
-        reply.data.setdefault("workflow", self._workflow_payload(reply))
-        return reply
+            reply = self._handle_input(text)
+            if lifecycle_messages:
+                notice = "\n".join(f"  · {message}" for message in lifecycle_messages)
+                reply.text = (
+                    f"订阅状态更新：\n{notice}\n\n{reply.text}"
+                    if reply.text else f"订阅状态更新：\n{notice}"
+                )
+                reply.data["lifecycle_messages"] = lifecycle_messages
+            reply.data.setdefault("workflow", self._workflow_payload(reply))
+            return reply
+        finally:
+            self.current_request_id = previous_request_id
 
     def _workflow_payload(self, reply: AgentReply) -> Dict[str, Any]:
         status = (
@@ -550,6 +631,8 @@ class BankingAgent:
             if control == "confirm":
                 return self._after_confirm(pending)
             if control == "deny":
+                if pending.intent == "bill.import_receipt":
+                    self.scratch.pop("resume_card_pending", None)
                 self.session.clear_pending()
                 return AgentReply("好的，这次操作已经取消，没有执行任何资金变动。", ok=True)
 
@@ -681,11 +764,20 @@ class BankingAgent:
         ctx = self.context()
         plan = self.planner.plan(intent, ctx)
         if plan.missing:
+            pending_slots = (
+                dict(plan.slots) if plan.slots else dict(intent.slots)
+            )
             self.session.pending = Pending(
-                kind="slot", intent=intent.name, slots=dict(intent.slots),
+                kind="slot", intent=intent.name, slots=pending_slots,
                 missing=list(plan.missing), question=plan.question, plan=None,
             )
-            return AgentReply(plan.question, intent=intent.name, kind="question", needs_input=True)
+            return AgentReply(
+                plan.question,
+                intent=intent.name,
+                kind="question",
+                needs_input=True,
+                data=dict(plan.data),
+            )
         if not plan.steps:
             return AgentReply(f"我理解到您的意图是「{intent.name}」，但没能生成可执行的动作，请再说具体一点。",
                               intent=intent.name, kind="question", needs_input=True)
@@ -1379,7 +1471,7 @@ class BankingAgent:
     EMPTY_PREFERENCE_WORDS = {
         "没有", "无", "没", "暂无", "没了", "没有补充", "无补充", "没补充",
         "没有其他", "没有别的", "不需要", "不用", "都可以", "都行", "随便",
-        "沿用资料",
+        "沿用资料", "沿用材料", "按资料", "按照资料",
     }
     NO_AVOID_WORDS = {
         "没有", "无", "没", "暂无", "没有过敏", "无过敏", "没有禁忌", "无禁忌",
@@ -1771,7 +1863,15 @@ class BankingAgent:
             "crossscene.gift_plan",
         } and pending.missing:
             current_slot = pending.missing[0]
-            current_slot_answer = self._extract_slot(current_slot, text, ctx)
+            if current_slot == "credit_model_features":
+                # While collecting the model's required history, do not let
+                # words such as “还款”/“账单” re-route the user into
+                # bill.analyze and discard the card draft.  The collection
+                # parser below will validate the answer (or explain what is
+                # missing).
+                current_slot_answer = text.strip() or None
+            else:
+                current_slot_answer = self._extract_slot(current_slot, text, ctx)
         candidate_interrupt = self._interrupt_intent(text)
         if pending.intent == "card.apply" and current_slot_answer is not None:
             interrupt = None
@@ -1803,6 +1903,16 @@ class BankingAgent:
                     if pending.slots.get(slot) in (None, ""):
                         pending.slots[slot] = value
             else:
+                if (
+                    pending.intent == "card.apply"
+                    and pending.missing
+                    and pending.missing[0] == "statement_mode"
+                    and interrupt.name == "bill.scan_receipt"
+                ):
+                    # Bill scanning temporarily takes over the dialogue. Keep
+                    # the card draft so a successful import can return to the
+                    # exact same application workflow instead of losing it.
+                    self.scratch["resume_card_pending"] = pending
                 self.session.clear_pending()
                 return self._continue_with_intent(interrupt)
 
@@ -1836,12 +1946,15 @@ class BankingAgent:
                 intent = Intent(pending.intent, pending.slots, 0.9, "system")
                 plan = self.planner.plan(intent, ctx)
                 if plan.missing:
+                    if plan.slots:
+                        pending.slots = dict(plan.slots)
                     pending.missing = list(plan.missing)
                     return AgentReply(
                         plan.question,
                         intent=pending.intent,
                         kind="question",
                         needs_input=True,
+                        data=dict(plan.data),
                     )
             next_slot = pending.missing[0]
             question = self.planner._question(next_slot)
@@ -1860,8 +1973,16 @@ class BankingAgent:
         intent = Intent(pending.intent, pending.slots, 0.9, "system")
         plan = self.planner.plan(intent, ctx)
         if plan.missing:
+            if plan.slots:
+                pending.slots = dict(plan.slots)
             pending.missing = list(plan.missing)
-            return AgentReply(plan.question, intent=pending.intent, kind="question", needs_input=True)
+            return AgentReply(
+                plan.question,
+                intent=pending.intent,
+                kind="question",
+                needs_input=True,
+                data=dict(plan.data),
+            )
         self.session.clear_pending()
         return self._gate_and_execute(plan)
 
@@ -1940,8 +2061,18 @@ class BankingAgent:
                 pending.slots.pop("statement_mode", None)
                 pending.missing = ["statement_mode"]
                 return AgentReply(
-                    "请选择流水核验方式：回复「已上传」使用当前会话的上传流水，"
-                    "或回复「使用演示流水」进行模拟核验。",
+                    "信用卡申请需要先上传并确认导入消费流水，"
+                    "完成后回复「已上传」。",
+                    intent=pending.intent,
+                    kind="question",
+                    needs_input=True,
+                )
+            if statement_mode == "demo":
+                pending.slots.pop("statement_mode", None)
+                pending.missing = ["statement_mode"]
+                return AgentReply(
+                    "信用卡申请不能使用演示流水替代正式上传。"
+                    "请先用回形针上传账单并确认导入，完成后回复「已上传」。",
                     intent=pending.intent,
                     kind="question",
                     needs_input=True,
@@ -1956,7 +2087,7 @@ class BankingAgent:
                     pending.missing = ["statement_mode"]
                     return AgentReply(
                         "当前会话没有已确认导入的消费流水。请先用回形针上传账单并完成导入，"
-                        "再回复「已上传」；也可以回复「使用演示流水」。",
+                        "再回复「已上传」。",
                         intent=pending.intent,
                         kind="question",
                         needs_input=True,
@@ -2043,6 +2174,11 @@ class BankingAgent:
                     pending.slots.pop("birthday", None)
                 if parsed_birthday:
                     pending.slots["birthday"] = parsed_birthday
+                    pending.slots["birthday_precision"] = (
+                        "full"
+                        if re.search(r"(?:19|20)\d{2}", text)
+                        else "month_day"
+                    )
                     pending.missing = missing
                     return
                 if person:
@@ -2061,8 +2197,22 @@ class BankingAgent:
             if not missing:
                 return
             slot = missing.pop(0)
+            if slot == "credit_model_features":
+                collection = CreditRiskFeatureCollection.from_context(
+                    user=ctx.user,
+                    cards=ctx.providers.cards.of(ctx.user_id),
+                    accounts=ctx.providers.accounts.of(ctx.user_id),
+                    previous=pending.slots.get("credit_model_features"),
+                )
+                collection.apply_text(text)
+                pending.slots["credit_model_features"] = collection.to_dict()
+                pending.missing = []
+                return
             value = self._extract_slot(slot, text, ctx)
-            if value is None or not self._is_valid_slot_value(slot, value):
+            if (
+                slot in self.TEXT_SLOTS
+                and (value is None or not self._is_valid_slot_value(slot, value))
+            ):
                 # Keep the answer so the card-specific validator can explain
                 # whether the phone, account type, or another field is invalid.
                 value = self._coerce_text(text)
@@ -2114,6 +2264,20 @@ class BankingAgent:
             fields["preferences"] = "、".join(preference_parts)[:200]
         if avoid_parts:
             fields["avoid"] = "、".join(avoid_parts)[:200]
+        from finagent.tools.crossscene_tools import sanitize_gift_preferences
+
+        clean_preferences, clean_avoid = sanitize_gift_preferences(
+            fields.get("preferences", ""),
+            fields.get("avoid", ""),
+        )
+        if clean_preferences:
+            fields["preferences"] = clean_preferences[:200]
+        else:
+            fields.pop("preferences", None)
+        if clean_avoid:
+            fields["avoid"] = clean_avoid[:200]
+        else:
+            fields.pop("avoid", None)
         return fields
 
     @staticmethod
@@ -2139,6 +2303,7 @@ class BankingAgent:
     TEXT_SLOTS = {
         "payee", "person", "merchant", "card", "product", "name", "keyword",
         "from_card", "to_card", "account", "payee_account", "preferences", "avoid",
+        "bank",
     }
 
     @classmethod
@@ -2418,6 +2583,7 @@ class BankingAgent:
                 kind="confirm",
                 needs_input=True,
                 plan=plan.tools(),
+                data=dict(plan.data),
             )
 
         if requires_confirmation and not data_confirmed:
@@ -2955,6 +3121,28 @@ class BankingAgent:
         display_name = str(pending.slots.get("display_name") or "爱人")
         items = list(selected.get("items") or [])
         total = float(selected.get("total") or 0)
+        if total <= 0:
+            for item in items:
+                item_price = float(
+                    item.get("market_price")
+                    or item.get("price")
+                    or 0
+                )
+                if item_price > 0:
+                    item["price"] = item_price
+            total = round(sum(
+                float(item.get("market_price") or item.get("price") or 0)
+                for item in items
+            ), 2)
+        if total <= 0:
+            return AgentReply(
+                "当前礼物方案没有可用的市场价格，未锁定资金或创建预约。"
+                "请回复「换一批」重新选择。",
+                intent=pending.intent,
+                ok=False,
+                kind="question",
+                needs_input=True,
+            )
         steps = [
             PlanStep(
                 tool="goal.create",
@@ -3195,6 +3383,8 @@ class BankingAgent:
         messages: List[str] = []
         summaries: List[str] = []
         payload: Dict[str, Any] = {}
+        credit_application_completed = False
+        credit_application_id = ""
         ok = True
         for index, step in enumerate(plan.steps, start=1):
             tool = self.registry.get(step.tool)
@@ -3226,15 +3416,59 @@ class BankingAgent:
             if result.ok:
                 summaries.append(result.summary)
                 payload.update(result.data or {})
+                if (
+                    step.tool == "card.apply"
+                    and str(result.data.get("kind") or "") == "credit"
+                ):
+                    credit_application_completed = True
+                    credit_application_id = str(
+                        result.data.get("application_id") or ""
+                    ).strip()
             else:
                 ok = False
                 break
+        for key, value in (plan.data or {}).items():
+            payload.setdefault(key, value)
         if not ok:
             self.store.restore_checkpoint(checkpoint)
             for item in trace:
                 item["rolled_back"] = True
+        elif credit_application_completed:
+            payload["credit_risk_model"] = self._predict_credit_application_risk(
+                plan,
+                ctx,
+                payload,
+            )
+            self._apply_credit_risk_decision_gate(ctx, payload)
+            self._observe_credit_application_shadow(
+                ctx,
+                application_id=credit_application_id,
+                request_id=self.current_request_id,
+            )
         self.store.log("agent.execute", intent=plan.intent, tools=plan.tools(), ok=ok)
         text = "\n\n".join(messages) if len(plan.steps) > 1 else (messages[0] if messages else "操作已完成。")
+        if payload.get("risk_gate_applied"):
+            text = text.replace(
+                "模拟预审结果：通过（",
+                "模型高风险门槛：转人工复核（原规则评分 ",
+            ).replace(
+                "当前状态：模拟预审通过，待激活",
+                "当前状态：待人工复核",
+            )
+            text += (
+                "\n\n【风险门槛】模型风险概率达到 "
+                f"{float(payload.get('credit_risk_model', {}).get('predicted_probability') or 0) * 100:.1f}%，"
+                "正式申请已转为人工复核，不会直接通过。"
+            )
+        model_text = self._credit_risk_model_text(payload.get("credit_risk_model"))
+        if model_text:
+            text += "\n\n" + model_text
+        if ok and any(step.tool == "bill.import_receipt" for step in plan.steps):
+            if self._restore_card_after_bill_import():
+                text += (
+                    "\n\n信用卡申请草稿已恢复，流水核验状态已更新。"
+                    "请回复「已上传」继续原来的信用卡申请，不会重新开始流程。"
+                )
         gift_recommend_failed = not ok and any(
             step.tool == "crossscene.gift_recommend" for step in plan.steps
         )
@@ -3285,4 +3519,209 @@ class BankingAgent:
                               trace=trace, plan=plan.tools(), data=payload, needs_input=True)
         return AgentReply(text, intent=plan.intent, ok=ok, kind="executed",
                           trace=trace, plan=plan.tools(), data=payload)
+
+    def _predict_credit_application_risk(
+        self,
+        plan: Plan,
+        ctx: ToolContext,
+        formal_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Call the verified top-five model without changing formal approval."""
+        collection = CreditRiskFeatureCollection.from_context(
+            user=ctx.user,
+            cards=ctx.providers.cards.of(self.user_id),
+            accounts=ctx.providers.accounts.of(self.user_id),
+            previous=plan.slots.get("credit_model_features"),
+        )
+        model_input = collection.model_input_payload()
+        progress = collection.progress_payload()
+        base = {
+            "executed": False,
+            "model_name": progress["model_name"],
+            "model_version": progress["model_version"],
+            "predicted_probability": None,
+            "probability": None,
+            "threshold": None,
+            "predicted_label": None,
+            "risk_label": None,
+            "feature_completeness": progress["core_coverage_ratio"],
+            "missing_features": model_input["missing_features"],
+            "business_rule_result": {
+                "decision": formal_result.get("decision"),
+                "score": formal_result.get("score"),
+                "reference_limit": formal_result.get("reference_limit"),
+            },
+            "final_application_status": formal_result.get("decision"),
+        }
+        if not model_input["ready"]:
+            result = {
+                **base,
+                "status": "skipped",
+                "prediction_status": "skipped",
+                "reason": "required_top5_features_missing",
+            }
+        else:
+            try:
+                from ml.credit_risk.top5_model import predict_top5
+
+                prediction = predict_top5(model_input["features"])
+                result = {
+                    **base,
+                    **prediction,
+                    "executed": True,
+                    "status": "success",
+                    "prediction_status": "success",
+                    "feature_completeness": 1.0,
+                    "feature_source_summary": {
+                        **prediction.get("feature_source_summary", {}),
+                        **model_input["feature_sources"],
+                    },
+                }
+            except Exception as exc:
+                error_type = type(exc).__name__
+                if error_type in {
+                    "Top5ModelArtifactError",
+                    "ModelArtifactError",
+                }:
+                    status = "model_unavailable"
+                elif error_type in {
+                    "Top5FeatureValidationError",
+                    "FeatureValidationError",
+                    "ValueError",
+                }:
+                    status = "invalid_input"
+                else:
+                    status = "model_error"
+                result = {
+                    **base,
+                    "status": status,
+                    "prediction_status": status,
+                    "reason": error_type,
+                    "error_message": str(exc)[:240],
+                }
+        try:
+            self.store.log(
+                "credit_risk.top5_prediction",
+                application_id=formal_result.get("application_id"),
+                status=result["prediction_status"],
+                model_name=result.get("model_name"),
+                model_version=result.get("model_version"),
+            )
+        except Exception:
+            pass
+        return result
+
+    def _apply_credit_risk_decision_gate(
+        self,
+        ctx: ToolContext,
+        payload: Dict[str, Any],
+    ) -> None:
+        """Escalate a formal pass when the research model is high risk."""
+        model = payload.get("credit_risk_model")
+        if not isinstance(model, dict) or model.get("prediction_status") != "success":
+            return
+        try:
+            probability = float(model.get("predicted_probability"))
+            threshold = float(model.get("threshold"))
+        except (TypeError, ValueError):
+            return
+        if probability < threshold:
+            return
+        formal_decision = str(payload.get("decision") or "")
+        if formal_decision != "通过":
+            return
+
+        payload["formal_rule_decision"] = formal_decision
+        payload["decision"] = "转人工复核"
+        payload["final_application_status"] = "转人工复核"
+        payload["risk_gate_applied"] = True
+        payload["risk_gate_reason"] = "model_high_risk_requires_manual_review"
+        model["business_rule_result"] = {
+            **(model.get("business_rule_result") or {}),
+            "decision": formal_decision,
+        }
+        model["final_application_status"] = "转人工复核"
+
+        card_id = str(payload.get("card_id") or payload.get("application_id") or "")
+        card = ctx.store.cards.get(card_id)
+        if card is not None:
+            card.application_stage = "pending_review"
+            card.application_history = [
+                *(card.application_history or []),
+                {
+                    "stage": "model_high_risk_gate",
+                    "label": "模型高风险，转人工复核",
+                    "at": ctx.clock.iso(),
+                },
+            ]
+            ctx.store.touch(card)
+
+    def _restore_card_after_bill_import(self) -> bool:
+        """Restore a card draft interrupted by bill scan/import."""
+        pending = self.scratch.pop("resume_card_pending", None)
+        if not isinstance(pending, Pending) or pending.intent != "card.apply":
+            return False
+        pending.slots["statement_mode"] = "uploaded"
+        pending.missing = [
+            slot for slot in pending.missing
+            if slot != "statement_mode"
+        ]
+        self.session.pending = pending
+        return True
+
+    @staticmethod
+    def _credit_risk_model_text(model: Any) -> str:
+        if not isinstance(model, dict):
+            return ""
+        status = str(model.get("prediction_status") or model.get("status") or "")
+        if status == "success":
+            probability = model.get("predicted_probability")
+            try:
+                percentage = f"{float(probability) * 100:.1f}%"
+            except (TypeError, ValueError):
+                percentage = "不可用"
+            return (
+                f"【模型风险评估】{model.get('model_name')} "
+                f"{model.get('model_version')} 已执行。"
+                f"模型风险概率：{percentage}；"
+                f"分类阈值：{float(model.get('threshold') or 0) * 100:.0f}%；"
+                f"结果：{model.get('risk_label') or '已完成分类'}。"
+                "该结果仅用于离线研究评估，不替代正式审批，也不直接决定额度。"
+            )
+        if status:
+            return (
+                "【模型风险评估】未生成风险概率，正式申请仍按现有业务规则处理。"
+            )
+        return ""
+
+    def _observe_credit_application_shadow(
+        self,
+        ctx: ToolContext,
+        *,
+        application_id: str,
+        request_id: str,
+    ) -> None:
+        """Run a background-only shadow check; never alter AgentReply."""
+        if not self.credit_shadow.enabled:
+            return
+        try:
+            self.credit_shadow.observe_credit_application(
+                user=ctx.user,
+                cards=ctx.providers.cards.of(self.user_id),
+                accounts=ctx.providers.accounts.of(self.user_id),
+                transactions=ctx.providers.transactions.of(self.user_id),
+                application_id=application_id,
+                request_id=request_id,
+                as_of=self.clock.now(),
+            )
+        except Exception:
+            try:
+                self.credit_shadow.record_failure(
+                    application_id=application_id,
+                    request_id=request_id,
+                )
+            except Exception:
+                # Shadow is observational only. This final fail-open boundary
+                # also protects formal approval when audit recording fails.
+                return
 

@@ -63,6 +63,30 @@ class TestProfileSettings(unittest.TestCase):
                     service.update_profile_settings(session_id, values)
                 self.assertIn("不能晚于今天", str(raised.exception))
 
+    def test_care_person_can_store_month_day_without_inventing_birth_year(self):
+        service = AgentSessionService(make_store(), llm_mode="off")
+        session_id = service.create_session(user_id="u_001", channel="h5")["session_id"]
+
+        profile = service.update_profile_settings(session_id, {
+            "care_people": [{
+                "name": "陈妈妈",
+                "relation": "母亲",
+                "birthday_month_day": "11-20",
+            }],
+        })
+        person = profile["preferences"]["care_people"][0]
+        self.assertEqual(person["birthday"], "")
+        self.assertEqual(person["birthday_month_day"], "11-20")
+
+        with self.assertRaises(ValueError):
+            service.update_profile_settings(session_id, {
+                "care_people": [{
+                    "name": "陈妈妈",
+                    "relation": "母亲",
+                    "birthday_month_day": "13-40",
+                }],
+            })
+
     def test_risk_assessment_result_is_written_back_to_profile(self):
         service = AgentSessionService(make_store(), llm_mode="off")
         session_id = service.create_session(user_id="u_001", channel="h5")["session_id"]

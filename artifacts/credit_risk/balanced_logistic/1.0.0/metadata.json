@@ -1,0 +1,146 @@
+{
+  "schema_version": "1.0",
+  "model_name": "credit-risk-balanced-logistic",
+  "model_version": "1.0.0",
+  "model_type": "Balanced Logistic Regression",
+  "created_at_utc": "2026-10-30T06:04:16+00:00",
+  "training_time": {
+    "started_at_utc": "2026-10-30T06:04:15+00:00",
+    "completed_at_utc": "2026-10-30T06:04:16+00:00",
+    "duration_seconds": 0.384981
+  },
+  "model_parameters": {
+    "C": 1.0,
+    "class_weight": "balanced",
+    "dual": false,
+    "fit_intercept": true,
+    "intercept_scaling": 1,
+    "l1_ratio": 0.0,
+    "max_iter": 1000,
+    "n_jobs": null,
+    "penalty": "deprecated",
+    "random_state": 42,
+    "solver": "lbfgs",
+    "tol": 0.0001,
+    "verbose": 0,
+    "warm_start": false
+  },
+  "decision_threshold": 0.5,
+  "features": {
+    "all": [
+      "X1",
+      "X2",
+      "X3",
+      "X4",
+      "X5",
+      "X6",
+      "X7",
+      "X8",
+      "X9",
+      "X10",
+      "X11",
+      "X12",
+      "X13",
+      "X14",
+      "X15",
+      "X16",
+      "X17",
+      "X18",
+      "X19",
+      "X20",
+      "X21",
+      "X22",
+      "X23"
+    ],
+    "numeric": [
+      "X1",
+      "X5",
+      "X12",
+      "X13",
+      "X14",
+      "X15",
+      "X16",
+      "X17",
+      "X18",
+      "X19",
+      "X20",
+      "X21",
+      "X22",
+      "X23"
+    ],
+    "categorical": [
+      "X2",
+      "X3",
+      "X4",
+      "X6",
+      "X7",
+      "X8",
+      "X9",
+      "X10",
+      "X11"
+    ]
+  },
+  "training_data": {
+    "dataset": "UCI Default of Credit Card Clients",
+    "dataset_id": 350,
+    "source_files": [
+      "datasets/processed/X_train.csv",
+      "datasets/processed/y_train.csv"
+    ],
+    "rows": 24000,
+    "features": 23,
+    "target": "Y",
+    "target_distribution": {
+      "0": 18691,
+      "1": 5309
+    }
+  },
+  "evaluation_data": {
+    "source_files": [
+      "datasets/processed/X_test.csv",
+      "datasets/processed/y_test.csv"
+    ],
+    "usage": "evaluation_only; never passed to pipeline.fit",
+    "rows": 6000,
+    "target_distribution": {
+      "0": 4673,
+      "1": 1327
+    }
+  },
+  "data_file_sha256": {
+    "X_train.csv": "7bbbec278f677284fe3d7e827e4bc89d5cdad382a92615f6cf65923682d12b8d",
+    "y_train.csv": "68314885bd24a6e5a645617b7b913b41838377f35983fdf297c73a11599abbe4",
+    "X_test.csv": "8d43be9ec161a4d86914c49e3bed465447d3ea81133bb579a0334326d566cd7f",
+    "y_test.csv": "747a5244645f6d667cc6fda5132b0f9b864e102c9245ea0c034a368ed98817dd"
+  },
+  "evaluation": {
+    "threshold": 0.5,
+    "n_samples": 6000,
+    "accuracy": 0.7735,
+    "precision": 0.48933333333333334,
+    "recall": 0.5531273549359458,
+    "f1": 0.5192783869826672,
+    "roc_auc": 0.7587726378233696,
+    "confusion_matrix": [
+      [
+        3907,
+        766
+      ],
+      [
+        593,
+        734
+      ]
+    ]
+  },
+  "artifact": {
+    "pipeline_file": "pipeline.joblib",
+    "pipeline_sha256": "16162087789b65f63f0e9d25af508c0cc8a4c5f2bef9dde3a88f44fb30b96a17"
+  },
+  "dependencies": {
+    "python": "3.13.14",
+    "scikit-learn": "1.9.1",
+    "pandas": "3.0.6",
+    "numpy": "2.5.4",
+    "joblib": "1.6.0"
+  }
+}

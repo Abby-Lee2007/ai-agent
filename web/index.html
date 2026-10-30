@@ -720,6 +720,192 @@
       line-height: 1.5;
     }
     .data-quality-line strong { color: var(--ink); }
+    .credit-application-result {
+      display: grid;
+      gap: 14px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-top: 3px solid var(--accent);
+      border-radius: 8px;
+      background: #f9fbfa;
+    }
+    .credit-application-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+    }
+    .credit-application-kicker {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: .04em;
+    }
+    .credit-application-title {
+      margin: 0;
+      color: var(--ink);
+      font-size: 17px;
+      line-height: 1.35;
+    }
+    .credit-application-status {
+      flex: 0 0 auto;
+      padding: 4px 9px;
+      border: 1px solid #a9cfc3;
+      border-radius: 999px;
+      color: var(--accent-strong);
+      background: var(--accent-soft);
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .credit-application-result[data-tone="review"] {
+      border-top-color: var(--warning);
+    }
+    .credit-application-result[data-tone="review"] .credit-application-status {
+      border-color: #e2cb96;
+      color: #7a5511;
+      background: var(--warning-soft);
+    }
+    .credit-application-result[data-tone="rejected"] {
+      border-top-color: var(--danger);
+    }
+    .credit-application-result[data-tone="rejected"] .credit-application-status {
+      border-color: #e2aaa5;
+      color: var(--danger);
+      background: #fff1f0;
+    }
+    .credit-application-result[data-tone="pending"] .credit-application-status {
+      border-color: var(--line);
+      color: var(--muted);
+      background: var(--surface-soft);
+    }
+    .credit-application-summary {
+      margin: 0;
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.65;
+    }
+    .credit-application-details {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--line);
+    }
+    .credit-application-detail {
+      min-width: 0;
+      padding: 9px 10px;
+      background: var(--surface);
+    }
+    .credit-application-detail span {
+      display: block;
+      color: var(--muted);
+      font-size: 10.5px;
+    }
+    .credit-application-detail strong {
+      display: block;
+      margin-top: 3px;
+      color: var(--ink);
+      font-size: 12.5px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .credit-application-next {
+      padding: 10px 12px;
+      border-left: 3px solid var(--accent);
+      border-radius: 4px;
+      color: var(--muted);
+      background: var(--surface-soft);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .credit-application-next strong { color: var(--ink); }
+    .credit-risk-progress {
+      display: grid;
+      gap: 9px;
+      margin-top: 12px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    .credit-risk-progress-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--ink);
+      font-size: 12px;
+    }
+    .credit-risk-progress-head span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .credit-risk-progress-bar {
+      height: 6px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--surface-soft);
+    }
+    .credit-risk-progress-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width .2s ease;
+    }
+    .credit-risk-progress-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+    .credit-risk-progress-metrics span {
+      padding: 3px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--surface-soft);
+      font-size: 10.5px;
+    }
+    .credit-risk-model-state {
+      color: #7a5511;
+      font-size: 11.5px;
+      line-height: 1.55;
+    }
+    .credit-risk-model-state strong { color: var(--ink); }
+    .credit-risk-values {
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+      font-size: 11.5px;
+    }
+    .credit-risk-values summary {
+      color: var(--ink);
+      cursor: pointer;
+      font-weight: 650;
+    }
+    .credit-risk-values-grid {
+      display: grid;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .credit-risk-value-row {
+      display: grid;
+      grid-template-columns: minmax(100px, 1fr) minmax(0, 1.4fr);
+      gap: 10px;
+      align-items: start;
+    }
+    .credit-risk-value-row span {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+    .credit-risk-value-row strong {
+      color: var(--ink);
+      font-weight: 550;
+      overflow-wrap: anywhere;
+    }
     .wealth-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2425,6 +2611,9 @@
       .analytics-table { display: block; overflow-x: auto; }
       .health-overview { grid-template-columns: 1fr; }
       .health-score { width: 132px; justify-self: center; }
+      .credit-application-head { flex-direction: column; }
+      .credit-application-details { grid-template-columns: 1fr; }
+      .credit-risk-value-row { grid-template-columns: 1fr; gap: 2px; }
       .market-overview-indices {
         grid-template-columns: repeat(6, 112px);
         overflow-x: auto;
@@ -2491,7 +2680,7 @@
             <li>涉及资金变动时会先要求确认。</li>
             <li>大额操作需要输入演示验证码。</li>
             <li>储蓄卡开户与信用卡申请使用不同资料和审核流程。</li>
-            <li>信用卡申请会核验已上传流水，或明确使用演示流水。</li>
+            <li>信用卡申请会核验已上传并确认导入的流水。</li>
             <li>转账和信用卡还款需要付款卡交易密码，大额操作还要短信验证。</li>
             <li>理财推荐不会自动下单；选定产品和付款卡并完成身份验证后才会申购。</li>
             <li>直接输入“确认”或“取消”继续流程。</li>
@@ -2849,6 +3038,9 @@
     let pendingUploadRotation = 0;
     let marketRefreshBusy = false;
     let cardStepUpResolver = null;
+    let activeRequest = null;
+    const REQUEST_RECOVERY_KEY = "finagent_request_recovery_v1";
+    const REQUEST_RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
 
     function localTodayISO() {
       const now = new Date();
@@ -2859,6 +3051,71 @@
     function newRequestId() {
       if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
       return `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function readRequestRecovery() {
+      try {
+        const raw = sessionStorage.getItem(REQUEST_RECOVERY_KEY);
+        if (!raw) return null;
+        const value = JSON.parse(raw);
+        const createdAt = Date.parse(value?.created_at || "");
+        if (
+          !value?.request_id
+          || !value?.session_id
+          || !Number.isFinite(createdAt)
+          || Date.now() - createdAt > REQUEST_RECOVERY_TTL_MS
+        ) {
+          sessionStorage.removeItem(REQUEST_RECOVERY_KEY);
+          return null;
+        }
+        return value;
+      } catch {
+        sessionStorage.removeItem(REQUEST_RECOVERY_KEY);
+        return null;
+      }
+    }
+
+    function saveRequestRecovery(requestId, status, messageFingerprint = "") {
+      if (!requestId || !sessionId) return;
+      const previous = readRequestRecovery();
+      sessionStorage.setItem(REQUEST_RECOVERY_KEY, JSON.stringify({
+        request_id: requestId,
+        session_id: sessionId,
+        status,
+        message_fingerprint: messageFingerprint
+          || previous?.message_fingerprint
+          || "",
+        created_at: previous?.request_id === requestId
+          ? previous.created_at
+          : new Date().toISOString()
+      }));
+    }
+
+    function clearRequestRecovery(requestId = "") {
+      const pending = readRequestRecovery();
+      if (requestId && pending?.request_id && pending.request_id !== requestId) {
+        return;
+      }
+      sessionStorage.removeItem(REQUEST_RECOVERY_KEY);
+    }
+
+    async function messageFingerprint(content) {
+      const text = String(content || "");
+      if (window.crypto?.subtle && window.TextEncoder) {
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(text)
+        );
+        return [...new Uint8Array(digest)]
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join("");
+      }
+      let hash = 2166136261;
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      return `fallback-${(hash >>> 0).toString(16)}`;
     }
 
     function authHeaders(headers = {}) {
@@ -3958,6 +4215,17 @@
         if (hasApiRange) return [min, max];
         return [59, 259];
       }
+      function exactMarketPrice(option) {
+        const explicit = Number(
+          option.market_price
+          || option.items?.[0]?.market_price
+          || option.total
+          || 0
+        );
+        if (explicit > 0) return explicit;
+        const [minimum, maximum] = marketPriceRange(option);
+        return Math.round(((minimum + maximum) / 2) / 10) * 10;
+      }
       function cleanGiftReason(reason) {
         return String(reason || "")
           .replace(/[；;，,\s]*价格与库存请在淘宝页面核实[。.]?$/u, "")
@@ -4022,8 +4290,8 @@
         );
         const [marketMin, marketMax] = marketPriceRange(option);
         if (externalOnly) {
-          priceCaption.textContent = "市场参考价";
-          price.textContent = `¥${marketMin.toLocaleString("zh-CN")}-¥${marketMax.toLocaleString("zh-CN")}`;
+          priceCaption.textContent = "估算市场价";
+          price.textContent = `¥${exactMarketPrice(option).toLocaleString("zh-CN")}`;
         } else {
           price.textContent = `¥${money(option.total)}`;
         }
@@ -4064,22 +4332,22 @@
         const source = document.createElement("p");
         source.className = "gift-option-source";
         if (externalOnly) {
-          source.textContent = "市场参考区间，非实时淘宝售价；最终价格与库存以淘宝页面为准。";
+          source.textContent = `系统按参考区间 ¥${marketMin.toLocaleString("zh-CN")}-¥${marketMax.toLocaleString("zh-CN")} 的中位数生成本轮预算；淘宝最终价格与库存以页面为准。`;
         }
-        const select = externalOnly ? null : document.createElement("button");
-        if (select) {
-          select.type = "button";
-          select.className = "gift-option-select";
-          select.textContent = `选择方案 ${option.index}`;
-          select.addEventListener("click", () => {
-            if (!busy) sendMessage(`第${option.index}个`);
-          });
-        }
+        const select = document.createElement("button");
+        select.type = "button";
+        select.className = "gift-option-select";
+        select.textContent = externalOnly
+          ? `按估算价选择 ${option.index}`
+          : `选择方案 ${option.index}`;
+        select.addEventListener("click", () => {
+          if (!busy) sendMessage(`第${option.index}个`);
+        });
         const itemLabels = (option.items || [])
           .map((item) => item.label || item.item || "")
           .filter(Boolean)
           .join(" ");
-        const budget = Math.ceil(Number(option.total || 0));
+        const budget = Math.ceil(exactMarketPrice(option));
         const taobaoQuery = option.search_query || [
           "生日礼物",
           itemLabels,
@@ -5656,9 +5924,276 @@
     }
 
 
-    function appendMessage(role, text, reply = null) {
+    function creditApplicationPresentation(data) {
+      const decision = String(data?.decision || "").trim();
+      if (decision.includes("未通过") || decision.includes("拒绝")) {
+        return {
+          tone: "rejected",
+          status: "预审未通过",
+          summary: "本次信用卡模拟预审暂未通过。",
+          next: "可返回对话咨询其他业务，具体结果以正式申请流程为准。",
+        };
+      }
+      if (decision.includes("人工复核") || decision.includes("复核")) {
+        return {
+          tone: "review",
+          status: "等待人工复核",
+          summary: "申请已进入人工复核阶段，需要进一步核验申请资料。",
+          next: "请留意后续申请进度；如需补充材料，以页面通知为准。",
+        };
+      }
+      if (decision.includes("通过")) {
+        return {
+          tone: "approved",
+          status: "预审通过",
+          summary: "信用卡申请已通过模拟预审，进入后续处理流程。",
+          next: "请留意申请进度和通知；最终结果以正式审核为准。",
+        };
+      }
+      return {
+        tone: "pending",
+        status: "申请处理中",
+        summary: "申请已提交，当前结果正在处理中。",
+        next: "请留意后续状态更新，不要重复提交相同的申请。",
+      };
+    }
+
+    function renderCreditRiskProgress(container, collection, model) {
+      if (!collection) return;
+      const total = Number(collection.total_features || 23);
+      const collected = Number(collection.collected_features || 0);
+      const requiredTotal = Number(collection.required_total_features || 5);
+      const requiredCollected = Number(collection.required_collected_features || 0);
+      const missing = Number(collection.missing_features || 0);
+      const invalid = Number(collection.invalid_features || 0);
+      const declined = Number(collection.declined_features || 0);
+      const coverage = requiredTotal > 0
+        ? Math.max(0, Math.min(100, requiredCollected / requiredTotal * 100))
+        : 0;
+      const section = document.createElement("section");
+      section.className = "credit-risk-progress";
+      section.setAttribute("aria-label", "信用风险评估资料进度");
+
+      const head = document.createElement("div");
+      head.className = "credit-risk-progress-head";
+      const title = document.createElement("strong");
+      title.textContent = "信用风险评估资料";
+      const remaining = document.createElement("span");
+      remaining.textContent = `核心 ${requiredCollected}/${requiredTotal} · 全部 ${collected}/${total}`;
+      head.append(title, remaining);
+
+      const track = document.createElement("div");
+      track.className = "credit-risk-progress-bar";
+      const fill = document.createElement("div");
+      fill.className = "credit-risk-progress-fill";
+      fill.style.width = `${coverage.toFixed(1)}%`;
+      track.appendChild(fill);
+
+      const metrics = document.createElement("div");
+      metrics.className = "credit-risk-progress-metrics";
+      [
+        `核心缺失 ${Math.max(requiredTotal - requiredCollected, 0)}`,
+        `全部缺失 ${missing}`,
+        `暂未提供 ${declined}`,
+        `无效 ${invalid}`,
+        collection.core_complete ? "核心资料完整" : "核心资料待补充",
+        collection.required_complete ? "模型资料完整" : "模型资料未完整",
+        ...(collection.policy_allowed_for_decision === false
+          ? ["部分资料仅用于完整性检查"]
+          : [])
+      ].forEach((text) => {
+        const item = document.createElement("span");
+        item.textContent = text;
+        metrics.appendChild(item);
+      });
+
+      const modelState = document.createElement("div");
+      modelState.className = "credit-risk-model-state";
+      const modelStatus = String(model?.status || collection.model_status || "").toLowerCase();
+      const modelLabel = document.createElement("strong");
+      modelLabel.textContent = "模型评估：";
+      const probability = Number(
+        model?.predicted_probability ?? model?.probability
+      );
+      if (modelStatus === "success") {
+        const probabilityText = Number.isFinite(probability)
+          ? `模型风险概率 ${(probability * 100).toFixed(1)}%（阈值 ${(Number(model.threshold || 0) * 100).toFixed(0)}%）`
+          : "模型已完成评估";
+        modelState.append(
+          modelLabel,
+          document.createTextNode(
+            `${probabilityText}，${model.risk_label || "模型已完成分类"}。`
+            + "这是离线研究模型结果，不替代正式审批，也不会直接决定额度。"
+          )
+        );
+      } else if (modelStatus === "ready") {
+        modelState.append(
+          modelLabel,
+          document.createTextNode(
+            "核心资料已齐，提交正式申请后将调用 Top-5 Random Forest。"
+            + "模型结果与正式审批分开保存。"
+          )
+        );
+      } else if (modelStatus === "collecting") {
+        modelState.append(
+          modelLabel,
+          document.createTextNode(
+            `正在收集模型必需资料，还需 ${Math.max(requiredTotal - requiredCollected, 0)} 项。`
+          )
+        );
+      } else if (modelStatus === "artifact_missing" || modelStatus === "not_available") {
+        modelState.append(
+          modelLabel,
+          document.createTextNode(
+            "未执行。风险评估服务暂未就绪，不会生成概率或风险评分；"
+            + "正式审批仍按现有业务规则进行。"
+          )
+        );
+      } else if (modelStatus === "model_error" || modelStatus === "invalid_input") {
+        modelState.append(
+          modelLabel,
+          document.createTextNode(
+            "评估未完成，正式申请仍按现有业务规则处理；没有生成风险概率。"
+          )
+        );
+      } else {
+        modelState.append(
+          modelLabel,
+          document.createTextNode("当前没有可展示的模型结论。")
+        );
+      }
+
+      section.append(head, track, metrics, modelState);
+      const collectedValues = Array.isArray(collection.collected_values)
+        ? collection.collected_values
+        : [];
+      if (collectedValues.length) {
+        const details = document.createElement("details");
+        details.className = "credit-risk-values";
+        const summary = document.createElement("summary");
+        summary.textContent = `查看已采集资料（${collectedValues.length} 项）`;
+        const grid = document.createElement("div");
+        grid.className = "credit-risk-values-grid";
+        collectedValues.forEach((item) => {
+          if (!item || !item.label) return;
+          const row = document.createElement("div");
+          row.className = "credit-risk-value-row";
+          const label = document.createElement("span");
+          label.textContent = String(item.label);
+          const value = document.createElement("strong");
+          value.textContent = String(item.display_value || "");
+          row.append(label, value);
+          grid.appendChild(row);
+        });
+        details.append(summary, grid);
+        section.appendChild(details);
+      }
+      container.appendChild(section);
+    }
+
+    function renderCreditApplicationResult(container, reply) {
+      const data = reply?.data || {};
+      const applicationId = String(data.application_id || data.card_id || "").trim();
+      if (applicationId) {
+        const existing = [...document.querySelectorAll(".credit-application-result")]
+          .find((node) => node.dataset.applicationId === applicationId);
+        if (existing) {
+          container.textContent = "该信用卡申请结果已在对话中展示。";
+          return true;
+        }
+      }
+      const presentation = creditApplicationPresentation(data);
+      const result = document.createElement("section");
+      result.className = "credit-application-result";
+      result.dataset.tone = presentation.tone;
+      if (applicationId) result.dataset.applicationId = applicationId;
+      result.setAttribute("aria-label", "信用卡申请结果");
+
+      const head = document.createElement("div");
+      head.className = "credit-application-head";
+      const titleWrap = document.createElement("div");
+      const kicker = document.createElement("span");
+      kicker.className = "credit-application-kicker";
+      kicker.textContent = "信用卡申请";
+      const title = document.createElement("h3");
+      title.className = "credit-application-title";
+      title.textContent = presentation.status;
+      titleWrap.append(kicker, title);
+      const status = document.createElement("span");
+      status.className = "credit-application-status";
+      status.textContent = presentation.status;
+      head.append(titleWrap, status);
+
+      const summary = document.createElement("p");
+      summary.className = "credit-application-summary";
+      summary.textContent = presentation.summary;
+
+      const details = document.createElement("div");
+      details.className = "credit-application-details";
+      const addDetail = (label, value) => {
+        const item = document.createElement("div");
+        item.className = "credit-application-detail";
+        const name = document.createElement("span");
+        name.textContent = label;
+        const content = document.createElement("strong");
+        content.textContent = value;
+        item.append(name, content);
+        details.appendChild(item);
+      };
+      addDetail("申请编号", applicationId || "暂未提供");
+      addDetail("预审结果", String(data.decision || "").trim() || "待确认");
+
+      const rawLimit = data.reference_limit;
+      const parsedLimit = rawLimit === null || rawLimit === undefined || rawLimit === ""
+        ? NaN
+        : Number(rawLimit);
+      if (
+        presentation.tone !== "rejected"
+        && Number.isFinite(parsedLimit)
+      ) {
+        addDetail("参考额度", `¥${money(parsedLimit)}（最终额度以正式审核为准）`);
+      }
+      const riskModel = data.credit_risk_model || {};
+      if (String(riskModel.status || "") === "success") {
+        const probability = Number(
+          riskModel.predicted_probability ?? riskModel.probability
+        );
+        if (Number.isFinite(probability)) {
+          addDetail(
+            "模型风险评估",
+            `${riskModel.risk_label || "模型已完成分类"} · 概率 ${(probability * 100).toFixed(1)}%（不替代正式审批）`
+          );
+        }
+      }
+      const submittedAt = String(data.submitted_at || "").trim();
+      if (submittedAt) addDetail("提交时间", submittedAt.replace("T", " ").slice(0, 19));
+
+      const next = document.createElement("div");
+      next.className = "credit-application-next";
+      const nextLabel = document.createElement("strong");
+      nextLabel.textContent = "后续操作：";
+      next.append(nextLabel, document.createTextNode(presentation.next));
+
+      result.append(head, summary, details, next);
+      renderCreditRiskProgress(
+        result,
+        data.credit_risk_collection,
+        data.credit_risk_model
+      );
+      container.replaceChildren(result);
+      return true;
+    }
+
+    function appendMessage(role, text, reply = null, options = {}) {
+      const requestId = String(options.requestId || "").trim();
+      if (requestId && role === "agent") {
+        const existing = [...messages.querySelectorAll(".message.agent")]
+          .find((node) => node.dataset.requestId === requestId);
+        if (existing) return existing;
+      }
       const article = document.createElement("article");
       article.className = `message ${role}`;
+      if (requestId) article.dataset.requestId = requestId;
 
       const avatar = document.createElement("div");
       avatar.className = "avatar";
@@ -5707,7 +6242,16 @@
       const comparePanel = reply?.intent === "wealth.compare";
       const analyticsPanel = reply?.intent === "wealth.analytics";
       const aaStatusPanel = reply?.intent === "transfer.aa_status";
-      if (receiptQualityPanel) {
+      const creditApplicationPanel = (
+        reply?.intent === "card.apply"
+        && reply?.kind === "executed"
+        && reply?.data?.kind === "credit"
+      );
+      if (creditApplicationPanel) {
+        content.className = "bubble-content";
+        bubble.classList.add("wide");
+        if (!renderCreditApplicationResult(content, reply)) content.textContent = text;
+      } else if (receiptQualityPanel) {
         content.className = "bubble-content";
         bubble.classList.add("wide");
         if (!renderReceiptQuality(content, text, reply)) content.textContent = text;
@@ -5773,6 +6317,17 @@
         content.className = `bubble-content${hasTable ? " formatted-response" : ""}`;
         if (hasTable || isLongBill) bubble.classList.add("wide");
         content.textContent = text;
+      }
+      if (
+        reply?.intent === "card.apply"
+        && reply?.data?.credit_risk_collection
+        && !creditApplicationPanel
+      ) {
+        renderCreditRiskProgress(
+          content,
+          reply.data.credit_risk_collection,
+          reply.data.credit_risk_model
+        );
       }
       bubble.appendChild(content);
 
@@ -5844,20 +6399,21 @@
       return { event, data: dataLines.join("\n") };
     }
 
-    async function streamAgentReply(content) {
+    async function streamAgentReply(content, requestId) {
       const response = await fetchWithAuth("/v1/messages/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId,
           message: content,
-          request_id: newRequestId()
+          request_id: requestId
         })
       });
       if ([403, 404].includes(response.status)) {
         const payload = await response.json().catch(() => ({}));
         return {
           reply: null,
+          requestStatus: "not_submitted",
           error: payload.message || (response.status === 403
             ? "会话令牌缺失或无效，请重新创建会话"
             : "会话不存在，请重新创建会话")
@@ -5870,6 +6426,8 @@
       let buffer = "";
       let finalReply = null;
       let streamError = "";
+      let requestStatus = "pending";
+      let responseBody = null;
 
       while (true) {
         const { value, done } = await reader.read();
@@ -5881,27 +6439,277 @@
           if (!block.trim()) continue;
           const parsed = parseSseBlock(block);
           const data = parsed.data ? JSON.parse(parsed.data) : {};
-          if (parsed.event === "message") finalReply = data.reply;
+          if (parsed.event === "message") {
+            finalReply = data.reply;
+            responseBody = data;
+            requestStatus = data.request_status || "completed";
+          }
+          if (parsed.event === "status") {
+            responseBody = data;
+            requestStatus = data.request_status || "outcome_unknown";
+          }
           if (parsed.event === "error") streamError = data.message || "请求处理失败";
         }
       }
-      return { reply: finalReply, error: streamError };
+      if (requestStatus === "pending" && finalReply) requestStatus = "completed";
+      return {
+        ...(responseBody || {}),
+        reply: finalReply,
+        error: streamError,
+        requestStatus,
+        requestId
+      };
     }
 
-    async function sendMessage(text) {
+    async function queryRequestStatus(requestId) {
+      const response = await fetchWithAuth(
+        `/v1/requests/${encodeURIComponent(requestId)}?session_id=${encodeURIComponent(sessionId)}`
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 403) {
+        return {
+          request_id: requestId,
+          request_status: "session_invalid",
+          error: payload.message || "会话令牌无效，无法确认原请求状态"
+        };
+      }
+      if (response.status === 404) {
+        return {
+          request_id: requestId,
+          request_status: payload.error === "session_not_found"
+            ? "session_invalid"
+            : "not_found",
+          error: payload.message || ""
+        };
+      }
+      if (!response.ok) {
+        throw new Error(payload.message || `状态查询失败：${response.status}`);
+      }
+      return payload;
+    }
+
+    async function waitForRequestOutcome(requestId, attempts = 8) {
+      let result = await queryRequestStatus(requestId);
+      for (
+        let attempt = 1;
+        attempt < attempts && result.request_status === "processing";
+        attempt += 1
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        result = await queryRequestStatus(requestId);
+      }
+      return result;
+    }
+
+    function removeRequestNotice(requestId) {
+      const notice = [...messages.querySelectorAll(".message.agent")]
+        .find((node) => node.dataset.requestNoticeId === requestId);
+      notice?.remove();
+    }
+
+    function appendRequestNotice(
+      text,
+      requestId,
+      actionLabel = "",
+      action = null,
+      tone = "question"
+    ) {
+      removeRequestNotice(requestId);
+      const article = appendMessage("agent", text, {
+        kind: tone,
+        intent: "request.status",
+        data: {}
+      });
+      article.dataset.requestNoticeId = requestId;
+      if (actionLabel && action) {
+        const actions = document.createElement("div");
+        actions.className = "message-actions";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "message-action";
+        button.textContent = actionLabel;
+        button.addEventListener("click", action);
+        actions.appendChild(button);
+        article.querySelector(".bubble")?.appendChild(actions);
+      }
+      return article;
+    }
+
+    function displayCompletedRequest(result, requestId) {
+      removeRequestNotice(requestId);
+      if (!result?.reply) return null;
+      appendMessage(
+        "agent",
+        result.reply.text,
+        result.reply,
+        { requestId }
+      );
+      clearRequestRecovery(requestId);
+      if (
+        result.reply.intent === "wealth.risk_assess"
+        || result.reply.intent === "wealth.recommend"
+        || result.reply.intent === "wealth.subscribe"
+      ) {
+        refreshProfileSummary().catch(() => {});
+      }
+      awaitingSecret = /(请(?:重新)?设置[^。\n]*6 位数字[^。\n]*密码|请再次输入同一密码|请再次输入取款密码|请输入该卡的取款密码|输入付款银行卡的 6 位交易密码|输入 6 位交易密码)/.test(
+        result.reply.text || ""
+      );
+      return result.reply;
+    }
+
+    async function recoverRequestById(requestId, allowResubmit = false) {
+      if (!requestId) return null;
+      try {
+        let result = await waitForRequestOutcome(requestId);
+        if (result.request_status === "completed") {
+          activeRequest = null;
+          return displayCompletedRequest(result, requestId);
+        }
+        if (result.request_status === "processing") {
+          saveRequestRecovery(requestId, "processing");
+          appendRequestNotice(
+            "原请求仍在处理中。系统会继续使用同一个请求编号查询，请勿重复提交。",
+            requestId,
+            "查询处理结果",
+            () => recoverRequestById(requestId)
+          );
+          return null;
+        }
+        if (result.request_status === "outcome_unknown") {
+          saveRequestRecovery(requestId, "outcome_unknown");
+          appendRequestNotice(
+            "暂时无法确认该操作是否已经完成。请先查询交易记录或联系人工客服核对，不要重复提交相同操作。",
+            requestId,
+            "再次查询",
+            () => recoverRequestById(requestId),
+            "error"
+          );
+          return null;
+        }
+        if (result.request_status === "failed") {
+          clearRequestRecovery(requestId);
+          activeRequest = null;
+          appendRequestNotice(
+            "该请求已明确结束且未成功。如需再次办理，请重新发起并确认操作内容。",
+            requestId,
+            "",
+            null,
+            "error"
+          );
+          return null;
+        }
+        if (result.request_status === "not_found") {
+          clearRequestRecovery(requestId);
+          if (allowResubmit && activeRequest?.requestId === requestId) {
+            const retryContent = activeRequest.content;
+            appendRequestNotice(
+              "服务端未收到这次操作，可以安全地重试原请求。",
+              requestId,
+              "重试原请求",
+              () => sendMessage(retryContent, {
+                requestId,
+                retry: true
+              })
+            );
+          } else {
+            appendRequestNotice(
+              "服务端没有找到这次请求，原操作未进入处理。",
+              requestId,
+              "",
+              null,
+              "error"
+            );
+          }
+          return null;
+        }
+        appendRequestNotice(
+          "当前无法确认原请求状态。请先核对交易记录；确认前不要重复提交。",
+          requestId,
+          "查询处理结果",
+          () => recoverRequestById(requestId),
+          "error"
+        );
+      } catch (error) {
+        saveRequestRecovery(requestId, "outcome_unknown");
+        appendRequestNotice(
+          "网络中断，暂时无法确认操作结果。请保持当前请求编号并稍后查询，不要重复提交。",
+          requestId,
+          "查询处理结果",
+          () => recoverRequestById(requestId),
+          "error"
+        );
+      }
+      return null;
+    }
+
+    async function recoverPendingRequest() {
+      const pending = readRequestRecovery();
+      if (!pending) return;
+      const wasBusy = busy;
+      busy = true;
+      sendButton.disabled = true;
+      serviceStatus.textContent = "正在恢复请求";
+      if (pending.session_id !== sessionId) {
+        appendRequestNotice(
+          "检测到上一次操作存在未确认结果，但当前会话已变化。请先核对交易记录或联系人工客服，不要直接重复提交。",
+          pending.request_id,
+          "",
+          null,
+          "error"
+        );
+        busy = wasBusy;
+        sendButton.disabled = wasBusy;
+        serviceStatus.textContent = "接口就绪";
+        return;
+      }
+      try {
+        await recoverRequestById(pending.request_id, false);
+      } finally {
+        busy = wasBusy;
+        sendButton.disabled = wasBusy;
+        serviceStatus.textContent = "接口就绪";
+      }
+    }
+
+    async function sendMessage(text, options = {}) {
       const content = (text || "").trim();
       if (!content || busy) return null;
+      const secretInput = awaitingSecret && /^\d{6}$/.test(content);
+      const fingerprint = secretInput ? "" : await messageFingerprint(content);
+      const requestId = String(options.requestId || "").trim() || newRequestId();
+      const isRetry = Boolean(options.requestId);
+      const pending = readRequestRecovery();
+      if (
+        !isRetry
+        && pending
+        && pending.message_fingerprint
+        && pending.message_fingerprint === fingerprint
+        && [
+          "submitted",
+          "streaming",
+          "processing",
+          "completed",
+          "outcome_unknown"
+        ].includes(
+          pending.status
+        )
+      ) {
+        return recoverRequestById(pending.request_id, true);
+      }
       let finalReply = null;
       busy = true;
       sendButton.disabled = true;
       serviceStatus.textContent = "正在处理";
-      const shownContent = awaitingSecret && /^\d{6}$/.test(content) ? "******" : content;
-      appendMessage("user", shownContent);
+      const shownContent = secretInput ? "******" : content;
+      if (!isRetry) appendMessage("user", shownContent);
       appendTyping();
+      activeRequest = { requestId, content, fingerprint };
 
       try {
         await ensureSession();
-        let result = await streamAgentReply(content);
+        saveRequestRecovery(requestId, "submitted", fingerprint);
+        let result = await streamAgentReply(content, requestId);
         if (
           result.error
           && (
@@ -5914,31 +6722,50 @@
           sessionId = "";
           sessionToken = "";
           await createSession();
-          result = await streamAgentReply(content);
+          saveRequestRecovery(requestId, "submitted", fingerprint);
+          result = await streamAgentReply(content, requestId);
         }
 
         removeTyping();
         if (result.error) {
-          appendMessage("agent", result.error, { kind: "error", intent: "session" });
-        } else if (result.reply) {
-          finalReply = result.reply;
-          appendMessage("agent", result.reply.text, result.reply);
-          if (
-            result.reply.intent === "wealth.risk_assess"
-            || result.reply.intent === "wealth.recommend"
-            || result.reply.intent === "wealth.subscribe"
-          ) {
-            await refreshProfileSummary();
+          if (result.requestStatus === "not_submitted") {
+            clearRequestRecovery(requestId);
+            appendMessage(
+              "agent",
+              result.error,
+              { kind: "error", intent: "session" },
+              { requestId }
+            );
+          } else {
+            saveRequestRecovery(requestId, "outcome_unknown", fingerprint);
+            await recoverRequestById(requestId, true);
           }
-          awaitingSecret = /(请(?:重新)?设置[^。\n]*6 位数字[^。\n]*密码|请再次输入同一密码|请再次输入取款密码|请输入该卡的取款密码|输入付款银行卡的 6 位交易密码|输入 6 位交易密码)/.test(
-            result.reply.text || ""
-          );
+        } else if (result.reply) {
+          finalReply = displayCompletedRequest(result, requestId);
+        } else if (result.requestStatus === "processing") {
+          saveRequestRecovery(requestId, "processing", fingerprint);
+          const recovered = await waitForRequestOutcome(requestId);
+          if (recovered.request_status === "completed") {
+            finalReply = displayCompletedRequest(recovered, requestId);
+          } else {
+            await recoverRequestById(requestId);
+          }
+        } else if (result.requestStatus === "outcome_unknown") {
+          saveRequestRecovery(requestId, "outcome_unknown", fingerprint);
+          await recoverRequestById(requestId);
         } else {
-          appendMessage("agent", "服务没有返回可显示的结果。", { kind: "error", intent: "stream" });
+          appendRequestNotice(
+            "服务没有返回可确认的业务结果，当前请求不会自动重试。",
+            requestId,
+            "查询处理结果",
+            () => recoverRequestById(requestId),
+            "error"
+          );
         }
       } catch (error) {
         removeTyping();
-        appendMessage("agent", error.message || "网络请求失败", { kind: "error", intent: "network" });
+        saveRequestRecovery(requestId, "outcome_unknown", fingerprint);
+        await recoverRequestById(requestId, true);
       } finally {
         busy = false;
         sendButton.disabled = false;
@@ -6202,6 +7029,7 @@
         name: row.querySelector('[data-field="name"]')?.value || "",
         relation: row.querySelector('[data-field="relation"]')?.value || "",
         birthday: row.querySelector('[data-field="birthday"]')?.value || "",
+        birthday_month_day: row.querySelector('[data-field="birthday_month_day"]')?.value || "",
         anniversary: row.querySelector('[data-field="anniversary"]')?.value || "",
         phone: row.querySelector('[data-field="phone"]')?.value || "",
         wechat: row.querySelector('[data-field="wechat"]')?.value || "",
@@ -6254,6 +7082,13 @@
         const birthday = makeInput("date", person.birthday || "");
         birthday.dataset.field = "birthday";
         birthday.max = localTodayISO();
+        const birthdayMonthDay = makeInput(
+          "text",
+          person.birthday_month_day || ""
+        );
+        birthdayMonthDay.dataset.field = "birthday_month_day";
+        birthdayMonthDay.placeholder = "11-20（不知道年份时填写）";
+        birthdayMonthDay.maxLength = 5;
         const anniversary = makeInput("date", person.anniversary || "");
         anniversary.dataset.field = "anniversary";
         const phone = makeInput("tel", person.phone || "");
@@ -6296,6 +7131,7 @@
           makeSettingsField("姓名", name),
           makeSettingsField("关系", relation),
           makeSettingsField("生日", birthday),
+          makeSettingsField("生日月日", birthdayMonthDay),
           makeSettingsField("纪念日", anniversary),
           makeSettingsField("手机号", phone),
           makeSettingsField("微信号", wechat),
@@ -6961,10 +7797,13 @@
       error.textContent = "业务分类加载失败";
       capabilityCategories.appendChild(error);
     });
-    ensureSession().then(() => Promise.all([
-      refreshProfileSummary(),
-      loadEventCenter()
-    ])).catch(() => {
+    ensureSession().then(async () => {
+      await recoverPendingRequest();
+      return Promise.all([
+        refreshProfileSummary(),
+        loadEventCenter()
+      ]);
+    }).catch(() => {
       serviceStatus.textContent = "接口不可用";
       appendMessage("agent", "无法连接 Agent 服务，请确认 API 已启动。", { kind: "error", intent: "network" });
     });

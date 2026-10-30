@@ -1,0 +1,80 @@
+
+import pandas as pd
+
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    classification_report,
+    confusion_matrix
+)
+
+# 1. 读取训练集和测试集
+X_train = pd.read_csv("datasets/processed/X_train.csv")
+X_test = pd.read_csv("datasets/processed/X_test.csv")
+y_train = pd.read_csv("datasets/processed/y_train.csv")["Y"]
+y_test = pd.read_csv("datasets/processed/y_test.csv")["Y"]
+
+# 2. 定义字段
+numeric_features = [
+    "X1", "X5",
+    "X12", "X13", "X14", "X15", "X16", "X17",
+    "X18", "X19", "X20", "X21", "X22", "X23"
+]
+
+categorical_features = [
+    "X2", "X3", "X4",
+    "X6", "X7", "X8", "X9", "X10", "X11"
+]
+
+# 3. 数据预处理
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("num", StandardScaler(), numeric_features),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features)
+    ]
+)
+
+# 4. 建立类别权重平衡模型
+model = Pipeline(
+    steps=[
+        ("preprocessor", preprocessor),
+        (
+            "classifier",
+            LogisticRegression(
+                max_iter=1000,
+                random_state=42,
+                class_weight="balanced"
+            )
+        )
+    ]
+)
+
+# 5. 训练
+print("开始训练 Balanced Logistic Regression...")
+model.fit(X_train, y_train)
+print("模型训练完成！")
+
+# 6. 预测
+y_pred = model.predict(X_test)
+y_proba = model.predict_proba(X_test)[:, 1]
+
+# 7. 评价
+print("\n========== Balanced Logistic Regression ==========")
+print("Accuracy:", accuracy_score(y_test, y_pred))
+print("Precision:", precision_score(y_test, y_pred))
+print("Recall:", recall_score(y_test, y_pred))
+print("F1 Score:", f1_score(y_test, y_pred))
+print("ROC-AUC:", roc_auc_score(y_test, y_proba))
+
+print("\n========== 分类报告 ==========")
+print(classification_report(y_test, y_pred))
+
+print("\n========== 混淆矩阵 ==========")
+print(confusion_matrix(y_test, y_pred))

@@ -19,6 +19,9 @@ from finagent.tools.base import ToolContext
 from finagent.tools.card_tools import BANK_BINS, evaluate_card_password
 from finagent.tools.crossscene_tools import lookup_person, lookup_person_preferences
 from finagent.data.providers import MerchantOfferProvider
+from finagent.risk.credit_risk.model_feature_collection import (
+    CreditRiskFeatureCollection,
+)
 from finagent.tools.transfer_tools import (
     channel_account,
     resolve_account,
@@ -46,6 +49,7 @@ class Plan:
     question: str = ""
     description: str = ""
     slots: Dict[str, Any] = field(default_factory=dict)
+    data: Dict[str, Any] = field(default_factory=dict)
 
     def is_ready(self) -> bool:
         return not self.missing and bool(self.steps)
@@ -203,8 +207,7 @@ DEFAULT_QUESTIONS = {
     "limit_request": "请填写期望信用额度，例如「30000」元。",
     "credit_purpose": "请说明信用卡主要用途，例如「日常消费」「旅行」「装修」。",
     "statement_mode": (
-        "请先在回形针上传消费流水并确认导入，完成后回复「已上传」；"
-        "也可以回复「使用演示流水」进行模拟核验。"
+        "请先在回形针上传消费流水并确认导入，完成后回复「已上传」。"
     ),
     "card_password": (
         "请设置 6 位数字取款密码（仅用于原型开户演示，请勿填写真实密码）。"
@@ -505,12 +508,72 @@ class Planner:
             )
             return plan
 
-        args = {key: value for key, value in slots.items() if key != "note"}
+        if kind != "credit":
+            args = {key: value for key, value in slots.items() if key != "note"}
+            if slots.get("note"):
+                args["note"] = slots["note"]
+            step = PlanStep(tool="card.apply", args=args)
+            plan = Plan(intent=intent.name, slots=slots, steps=[step])
+            plan.description = self._describe_step(step, ctx)
+            return plan
+
+        collection = CreditRiskFeatureCollection.from_context(
+            user=ctx.user,
+            cards=ctx.providers.cards.of(ctx.user_id),
+            accounts=ctx.providers.accounts.of(ctx.user_id),
+            previous=slots.get("credit_model_features"),
+        )
+        slots["credit_model_features"] = collection.to_dict()
+        progress = collection.progress_payload()
+        reply_data = {
+            "credit_risk_collection": progress,
+            "credit_risk_model": {
+                "status": "ready" if progress["required_complete"] else "collecting",
+                "model_name": progress["model_name"],
+                "model_version": progress["model_version"],
+                "executed": False,
+                "reason": (
+                    "top5_ready_for_execution"
+                    if progress["required_complete"]
+                    else "required_top5_features_missing"
+                ),
+                "probability": None,
+                "predicted_label": None,
+                "threshold": None,
+            },
+        }
+        next_group = collection.next_group()
+        if next_group is not None:
+            plan = Plan(
+                intent=intent.name,
+                slots=slots,
+                missing=["credit_model_features"],
+                question=collection.next_question(),
+                data=reply_data,
+            )
+            return plan
+
+        args = {
+            key: value
+            for key, value in slots.items()
+            if key not in {"note", "credit_model_features"}
+        }
         if slots.get("note"):
             args["note"] = slots["note"]
         step = PlanStep(tool="card.apply", args=args)
-        plan = Plan(intent=intent.name, slots=slots, steps=[step])
+        plan = Plan(
+            intent=intent.name,
+            slots=slots,
+            steps=[step],
+            data=reply_data,
+        )
         plan.description = self._describe_step(step, ctx)
+        plan.description += (
+            f"\n  · Top-5 模型核心资料：{progress['required_collected_features']}/"
+            f"{progress['required_total_features']} 项（X1、X6-X9）。"
+            "\n  · 模型评估：确认正式申请后将调用已核验的 Top-5 Random Forest。"
+            "模型结果不等同于正式审批结论。"
+        )
         return plan
 
     def _birthday_plan(self, intent: Intent, ctx: ToolContext) -> Plan:
@@ -553,7 +616,20 @@ class Planner:
             return plan
         if parsed:
             birthday = parsed
+            if not slots.get("birthday_precision"):
+                slots["birthday_precision"] = (
+                    "full"
+                    if re.search(r"(?:19|20)\d{2}", str(given))
+                    else "month_day"
+                )
         profile = lookup_person_preferences(ctx, person)
+        if not slots.get("birthday_precision"):
+            slots["birthday_precision"] = (
+                "month_day"
+                if profile.get("birthday_month_day")
+                and not profile.get("birthday")
+                else "full"
+            )
         missing = []
         if not slots.get("preferences"):
             missing.append("preferences")
@@ -584,6 +660,7 @@ class Planner:
             args={
                 "person": display_name,
                 "birthday": birthday.isoformat(),
+                "birthday_precision": slots.get("birthday_precision", "full"),
                 "budget": slots.get("budget"),
                 "preferences": slots.get("preferences"),
                 "avoid": slots.get("avoid"),

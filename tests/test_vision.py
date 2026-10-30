@@ -201,6 +201,12 @@ class TestReceiptParsing(unittest.TestCase):
         records = parse_receipt_text(text)
         self.assertEqual(records[0].amount, 18500.0)
 
+    def test_income_summary_label_is_not_imported_as_transaction(self):
+        self.assertEqual(
+            parse_receipt_text("本月应发总收入 42,727.28"),
+            [],
+        )
+
     def test_guess_category(self):
         self.assertEqual(guess_category("星巴克咖啡"), "餐饮")
         self.assertEqual(guess_category("滴滴出行"), "交通")
@@ -340,6 +346,40 @@ class TestReceiptReader(unittest.TestCase):
         self.assertEqual(record.field_confidence["merchant"], 0.62)
         self.assertIn("merchant", record.needs_review)
         self.assertEqual(record.raw_line, "2026-10-20 清晰商户 -12.00")
+
+    def test_receipt_quality_varies_with_field_evidence(self):
+        strong = ReceiptResult(
+            ok=True,
+            records=[ParsedTransaction(
+                date="2026-10-12",
+                merchant="星巴克咖啡",
+                amount=-38.0,
+                category="餐饮",
+            )],
+        )
+        weak = ReceiptResult(
+            ok=True,
+            records=[ParsedTransaction(
+                date="",
+                merchant="本月应发总收入",
+                amount=42727.28,
+                category="其他",
+                confidence=0.35,
+                field_confidence={
+                    "date": 0.2,
+                    "merchant": 0.5,
+                    "amount": 0.8,
+                    "category": 0.55,
+                },
+            )],
+        )
+
+        self.assertGreater(strong.quality["score"], weak.quality["score"])
+        self.assertGreater(
+            strong.quality["average_confidence"],
+            weak.quality["average_confidence"],
+        )
+        self.assertEqual(weak.quality["confidence_basis"], "field_evidence")
 
     def test_read_text_file(self):
         result = self.reader.read(str(SAMPLE_TEXT))

@@ -1,0 +1,231 @@
+{
+  "schema_version": "1.0",
+  "model_name": "credit-risk-top5-random-forest",
+  "model_version": "1.0.0",
+  "model_type": "Random Forest (top-five reduced variant)",
+  "created_at_utc": "2026-10-30T13:00:16+00:00",
+  "decision_threshold": 0.5,
+  "artifact_origin": "reproduced_top5_variant",
+  "description": "New five-feature Random Forest trained from the existing processed UCI split. It is not the missing original 23-feature artifact.",
+  "features": {
+    "all": [
+      "X1",
+      "X6",
+      "X7",
+      "X8",
+      "X9"
+    ],
+    "numeric": [
+      "X1"
+    ],
+    "categorical": [
+      "X6",
+      "X7",
+      "X8",
+      "X9"
+    ],
+    "importance_order": [
+      "X6",
+      "X7",
+      "X8",
+      "X9",
+      "X1"
+    ],
+    "optional_supplementary": [
+      "X2",
+      "X3",
+      "X4",
+      "X5",
+      "X10",
+      "X11",
+      "X12",
+      "X13",
+      "X14",
+      "X15",
+      "X16",
+      "X17",
+      "X18",
+      "X19",
+      "X20",
+      "X21",
+      "X22",
+      "X23"
+    ],
+    "sensitive_excluded": [
+      "X2",
+      "X3",
+      "X4",
+      "X5"
+    ]
+  },
+  "feature_selection": {
+    "method": "grouped MDI importance from full 23-feature Random Forest",
+    "source_script": "ml/credit_risk/feature_importance.py",
+    "recomputed_on": "datasets/processed/X_train.csv",
+    "grouped_importance": {
+      "X6": 0.2131971971,
+      "X7": 0.1051656909,
+      "X8": 0.0662765156,
+      "X9": 0.0573681643,
+      "X1": 0.0485709105,
+      "X18": 0.0452861701,
+      "X19": 0.0396541347,
+      "X10": 0.0392666603,
+      "X12": 0.0391891218,
+      "X20": 0.0362929407,
+      "X11": 0.0344379115,
+      "X13": 0.0330835601,
+      "X15": 0.0288408615,
+      "X14": 0.0284122201,
+      "X23": 0.0279785024,
+      "X22": 0.0275075352,
+      "X21": 0.0273990467,
+      "X16": 0.0270088375,
+      "X17": 0.0264978009,
+      "X5": 0.0211679368,
+      "X3": 0.0114829666,
+      "X2": 0.0081894039,
+      "X4": 0.0077259108
+    }
+  },
+  "preprocessing": {
+    "numeric": [
+      "X1"
+    ],
+    "numeric_scaler": "StandardScaler",
+    "categorical": [
+      "X6",
+      "X7",
+      "X8",
+      "X9"
+    ],
+    "categorical_encoder": "OneHotEncoder(handle_unknown='ignore')"
+  },
+  "classifier_parameters": {
+    "n_estimators": 300,
+    "max_depth": 12,
+    "min_samples_split": 10,
+    "min_samples_leaf": 5,
+    "class_weight": "balanced",
+    "random_state": 42,
+    "n_jobs": -1
+  },
+  "training_data": {
+    "dataset": "UCI Default of Credit Card Clients",
+    "rows": 24000,
+    "features": 5,
+    "target": "Y",
+    "target_distribution": {
+      "0": 18691,
+      "1": 5309
+    }
+  },
+  "evaluation_data": {
+    "rows": 6000,
+    "usage": "evaluation_only; never passed to pipeline.fit",
+    "target_distribution": {
+      "0": 4673,
+      "1": 1327
+    }
+  },
+  "evaluation": {
+    "threshold": 0.5,
+    "n_samples": 6000,
+    "accuracy": 0.771833,
+    "precision": 0.486328,
+    "recall": 0.562924,
+    "f1": 0.52183,
+    "roc_auc": 0.752702
+  },
+  "historical_full_rf_reference": {
+    "features": [
+      "X1",
+      "X2",
+      "X3",
+      "X4",
+      "X5",
+      "X6",
+      "X7",
+      "X8",
+      "X9",
+      "X10",
+      "X11",
+      "X12",
+      "X13",
+      "X14",
+      "X15",
+      "X16",
+      "X17",
+      "X18",
+      "X19",
+      "X20",
+      "X21",
+      "X22",
+      "X23"
+    ],
+    "numeric_features": [
+      "X1",
+      "X5",
+      "X12",
+      "X13",
+      "X14",
+      "X15",
+      "X16",
+      "X17",
+      "X18",
+      "X19",
+      "X20",
+      "X21",
+      "X22",
+      "X23"
+    ],
+    "categorical_features": [
+      "X2",
+      "X3",
+      "X4",
+      "X6",
+      "X7",
+      "X8",
+      "X9",
+      "X10",
+      "X11"
+    ],
+    "evaluation": {
+      "threshold": 0.5,
+      "n_samples": 6000,
+      "accuracy": 0.7765,
+      "precision": 0.495636,
+      "recall": 0.599096,
+      "f1": 0.542477,
+      "roc_auc": 0.776364
+    },
+    "note": "Historical metrics retained for comparison; not deployable as an artifact by this script."
+  },
+  "fairness": {
+    "sensitive_features_excluded": [
+      "X2",
+      "X3",
+      "X4",
+      "X5"
+    ],
+    "certification": false,
+    "warning": "Excluding sensitive fields does not prove fairness. This is an offline UCI research result."
+  },
+  "limitations": [
+    "Trained on UCI research data, not this bank's real customer population.",
+    "Probability is not guaranteed calibrated.",
+    "Model output is not a formal credit approval decision.",
+    "Top-five reduction uses training-set grouped MDI and requires external validation."
+  ],
+  "dependencies": {
+    "python": "3.13.14",
+    "scikit-learn": "1.9.1",
+    "pandas": "3.1.0",
+    "numpy": "2.5.4",
+    "joblib": "1.6.0"
+  },
+  "artifact": {
+    "pipeline_file": "pipeline.joblib",
+    "pipeline_sha256": "7e1c148b4de481b775aeaf847f56d3dff360e0dfe4f838928057fffec6317cd8"
+  }
+}
