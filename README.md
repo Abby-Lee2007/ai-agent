@@ -14,8 +14,85 @@
 - 前端：单文件 `web/index.html`
 - 数据持久化：SQLite 会话快照 + JSON 领域快照
 - 已注册工具：61 个
-- 最近全量测试：557 个通过，1 个跳过
+- 最近全量测试基线：557 个通过，1 个跳过
 - 页面回归：1440×1000 桌面端、319×844 移动端通过
+
+## 今日实验更新（2026-10-30）
+
+今天完成了信用风险模型分组、信用卡申请接入和若干安全边界修复。本节记录的是本次实际实现，不把实验指标当作真实银行审批效果。
+
+### 分组 Top-5 Random Forest
+
+- 新模型：`credit-risk-grouped-top5-random-forest`
+- 版本：`5.0.0`
+- Artifact：`artifacts/credit_risk/top5_grouped_random_forest/5.0.0/pipeline.joblib`
+- Artifact SHA-256：`bca554231aac3d3f9c35e05adc28292d7fefc087bf09eedab8e68413ffa1530a`
+- 训练数据：UCI Default of Credit Card Clients，训练集 24,000 条，测试集 6,000 条
+- 训练参数：`n_estimators=300`、`max_depth=12`、`min_samples_split=10`、`min_samples_leaf=5`、`class_weight="balanced"`、`random_state=42`
+- 分类阈值：`0.50`
+
+模型使用五个语义特征组，组内保留逐月字段，而不是把六个月历史压扁成丢失信息的一个数值：
+
+| 槽位 | 特征组 | 原始字段 |
+|---|---|---|
+| 1 | `REPAYMENT_STATUS_6` | `X6-X11` 六个月还款状态 |
+| 2 | `REPAYMENT_AMOUNT_6` | `X18-X23` 六个月还款金额 |
+| 3 | `STATEMENT_AMOUNT_2` | `X12-X13` 最近两个月账单金额 |
+| 4 | `X1` | 当前信用额度 |
+| 5 | `X3` | 教育程度 |
+
+`X3` 只用于研究模型，并继续标记为敏感字段；性别 `X2`、年龄 `X5` 和婚姻 `X4` 不进入模型。排除敏感字段不等同于完成公平性认证。
+
+模型 v5 测试集结果：
+
+| 指标 | 数值 |
+|---|---:|
+| Accuracy | 0.774667 |
+| Precision | 0.492298 |
+| Recall | 0.602110 |
+| F1 | 0.541695 |
+| ROC-AUC | 0.776818 |
+
+历史完整 23 特征 RF 的基线指标仍保留在 Artifact 元数据中：Accuracy `0.7765`、Precision `0.4956`、Recall `0.5991`、F1 `0.5425`、ROC-AUC `0.7764`。分组模型是新复现的缩减变体，不是缺失的原始 23 特征 RF Artifact。
+
+### 信用卡申请调用链
+
+```text
+信用卡申请对话
+  -> 采集业务资料、上传并确认导入流水
+  -> 采集五个语义特征组
+  -> CardApplyTool 执行原有正式规则
+  -> 加载并校验 v5 Artifact
+  -> 执行分组 Top-5 Random Forest
+  -> 模型风险结果与正式规则结果分开记录
+  -> H5 展示
+```
+
+关键行为：
+
+- `request_id`、申请编号和模型结果分开记录，不用聊天文本猜测身份。
+- 信用卡申请只接受已上传并确认导入的流水，`使用演示流水` 不再能绕过上传核验。
+- 还款状态回答不会因为包含“还款”“账单”等词被误路由到账单分析。
+- 账单导入后恢复原来的信用卡申请草稿，不会重新生成一个无关 workflow。
+- 模型风险概率达到 `0.50` 且原有规则结果为“通过”时，最终状态改为“转人工复核”；原始规则结果保留在 `formal_rule_decision` 中。
+- 模型不会直接拒绝申请、直接决定审批或直接计算额度。
+
+### 收入字段边界
+
+`monthly_income` 已在信用卡申请对话中采集，并由原有 `CardApplyTool` 规则使用；它不进入当前 UCI Random Forest，因为 UCI 训练数据没有收入字段。当前正式规则没有最低收入硬门槛，因此低收入的低额度申请仍可能需要额外的业务规则才能转为人工复核。新增收入门槛属于审批政策变更，需要单独确认。
+
+### OCR 与账单质量
+
+- Windows 离线 OCR 不提供逐字置信度，质量分改为按日期、商户、金额、类别、字段完整度和缺失字段证据计算，不再固定为 `68/100`。
+- `本月应发总收入` 等汇总/收入标题会被过滤，不再伪造为消费交易。
+- 上传账单需要人工核对确认后才能导入。
+
+### 本次验证
+
+- 信用风险与模型专项测试：`208 passed`
+- 信用卡、API、账单和 OCR 相关测试：`135 passed, 16 subtests passed`
+- Python 3.9 AST 检查、H5 inline JavaScript 检查和 `scripts/ui_smoke.mjs` 语法检查通过
+- 页面回归：桌面端和移动端通过
 
 ## 2. 已实现能力
 
@@ -358,8 +435,25 @@ ai_banking_agent/
 │   ├── integrations/
 │   ├── nlu/
 │   ├── risk/
+│   │   └── credit_risk/
+│   │       ├── business_contract.py
+│   │       ├── materializer.py
+│   │       ├── model_feature_collection.py
+│   │       └── integration.py
 │   ├── tools/
 │   └── vision/
+├── ml/
+│   └── credit_risk/
+│       ├── feature_importance.py
+│       ├── train_grouped_top5_random_forest.py
+│       └── top5_model.py
+├── artifacts/
+│   └── credit_risk/
+│       ├── balanced_logistic/1.0.0/
+│       └── top5_grouped_random_forest/5.0.0/
+├── datasets/
+│   ├── raw/
+│   └── processed/
 ├── data/
 │   └── official_data_snapshot.json
 ├── evals/
