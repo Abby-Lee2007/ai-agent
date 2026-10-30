@@ -1002,6 +1002,25 @@ class BankingAgent:
                 ok=False,
                 kind="error",
             )
+        if product.has_live_data:
+            from finagent.tools.wealth_tools import build_subscription_order
+
+            order, order_error = build_subscription_order(
+                self.context(),
+                product,
+                value,
+            )
+            if order is None:
+                return AgentReply(
+                    f"{order_error}\n尚未进入付款认证，也没有创建交易或持仓。",
+                    intent="wealth.subscribe",
+                    ok=False,
+                    kind="error",
+                    data={
+                        "blocked": True,
+                        "reason": "minimum_live_order_not_met",
+                    },
+                )
         risk_level = self.risk_level
         if risk_level is not None and product.risk_level > risk_level + 1:
             return AgentReply(

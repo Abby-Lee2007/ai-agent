@@ -4318,9 +4318,9 @@
         meta.className = "wealth-meta";
         [
           ["代码", product.code || "-"],
-          ["类型", product.category || "-"],
+          ["类型", product.category_display || product.category || "-"],
           ["参考", `${product.metric || "-"} ${product.change && product.change !== "-" ? product.change : ""}`.trim()],
-          ["起投", `${Number(product.min_amount || 0).toLocaleString("zh-CN")} 元`],
+          ["门槛", product.minimum_order_label || `起投 ${Number(product.min_amount || 0).toLocaleString("zh-CN")} 元`],
         ].forEach(([label, value]) => {
           const item = document.createElement("span");
           item.textContent = `${label}：`;

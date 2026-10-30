@@ -12,6 +12,7 @@ from finagent.data.market import (
     Quote,
     build_market_overview,
 )
+from finagent.tools.wealth_tools import build_subscription_order
 
 SAMPLE_QUOTE = (
     'v_sh600036="1~招商银行~600036~42.75~43.05~42.95~160110~78737~81371~42.69~293~'
@@ -181,6 +182,58 @@ class _FakeMarket:
         }
 
 
+class _CashEtfMarket:
+    """Deterministic quote source for the SH511620 exchange-traded fund."""
+
+    enabled = True
+
+    @staticmethod
+    def quotes(symbols):
+        if "sh511620" not in symbols:
+            return {}
+        return {
+            "sh511620": Quote(
+                symbol="sh511620",
+                name="国泰货币ETF",
+                price=100.015,
+                prev_close=100.005,
+                change=0.01,
+                change_pct=0.01,
+                timestamp="2026-10-30 10:00:00",
+                source="测试公开行情",
+            )
+        }
+
+    def quote(self, symbol):
+        return self.quotes([symbol]).get(symbol)
+
+    @staticmethod
+    def fund_nav(code):
+        return None
+
+    @staticmethod
+    def history(symbol, limit=250):
+        if symbol != "sh511620":
+            return None
+        points = []
+        for index in range(min(int(limit), 160)):
+            points.append({
+                "date": f"2026-{index // 28 % 12 + 1:02d}-{index % 28 + 1:02d}",
+                "close": round(100.0 + index * 0.002, 4),
+                "adjusted_close": round(100.0 + index * 0.002, 4),
+            })
+        return {
+            "symbol": "SH511620",
+            "source": "测试公开行情",
+            "points": points,
+            "is_demo": False,
+        }
+
+    @staticmethod
+    def fund_nav_history(code, limit=250):
+        return None
+
+
 class TestStockRecommendation(unittest.TestCase):
     def setUp(self):
         self.agent = make_agent()
@@ -297,6 +350,58 @@ class TestStockRecommendation(unittest.TestCase):
             completed.data["quantity"],
             round((2000 - expected_fee) / 2.0016, 4),
         )
+
+
+class TestExchangeTradedFundOrderSemantics(unittest.TestCase):
+    def setUp(self):
+        self.agent = make_agent()
+        self.agent.market = _CashEtfMarket()
+
+    def test_cash_etf_product_card_shows_lot_cost_not_100_yuan_minimum(self):
+        reply = self.agent.handle("推荐基金产品")
+        detail = next(
+            item for item in reply.data["product_details"]
+            if item["code"] == "SH511620"
+        )
+
+        self.assertEqual(detail["category"], "货币基金")
+        self.assertEqual(detail["category_display"], "货币基金 / 场内 ETF")
+        self.assertIn("100份", detail["minimum_order_label"])
+        self.assertAlmostEqual(detail["minimum_order_amount"], 10006.50)
+
+    def test_cash_etf_below_one_lot_is_blocked_before_card_auth(self):
+        reply = self.agent.handle("买200块国泰货币ETF")
+
+        self.assertFalse(reply.ok)
+        self.assertEqual(reply.kind, "error")
+        self.assertIn("场内基金", reply.text)
+        self.assertIn("100份", reply.text)
+        self.assertIn("10,006.50 元", reply.text)
+        self.assertNotIn("100股", reply.text)
+        self.assertIsNone(self.agent.session.pending)
+
+    def test_cash_etf_confirmation_uses_fund_units(self):
+        reply = self.agent.handle("买10050块国泰货币ETF")
+        self.assertEqual(reply.kind, "question")
+        reply = self.agent.handle("用工资卡")
+
+        self.assertEqual(reply.kind, "confirm")
+        self.assertIn("预计买入 100份", reply.text)
+        self.assertNotIn("100股", reply.text)
+
+    def test_cash_etf_builder_returns_one_fund_lot(self):
+        product = self.agent.store.find_product("国泰货币ETF")
+        order, error = build_subscription_order(
+            self.agent.context(),
+            product,
+            10050,
+        )
+
+        self.assertEqual(error, "")
+        self.assertIsNotNone(order)
+        self.assertEqual(order["lot_size"], 100)
+        self.assertEqual(order["unit"], "份")
+        self.assertEqual(order["quantity"], 100)
 
 
 class TestMarketOverview(unittest.TestCase):

@@ -200,6 +200,35 @@ def _is_bond_fund(product: Any) -> bool:
     return "债券" in category or "纯债" in tags or "固收" in tags
 
 
+def _listed_trade_spec(product: Any) -> Optional[Tuple[int, str]]:
+    """Return the exchange lot size and correct unit for a listed product."""
+    if getattr(product, "symbol_type", "") != "stock":
+        return None
+    category = str(getattr(product, "category", ""))
+    if getattr(product, "asset_class", "") == "bond" or "债" in category:
+        return 10, "张"
+    if _is_fund_product(product):
+        return 100, "份"
+    return 100, "股"
+
+
+def _listed_minimum_order(product: Any, price: float) -> Optional[Dict[str, Any]]:
+    """Estimate one-lot cost without treating an ETF lot as 100 shares."""
+    spec = _listed_trade_spec(product)
+    if spec is None or price <= 0:
+        return None
+    lot_size, unit = spec
+    gross = round(price * lot_size, 2)
+    fee = round(max(5.0, gross * 0.00025), 2)
+    return {
+        "lot_size": lot_size,
+        "unit": unit,
+        "gross": gross,
+        "fee": fee,
+        "total": round(gross + fee, 2),
+    }
+
+
 def _market_context_for_answer(ctx: ToolContext) -> Dict[str, Any]:
     market = ctx.session.get("market")
     if market is None:
@@ -523,6 +552,35 @@ class ProductRecommendTool(Tool):
             nav = market.fund_nav(code)
             if nav is not None:
                 navs[code] = nav
+        if market.enabled:
+            affordable_at_live_price = []
+            for product in analysis_pool:
+                quote = quotes.get(product.symbol) if product.symbol_type == "stock" else None
+                minimum_order = (
+                    _listed_minimum_order(product, float(quote.price))
+                    if quote is not None else None
+                )
+                if (
+                    minimum_order is not None
+                    and float(minimum_order["total"]) > affordable_budget
+                ):
+                    continue
+                affordable_at_live_price.append(product)
+            analysis_pool = affordable_at_live_price
+            if not analysis_pool:
+                return ToolResult(
+                    False,
+                    f"按当前可动用资金 {affordable_budget:,.2f} 元，"
+                    "没有找到计入最小交易单位和模拟佣金后仍买得起的产品。",
+                    data={
+                        "affordable_budget": round(affordable_budget, 2),
+                        "max_risk": max_risk,
+                        "asset_class": requested or "mixed",
+                        "products": [],
+                        "display_count": 0,
+                    },
+                    summary="当前资金不足，未展示买不起的场内产品",
+                )
 
         risk_free = official_macro.get("reverse_repo_7d_rate_pct") or 0.0
         held_ids = {
@@ -657,8 +715,25 @@ class ProductRecommendTool(Tool):
                 if not product.has_live_data:
                     data_label = "演示参数"
                     demo_count += 1
+            quote = quotes.get(product.symbol) if product.symbol_type == "stock" else None
+            minimum_order = (
+                _listed_minimum_order(product, float(quote.price))
+                if quote is not None else None
+            )
+            category_display = product.category
+            if minimum_order is not None and _is_fund_product(product):
+                category_display = f"{product.category} / 场内 ETF"
+            if minimum_order is not None:
+                minimum_order_label = (
+                    f"最低约 {float(minimum_order['total']):,.2f} 元"
+                    f"（{minimum_order['lot_size']}{minimum_order['unit']}，含模拟佣金）"
+                )
+            elif product.symbol_type == "stock":
+                minimum_order_label = "最低交易额待公开行情确认"
+            else:
+                minimum_order_label = f"起投 {product.min_amount:,.0f} 元"
             flow_text = (
-                f"起投 {product.min_amount:,.0f} 元；"
+                f"{minimum_order_label}；"
                 f"{product.redemption_rule or product.liquidity}"
             )
             risk_text = f"R{product.risk_level}"
@@ -709,6 +784,7 @@ class ProductRecommendTool(Tool):
                 "name": product.name,
                 "code": product.symbol.upper() if product.symbol else product.product_id,
                 "category": product.category,
+                "category_display": category_display,
                 "risk_level": product.risk_level,
                 "risk_label": risk_text,
                 "advice_score": quant_score.get("score"),
@@ -720,6 +796,20 @@ class ProductRecommendTool(Tool):
                 "change": movement,
                 "liquidity": product.redemption_rule or product.liquidity,
                 "min_amount": product.min_amount,
+                "minimum_order_amount": (
+                    float(minimum_order["total"])
+                    if minimum_order is not None
+                    else float(product.min_amount)
+                ),
+                "minimum_order_label": minimum_order_label,
+                "minimum_order_lot_size": (
+                    int(minimum_order["lot_size"])
+                    if minimum_order is not None else 0
+                ),
+                "minimum_order_unit": (
+                    str(minimum_order["unit"])
+                    if minimum_order is not None else ""
+                ),
                 "fee_rate": product.fee_rate,
                 "data_source": data_label,
                 "history_source": quant_metrics.get("source", ""),
@@ -745,7 +835,7 @@ class ProductRecommendTool(Tool):
         lines.append("")
         lines.append("统一产品清单：")
         lines.append(render_table(
-            ["#", "产品/代码", "类型/风险", "适合度", "价格或收益参考", "起投与流动性", "数据"],
+            ["#", "产品/代码", "类型/风险", "适合度", "价格或收益参考", "门槛与流动性", "数据"],
             combined_rows,
         ))
         if live_count:
@@ -1658,14 +1748,23 @@ def build_subscription_order(
             "lot_size": 0,
         }, ""
 
-    is_bond = product.asset_class == "bond" or "债" in product.category
-    lot_size = 10 if is_bond else 100
-    unit = "张" if is_bond else "股"
-    lot_cost = price * lot_size
-    if requested_amount < lot_cost:
+    minimum_order = _listed_minimum_order(product, price)
+    if minimum_order is None:
+        return None, "无法确定该场内产品的最小交易单位，模拟申购未执行。"
+    lot_size = int(minimum_order["lot_size"])
+    unit = str(minimum_order["unit"])
+    lot_cost = float(minimum_order["gross"])
+    minimum_total = float(minimum_order["total"])
+    if requested_amount < minimum_total:
+        instrument = (
+            "场内基金"
+            if _is_fund_product(product)
+            else ("交易所债券" if unit == "张" else "股票")
+        )
         return None, (
-            f"按最新价 {price:,.3f} 元和最小交易单位 {lot_size}{unit} 计算，"
-            f"至少需要约 {lot_cost:,.2f} 元。"
+            f"「{product.name}」是{instrument}，按最新价 {price:,.3f} 元和"
+            f"最小交易单位 {lot_size}{unit} 计算，一手成交额约 {lot_cost:,.2f} 元；"
+            f"计入模拟佣金后至少需要约 {minimum_total:,.2f} 元。"
         )
     lots = int(requested_amount // lot_cost)
     quantity = lots * lot_size
