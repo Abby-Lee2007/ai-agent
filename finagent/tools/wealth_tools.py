@@ -489,11 +489,14 @@ class ProductRecommendTool(Tool):
             max_risk = max(1, min(5, max_risk))
             if max_risk > user_level:
                 max_risk = user_level
-            max_risk = min(5, max_risk + 1)
             pool = [p for p in _products_by_risk(ctx, max_risk)
                     if p.min_amount <= (invest or p.min_amount)]
             if not pool:
                 pool = _products_by_risk(ctx, max_risk)
+            lines.append(
+                f"主动推荐仅展示与您「{assessment['label']}」同等级的产品"
+                f"（R1-R{max_risk}）；更高风险产品不会作为推荐结果展示。"
+            )
         affordable = [
             product for product in pool
             if product.min_amount <= max(affordable_budget, 0.0)

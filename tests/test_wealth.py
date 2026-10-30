@@ -69,7 +69,13 @@ class TestWealth(unittest.TestCase):
             item["min_amount"] <= reply.data["affordable_budget"]
             for item in details
         ))
-        self.assertTrue(any(item["requires_risk_confirmation"] for item in details))
+        self.assertTrue(all(item["risk_level"] == 1 for item in details))
+        self.assertFalse(any(
+            item["requires_risk_confirmation"]
+            for item in details
+        ))
+        self.assertNotIn("16国债19", [item["name"] for item in details])
+        self.assertIn("主动推荐仅展示", reply.text)
         self.assertIn("换一批", reply.data["filter_options"])
 
         switched = self.agent.handle("推荐债券产品")
